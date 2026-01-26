@@ -56,7 +56,7 @@ MimikaStudio isn't just a TTS engine wrapper:
 
 - **Advanced Generation Controls**: Fine-tune every aspect of synthesis with temperature, top_p, top_k, repetition penalty, and reproducible generation with seeds.
 
-- **Style Instructions**: Tell the CustomVoice speakers *how* to speak - "whisper softly", "speak with excitement", "sound contemplative" - and watch the AI adapt.
+- **Style Instructions**: Tell the CustomVoice speakers *how* to speak - "whisper softly", "speak with excitement", "sound contemplative", or "Optimized for engaging, professional audiobook narration" - and watch the AI adapt.
 
 - **Real-time System Monitoring**: CPU, RAM, and GPU usage displayed in the app header so you always know what resources your generations are consuming.
 
@@ -184,7 +184,7 @@ Use 9 premium preset speakers without any reference audio.
 | Ono_Anna | Japanese | Playful female |
 | Sohee | Korean | Warm emotional female |
 
-**Style Instructions**: Control tone with prompts like "Speak slowly", "Very happy", "Whisper"
+**Style Instructions**: Control tone with prompts like "Speak slowly", "Very happy", "Whisper", or use "Optimized for engaging, professional audiobook narration" for long-form content. See [Qwen3-Audiobook-Converter](https://github.com/WhiskeyCoder/Qwen3-Audiobook-Converter) for inspiration.
 
 ### Advanced Parameters
 
