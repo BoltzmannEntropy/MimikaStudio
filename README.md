@@ -367,7 +367,6 @@ RUN_MODEL_TESTS=1 pytest tests/
 |---|---|
 | 👨‍💻 **Author** | Shlomo Kashani |
 | 🏫 **Affiliation** | Johns Hopkins University, Maryland, U.S.A. |
-| 🏢 **Organization** | [QNeura.ai](https://qneura.ai) |
 
 ---
 
@@ -381,7 +380,6 @@ If you use MimikaStudio in your research or projects, please cite this work:
   author={Kashani, Shlomo},
   year={2025},
   institution={Johns Hopkins University},
-  organization={QNeura.ai},
   url={https://github.com/BoltzmannEntropy/MimikaStudio},
   note={Comprehensive desktop application integrating Qwen3-TTS, Kokoro, and XTTS2 for voice cloning and synthesis}
 }
@@ -389,11 +387,11 @@ If you use MimikaStudio in your research or projects, please cite this work:
 
 **APA Format:**
 
-Kashani, S. (2025). *MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop Application*. Johns Hopkins University, QNeura.ai. https://github.com/BoltzmannEntropy/MimikaStudio
+Kashani, S. (2025). *MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop Application*. Johns Hopkins University. https://github.com/BoltzmannEntropy/MimikaStudio
 
 **IEEE Format:**
 
-S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop Application," Johns Hopkins University, QNeura.ai, 2025. [Online]. Available: https://github.com/BoltzmannEntropy/MimikaStudio
+S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop Application," Johns Hopkins University, 2025. [Online]. Available: https://github.com/BoltzmannEntropy/MimikaStudio
 
 ---
 
