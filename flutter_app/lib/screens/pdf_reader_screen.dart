@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart' as pdf;
 import 'package:file_picker/file_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
@@ -15,11 +16,15 @@ class PdfReaderScreen extends StatefulWidget {
   State<PdfReaderScreen> createState() => _PdfReaderScreenState();
 }
 
-class _PdfReaderScreenState extends State<PdfReaderScreen> {
+class _PdfReaderScreenState extends State<PdfReaderScreen>
+    with AutomaticKeepAliveClientMixin {
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final PdfViewerController _pdfController = PdfViewerController();
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
+
+  @override
+  bool get wantKeepAlive => true;
 
   // Library state
   List<Map<String, String>> _pdfLibrary = [];
@@ -27,10 +32,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   String? _selectedPdfName;
   bool _isInitialized = false;
   String? _textFileContent; // For .txt and .md files
+  String? _pdfExtractedText; // Extracted text from PDF
+  bool _isExtractingText = false;
 
   // Reading state
   bool _isReading = false;
   bool _isPaused = false;
+  PdfTextSearchResult? _searchResult; // For highlighting current word
   int _currentPage = 1;
   int _totalPages = 0;
   String? _selectedText;
@@ -38,109 +46,120 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   int _currentSentenceIndex = -1;
   String _currentReadingText = '';
 
+  // Word-level sync state
+  List<String> _currentSentenceWords = [];
+  int _currentWordIndex = -1;
+  String _currentHighlightedWord = '';
+  StreamSubscription<Duration>? _positionSubscription;
+  List<int> _wordTimings = []; // Estimated start time (ms) for each word
+
   // TTS settings
-  String _selectedVoice = 'af_heart';
+  String _selectedVoice = 'bf_emma';
   double _speed = 1.0;
 
-  // Kokoro voices (subset)
+  // Audiobook generation state
+  bool _isGeneratingAudiobook = false;
+  String? _audiobookJobId;
+  int _audiobookCurrentChunk = 0;
+  int _audiobookTotalChunks = 0;
+  String _audiobookStatus = '';
+  Timer? _audiobookPollTimer;
+  String? _audiobookUrl;
+
+  // Audiobook library state
+  List<Map<String, dynamic>> _audiobooks = [];
+  bool _isLoadingAudiobooks = false;
+  String? _playingAudiobookId;
+  bool _isAudiobookPaused = false;
+
+  // Kokoro British voices (supported by backend)
   final List<Map<String, String>> _voices = [
-    {'id': 'af_heart', 'name': 'Heart (Female)'},
-    {'id': 'af_bella', 'name': 'Bella (Female)'},
-    {'id': 'af_sarah', 'name': 'Sarah (Female)'},
-    {'id': 'am_michael', 'name': 'Michael (Male)'},
-    {'id': 'am_adam', 'name': 'Adam (Male)'},
     {'id': 'bf_emma', 'name': 'Emma (British F)'},
+    {'id': 'bf_alice', 'name': 'Alice (British F)'},
+    {'id': 'bf_isabella', 'name': 'Isabella (British F)'},
+    {'id': 'bf_lily', 'name': 'Lily (British F)'},
     {'id': 'bm_george', 'name': 'George (British M)'},
+    {'id': 'bm_daniel', 'name': 'Daniel (British M)'},
+    {'id': 'bm_fable', 'name': 'Fable (British M)'},
+    {'id': 'bm_lewis', 'name': 'Lewis (British M)'},
   ];
 
   @override
   void initState() {
     super.initState();
     _loadSamplePdfs();
+    _loadAudiobooks();
+  }
+
+  Future<void> _loadAudiobooks() async {
+    setState(() => _isLoadingAudiobooks = true);
+    try {
+      final audiobooks = await _api.getAudiobooks();
+      if (mounted) {
+        setState(() {
+          _audiobooks = audiobooks;
+          _isLoadingAudiobooks = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load audiobooks: $e');
+      if (mounted) {
+        setState(() => _isLoadingAudiobooks = false);
+      }
+    }
   }
 
   Future<void> _loadSamplePdfs() async {
-    final previousCount = _pdfLibrary.length;
-    final wasInitialized = _isInitialized;
+    // Collect documents first
+    final foundDocs = <Map<String, String>>[];
 
-    // Look for PDFs in the project pdf directory
-    // Try multiple possible locations
-    final sampleDirs = <String>[];
+    // Hardcoded path that we know works
+    const pdfDir = '/Volumes/SSD4tb/Dropbox/DSS/artifacts/code/TSSUi/pdf';
 
-    // 1. Hardcoded development path
-    sampleDirs.add('/Volumes/SSD4tb/Dropbox/DSS/artifacts/code/TSSUi/pdf');
-
-    // 2. Try to find pdf folder relative to executable (for packaged app)
     try {
-      final execPath = Platform.resolvedExecutable;
-      // In macOS app bundle: .../MimikaStudio.app/Contents/MacOS/MimikaStudio
-      // Go up to project root: .../MimikaStudio.app -> ../../.. -> flutter_app -> .. -> project
-      final execDir = Directory(execPath).parent;
-      // Try various relative paths from executable
-      sampleDirs.add(p.join(execDir.path, '..', '..', '..', '..', '..', 'pdf'));
-      sampleDirs.add(p.join(execDir.path, '..', '..', '..', 'pdf'));
-      sampleDirs.add(p.join(execDir.path, 'pdf'));
-    } catch (_) {}
-
-    // 3. Current directory and parent
-    sampleDirs.add('${Directory.current.path}/pdf');
-    sampleDirs.add('${Directory.current.path}/../pdf');
-
-    // Debug: print paths being checked
-    debugPrint('PDF search paths:');
-    for (final path in sampleDirs) {
-      final exists = await Directory(path).exists();
-      debugPrint('  $path -> exists: $exists');
-    }
-
-    for (final dirPath in sampleDirs) {
-      final dir = Directory(dirPath);
+      final dir = Directory(pdfDir);
       if (await dir.exists()) {
-        try {
-          final files = await dir.list().toList();
-          for (final file in files) {
-            if (file is File) {
-              final lowerPath = file.path.toLowerCase();
-              if (lowerPath.endsWith('.pdf') || lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
-                final name = p.basename(file.path);
-                final absolutePath = file.absolute.path;
-                if (!_pdfLibrary.any((p) => p['path'] == absolutePath)) {
-                  _pdfLibrary.add({'path': absolutePath, 'name': name});
-                  debugPrint('Found document: $name at $absolutePath');
-                }
-              }
+        debugPrint('PDF directory exists: $pdfDir');
+        await for (final entity in dir.list()) {
+          if (entity is File) {
+            final lowerPath = entity.path.toLowerCase();
+            if (lowerPath.endsWith('.pdf') ||
+                lowerPath.endsWith('.txt') ||
+                lowerPath.endsWith('.md')) {
+              final name = p.basename(entity.path);
+              foundDocs.add({'path': entity.path, 'name': name});
+              debugPrint('Found document: $name');
             }
           }
-        } catch (e) {
-          debugPrint('Error listing directory $dirPath: $e');
         }
-      }
-    }
-
-    // Auto-select first PDF if any found and nothing selected
-    if (_pdfLibrary.isNotEmpty && _selectedPdfPath == null) {
-      _selectPdf(_pdfLibrary.first['path']!, _pdfLibrary.first['name']!);
-    }
-
-    setState(() => _isInitialized = true);
-
-    // Show feedback on refresh (only after initial load or on explicit refresh)
-    if (wasInitialized && mounted) {
-      final newCount = _pdfLibrary.length - previousCount;
-      if (newCount > 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Found $newCount new PDF(s)')),
-        );
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('No new PDFs found (checked ${sampleDirs.length} locations)')),
-        );
+        debugPrint('PDF directory does not exist: $pdfDir');
+      }
+    } catch (e) {
+      debugPrint('Error loading PDFs: $e');
+    }
+
+    // Update state with all documents at once
+    debugPrint('Loading complete. Found ${foundDocs.length} documents. mounted=$mounted');
+    if (mounted) {
+      setState(() {
+        _pdfLibrary = foundDocs;
+        _isInitialized = true;
+        debugPrint('setState called. _pdfLibrary.length=${_pdfLibrary.length}');
+      });
+
+      // Auto-select first document if found
+      if (_pdfLibrary.isNotEmpty && _selectedPdfPath == null) {
+        debugPrint('Auto-selecting first document: ${_pdfLibrary.first['name']}');
+        _selectPdf(_pdfLibrary.first['path']!, _pdfLibrary.first['name']!);
       }
     }
   }
 
   @override
   void dispose() {
+    _positionSubscription?.cancel();
+    _audiobookPollTimer?.cancel();
     _audioPlayer.dispose();
     _pdfController.dispose();
     super.dispose();
@@ -175,6 +194,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       _totalPages = 0;
       _textFileContent = null;
       _selectedText = null;
+      _pdfExtractedText = null;
       _stopReading();
     });
 
@@ -182,6 +202,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     final lowerPath = path.toLowerCase();
     if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
       _loadTextFile(path);
+    } else if (lowerPath.endsWith('.pdf')) {
+      _extractPdfText(path);
     }
   }
 
@@ -204,10 +226,45 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     }
   }
 
+  Future<void> _extractPdfText(String path) async {
+    setState(() => _isExtractingText = true);
+
+    try {
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      final document = pdf.PdfDocument(inputBytes: bytes);
+
+      final textExtractor = pdf.PdfTextExtractor(document);
+      final text = textExtractor.extractText();
+
+      document.dispose();
+
+      if (mounted) {
+        setState(() {
+          _pdfExtractedText = text;
+          _isExtractingText = false;
+        });
+        print('Extracted ${text.length} characters from PDF');
+      }
+    } catch (e) {
+      debugPrint('Error extracting PDF text: $e');
+      if (mounted) {
+        setState(() => _isExtractingText = false);
+      }
+    }
+  }
+
   bool get _isTextFile {
     if (_selectedPdfPath == null) return false;
     final lowerPath = _selectedPdfPath!.toLowerCase();
     return lowerPath.endsWith('.txt') || lowerPath.endsWith('.md');
+  }
+
+  bool get _hasTextToRead {
+    if (_selectedText != null && _selectedText!.isNotEmpty) return true;
+    if (_pdfExtractedText != null && _pdfExtractedText!.isNotEmpty) return true;
+    if (_textFileContent != null && _textFileContent!.isNotEmpty) return true;
+    return false;
   }
 
   void _removePdf(String path) {
@@ -224,17 +281,33 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<void> _startReading() async {
     if (_selectedPdfPath == null) return;
 
-    // Get text from current page selection or extract full page
+    // Get text: selected text first, then extracted PDF text, then text file content
     String textToRead = _selectedText ?? '';
 
+    if (textToRead.isEmpty && _pdfExtractedText != null) {
+      textToRead = _pdfExtractedText!;
+    }
+
+    if (textToRead.isEmpty && _textFileContent != null) {
+      textToRead = _textFileContent!;
+    }
+
     if (textToRead.isEmpty) {
-      // Try to get text from the viewer
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Select text in the PDF to read aloud, or use the text input below'),
-          duration: Duration(seconds: 3),
-        ),
-      );
+      if (_isExtractingText) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Still extracting text from PDF, please wait...'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No text found in document'),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
       return;
     }
 
@@ -292,6 +365,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       _currentReadingText = sentence;
     });
 
+    // Split sentence into words for word-level highlighting
+    _currentSentenceWords = sentence
+        .split(RegExp(r'\s+'))
+        .where((w) => w.isNotEmpty && w.length > 1)
+        .toList();
+    _currentWordIndex = -1;
+
     try {
       // Generate TTS audio
       final audioUrl = await _api.generateKokoro(
@@ -302,8 +382,17 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
       if (!_isReading) return; // Check if stopped while generating
 
-      // Play audio
+      // Set up audio
       await _audioPlayer.setUrl(audioUrl);
+
+      // Get audio duration for word timing estimation
+      final duration = _audioPlayer.duration;
+      if (duration != null && _currentSentenceWords.isNotEmpty) {
+        _calculateWordTimings(duration);
+        _startWordTracking();
+      }
+
+      // Play audio
       await _audioPlayer.play();
 
       // Wait for audio to complete
@@ -313,9 +402,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
       if (!_isReading || _isPaused) return;
 
+      // Stop word tracking and clear highlight
+      _stopWordTracking();
+      _clearHighlight();
+
       // Move to next sentence
       setState(() {
         _currentSentenceIndex++;
+        _currentWordIndex = -1;
+        _currentSentenceWords = [];
       });
 
       // Small pause between sentences
@@ -330,6 +425,83 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       }
       _stopReading();
     }
+  }
+
+  void _calculateWordTimings(Duration audioDuration) {
+    // Estimate word timing based on character count
+    // Words with more characters take longer to say
+    _wordTimings = [];
+
+    if (_currentSentenceWords.isEmpty) return;
+
+    // Calculate total "weight" (chars + pause between words)
+    int totalWeight = 0;
+    for (final word in _currentSentenceWords) {
+      totalWeight += word.length + 2; // +2 for inter-word pause
+    }
+
+    final totalMs = audioDuration.inMilliseconds;
+    final msPerWeight = totalMs / totalWeight;
+
+    int cumulativeMs = 0;
+    for (final word in _currentSentenceWords) {
+      _wordTimings.add(cumulativeMs);
+      cumulativeMs += ((word.length + 2) * msPerWeight).round();
+    }
+  }
+
+  void _startWordTracking() {
+    _positionSubscription?.cancel();
+
+    _positionSubscription = _audioPlayer.positionStream.listen((position) {
+      if (!_isReading || _isPaused) return;
+      if (_wordTimings.isEmpty || _currentSentenceWords.isEmpty) return;
+
+      final ms = position.inMilliseconds;
+
+      // Find which word we should be highlighting
+      int newWordIndex = 0;
+      for (int i = 0; i < _wordTimings.length; i++) {
+        if (ms >= _wordTimings[i]) {
+          newWordIndex = i;
+        }
+      }
+
+      // Update highlight if word changed
+      if (newWordIndex != _currentWordIndex) {
+        _currentWordIndex = newWordIndex;
+        _highlightCurrentWord();
+      }
+    });
+  }
+
+  void _stopWordTracking() {
+    _positionSubscription?.cancel();
+    _positionSubscription = null;
+  }
+
+  void _highlightCurrentWord() {
+    if (_currentWordIndex < 0 || _currentWordIndex >= _currentSentenceWords.length) {
+      return;
+    }
+
+    final word = _currentSentenceWords[_currentWordIndex];
+
+    // Clear previous highlight
+    _searchResult?.clear();
+
+    // Only search for words with enough characters to be meaningful
+    if (word.length >= 2) {
+      // Remove punctuation for better matching
+      final cleanWord = word.replaceAll(RegExp(r'[^\w]'), '');
+      if (cleanWord.isNotEmpty) {
+        _searchResult = _pdfController.searchText(cleanWord);
+      }
+    }
+
+    setState(() {
+      _currentHighlightedWord = word;
+    });
   }
 
   void _pauseReading() {
@@ -347,26 +519,182 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
     // If audio finished while paused, continue to next
     if (_audioPlayer.processingState == ProcessingState.completed) {
+      _stopWordTracking();
       setState(() {
         _currentSentenceIndex++;
+        _currentWordIndex = -1;
+        _currentSentenceWords = [];
       });
       _readNextSentence();
     }
   }
 
   void _stopReading() {
+    _stopWordTracking();
+    _clearHighlight();
     setState(() {
       _isReading = false;
       _isPaused = false;
       _currentSentenceIndex = -1;
+      _currentWordIndex = -1;
       _currentReadingText = '';
+      _currentHighlightedWord = '';
       _sentences = [];
+      _currentSentenceWords = [];
+      _wordTimings = [];
     });
     _audioPlayer.stop();
   }
 
+  void _clearHighlight() {
+    _searchResult?.clear();
+    _searchResult = null;
+  }
+
+  // ============== Audiobook Generation ==============
+
+  Future<void> _startAudiobookGeneration() async {
+    // Get text to convert
+    String textToConvert = _selectedText ?? '';
+    if (textToConvert.isEmpty && _pdfExtractedText != null) {
+      textToConvert = _pdfExtractedText!;
+    }
+    if (textToConvert.isEmpty && _textFileContent != null) {
+      textToConvert = _textFileContent!;
+    }
+
+    if (textToConvert.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No text available to convert')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isGeneratingAudiobook = true;
+      _audiobookCurrentChunk = 0;
+      _audiobookTotalChunks = 0;
+      _audiobookStatus = 'Starting...';
+      _audiobookUrl = null;
+    });
+
+    try {
+      final result = await _api.startAudiobookGeneration(
+        text: textToConvert,
+        title: _selectedPdfName ?? 'Untitled',
+        voice: _selectedVoice,
+        speed: _speed,
+      );
+
+      _audiobookJobId = result['job_id'] as String;
+      _audiobookTotalChunks = result['total_chunks'] as int;
+
+      // Start polling for status
+      _startAudiobookPolling();
+    } catch (e) {
+      setState(() {
+        _isGeneratingAudiobook = false;
+        _audiobookStatus = '';
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start: $e')),
+        );
+      }
+    }
+  }
+
+  void _startAudiobookPolling() {
+    _audiobookPollTimer?.cancel();
+    _audiobookPollTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _pollAudiobookStatus(),
+    );
+  }
+
+  Future<void> _pollAudiobookStatus() async {
+    if (_audiobookJobId == null) return;
+
+    try {
+      final status = await _api.getAudiobookStatus(_audiobookJobId!);
+      final jobStatus = status['status'] as String;
+
+      setState(() {
+        _audiobookCurrentChunk = status['current_chunk'] as int;
+        _audiobookTotalChunks = status['total_chunks'] as int;
+        _audiobookStatus = 'Processing chunk $_audiobookCurrentChunk/$_audiobookTotalChunks';
+      });
+
+      if (jobStatus == 'completed') {
+        _audiobookPollTimer?.cancel();
+        final audioUrl = status['audio_url'] as String;
+        final durationSecs = status['duration_seconds'] as num;
+        final sizeMb = status['file_size_mb'] as num;
+
+        setState(() {
+          _isGeneratingAudiobook = false;
+          _audiobookUrl = _api.getAudiobookUrl(audioUrl);
+          _audiobookStatus = '';
+        });
+
+        if (mounted) {
+          _loadAudiobooks(); // Refresh the audiobook list
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Audiobook ready!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } else if (jobStatus == 'failed') {
+        _audiobookPollTimer?.cancel();
+        final error = status['error'] ?? 'Unknown error';
+        setState(() {
+          _isGeneratingAudiobook = false;
+          _audiobookStatus = '';
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Generation failed: $error')),
+          );
+        }
+      } else if (jobStatus == 'cancelled') {
+        _audiobookPollTimer?.cancel();
+        setState(() {
+          _isGeneratingAudiobook = false;
+          _audiobookStatus = '';
+        });
+      }
+    } catch (e) {
+      // Ignore polling errors, will retry
+      debugPrint('Polling error: $e');
+    }
+  }
+
+  Future<void> _cancelAudiobookGeneration() async {
+    if (_audiobookJobId == null) return;
+
+    try {
+      await _api.cancelAudiobookGeneration(_audiobookJobId!);
+      _audiobookPollTimer?.cancel();
+      setState(() {
+        _isGeneratingAudiobook = false;
+        _audiobookStatus = '';
+        _audiobookJobId = null;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to cancel: $e')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    debugPrint('PDF Reader build: _pdfLibrary.length=${_pdfLibrary.length}');
     return Row(
       children: [
         // Sidebar
@@ -424,26 +752,37 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           ),
           // Library list
           Expanded(
-            child: _pdfLibrary.isEmpty
-                ? Center(
+            child: !_isInitialized
+                ? const Center(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.auto_stories, size: 48, color: Colors.grey.shade400),
-                        const SizedBox(height: 8),
-                        Text(
-                          'No Documents',
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                        const SizedBox(height: 4),
-                        TextButton.icon(
-                          onPressed: _openPdf,
-                          icon: const Icon(Icons.add, size: 16),
-                          label: const Text('Open'),
-                        ),
+                        CircularProgressIndicator(),
+                        SizedBox(height: 8),
+                        Text('Loading...'),
                       ],
                     ),
                   )
+                : _pdfLibrary.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.auto_stories, size: 48, color: Colors.grey.shade400),
+                            const SizedBox(height: 8),
+                            Text(
+                              'No Documents',
+                              style: TextStyle(color: Colors.grey.shade600),
+                            ),
+                            const SizedBox(height: 4),
+                            TextButton.icon(
+                              onPressed: _openPdf,
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('Open'),
+                            ),
+                          ],
+                        ),
+                      )
                 : ListView.builder(
                     itemCount: _pdfLibrary.length,
                     itemBuilder: (context, index) {
@@ -539,9 +878,274 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
               ],
             ),
           ),
+          // Audiobook Library
+          _buildAudiobookLibrary(),
         ],
       ),
     );
+  }
+
+  Widget _buildAudiobookLibrary() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        border: Border(
+          top: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                const Icon(Icons.library_music, size: 16),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Audiobooks',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 16),
+                  onPressed: _loadAudiobooks,
+                  tooltip: 'Refresh',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+          ),
+          // List
+          if (_isLoadingAudiobooks)
+            const Padding(
+              padding: EdgeInsets.all(12),
+              child: Center(
+                child: SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (_audiobooks.isEmpty)
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                'No audiobooks yet',
+                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              ),
+            )
+          else
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 250),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _audiobooks.length,
+                itemBuilder: (context, index) {
+                  final book = _audiobooks[index];
+                  final jobId = book['job_id'] as String;
+                  final duration = book['duration_seconds'] as num;
+                  final sizeMb = book['size_mb'] as num;
+                  final isThisPlaying = _playingAudiobookId == jobId;
+
+                  // Format duration
+                  final mins = (duration / 60).floor();
+                  final secs = (duration % 60).round();
+                  final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
+
+                  return Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: isThisPlaying
+                          ? Theme.of(context).colorScheme.primaryContainer
+                          : null,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        ListTile(
+                          dense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                          leading: Icon(
+                            Icons.audiotrack,
+                            color: isThisPlaying
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
+                            size: 20,
+                          ),
+                          title: Text(
+                            'Audiobook $jobId',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: isThisPlaying ? FontWeight.bold : null,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            '$durationStr • ${sizeMb.toStringAsFixed(1)} MB',
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 16),
+                            onPressed: () => _deleteAudiobook(jobId),
+                            tooltip: 'Delete',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                        // Playback controls
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // Play button
+                              IconButton(
+                                icon: const Icon(Icons.play_arrow, size: 20),
+                                onPressed: (!isThisPlaying || _isAudiobookPaused)
+                                    ? () => _playAudiobookFromList(book)
+                                    : null,
+                                tooltip: 'Play',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 32),
+                              ),
+                              // Pause button
+                              IconButton(
+                                icon: const Icon(Icons.pause, size: 20),
+                                onPressed: (isThisPlaying && !_isAudiobookPaused)
+                                    ? _pauseAudiobookPlayback
+                                    : null,
+                                tooltip: 'Pause',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 32),
+                              ),
+                              // Stop button
+                              IconButton(
+                                icon: const Icon(Icons.stop, size: 20),
+                                onPressed: isThisPlaying ? _stopAudiobookPlayback : null,
+                                tooltip: 'Stop',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 32),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _playAudiobookFromList(Map<String, dynamic> book) async {
+    final jobId = book['job_id'] as String;
+    final audioUrl = book['audio_url'] as String;
+
+    try {
+      // If same audiobook and paused, just resume
+      if (_playingAudiobookId == jobId && _isAudiobookPaused) {
+        await _audioPlayer.play();
+        setState(() => _isAudiobookPaused = false);
+        return;
+      }
+
+      // Stop any current playback
+      if (_playingAudiobookId != null) {
+        await _audioPlayer.stop();
+      }
+
+      // Start new playback
+      await _audioPlayer.setUrl(_api.getAudiobookUrl(audioUrl));
+      await _audioPlayer.play();
+      setState(() {
+        _playingAudiobookId = jobId;
+        _isAudiobookPaused = false;
+      });
+
+      // Listen for completion
+      _audioPlayer.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed) {
+          if (mounted) {
+            setState(() {
+              _playingAudiobookId = null;
+              _isAudiobookPaused = false;
+            });
+          }
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to play: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pauseAudiobookPlayback() async {
+    await _audioPlayer.pause();
+    setState(() => _isAudiobookPaused = true);
+  }
+
+  Future<void> _stopAudiobookPlayback() async {
+    await _audioPlayer.stop();
+    setState(() {
+      _playingAudiobookId = null;
+      _isAudiobookPaused = false;
+    });
+  }
+
+  Future<void> _deleteAudiobook(String jobId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Audiobook'),
+        content: Text('Delete audiobook $jobId?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        // Stop if currently playing
+        if (_playingAudiobookId == jobId) {
+          await _audioPlayer.stop();
+          setState(() => _playingAudiobookId = null);
+        }
+
+        await _api.deleteAudiobook(jobId);
+        _loadAudiobooks(); // Refresh list
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete: $e')),
+          );
+        }
+      }
+    }
   }
 
   Widget _buildEmptyState() {
@@ -595,9 +1199,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       children: [
         // Toolbar
         _buildToolbar(),
-        // Reading indicator
+        // Reading indicator (shown when reading)
         if (_isReading) _buildReadingIndicator(),
-        // PDF Viewer
+        // PDF Viewer (full width, highlighting via searchText)
         Expanded(
           child: SfPdfViewer.file(
             file,
@@ -727,17 +1331,23 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 '${_selectedText!.length} chars selected',
                 style: const TextStyle(fontSize: 12),
               ),
+            )
+          else if (_textFileContent != null && !_isReading)
+            Chip(
+              avatar: const Icon(Icons.auto_stories, size: 16),
+              label: Text(
+                '${_textFileContent!.length} chars ready',
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           const SizedBox(width: 8),
-          if (!_isReading)
+          if (!_isReading && !_isGeneratingAudiobook)
             FilledButton.icon(
-              onPressed: (_selectedText != null && _selectedText!.isNotEmpty)
-                  ? _startReading
-                  : null,
+              onPressed: _hasTextToRead ? _startReading : null,
               icon: const Icon(Icons.play_arrow),
               label: const Text('Read Aloud'),
             )
-          else
+          else if (_isReading)
             Row(
               children: [
                 if (_isPaused)
@@ -764,6 +1374,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 ),
               ],
             ),
+          // Audiobook generation button (text files)
+          if (!_isReading && !_isGeneratingAudiobook) ...[
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(
+              onPressed: _hasTextToRead ? _startAudiobookGeneration : null,
+              icon: const Icon(Icons.audiotrack),
+              label: const Text('Convert to Audiobook'),
+            ),
+          ],
+          // Audiobook generation progress (text files)
+          if (_isGeneratingAudiobook) ...[
+            const SizedBox(width: 8),
+            _buildAudiobookProgress(),
+          ],
         ],
       ),
     );
@@ -804,6 +1428,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
             tooltip: 'Next page',
           ),
           const Spacer(),
+          // Status indicator
+          if (_isExtractingText)
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           // TTS controls
           if (_selectedText != null && _selectedText!.isNotEmpty && !_isReading)
             Chip(
@@ -812,17 +1446,23 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 '${_selectedText!.length} chars selected',
                 style: const TextStyle(fontSize: 12),
               ),
+            )
+          else if (_pdfExtractedText != null && !_isReading)
+            Chip(
+              avatar: const Icon(Icons.auto_stories, size: 16),
+              label: Text(
+                '${_pdfExtractedText!.length} chars ready',
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           const SizedBox(width: 8),
-          if (!_isReading)
+          if (!_isReading && !_isGeneratingAudiobook)
             FilledButton.icon(
-              onPressed: (_selectedText != null && _selectedText!.isNotEmpty)
-                  ? _startReading
-                  : null,
+              onPressed: _hasTextToRead ? _startReading : null,
               icon: const Icon(Icons.play_arrow),
               label: const Text('Read Aloud'),
             )
-          else
+          else if (_isReading)
             Row(
               children: [
                 if (_isPaused)
@@ -849,8 +1489,48 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 ),
               ],
             ),
+          // Audiobook generation button
+          if (!_isReading && !_isGeneratingAudiobook) ...[
+            const SizedBox(width: 8),
+            FilledButton.tonalIcon(
+              onPressed: _hasTextToRead ? _startAudiobookGeneration : null,
+              icon: const Icon(Icons.audiotrack),
+              label: const Text('Convert to Audiobook'),
+            ),
+          ],
+          // Audiobook generation progress
+          if (_isGeneratingAudiobook) ...[
+            const SizedBox(width: 8),
+            _buildAudiobookProgress(),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _buildAudiobookProgress() {
+    final percent = _audiobookTotalChunks > 0
+        ? (_audiobookCurrentChunk / _audiobookTotalChunks * 100).round()
+        : 0;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(
+          width: 16,
+          height: 16,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '$percent% ($_audiobookCurrentChunk/$_audiobookTotalChunks)',
+          style: const TextStyle(fontSize: 12),
+        ),
+        const SizedBox(width: 8),
+        TextButton(
+          onPressed: _cancelAudiobookGeneration,
+          child: const Text('Cancel'),
+        ),
+      ],
     );
   }
 
@@ -875,32 +1555,54 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                 size: 20,
               ),
               const SizedBox(width: 8),
-              Text(
-                _isPaused
-                    ? 'Paused'
-                    : 'Reading sentence ${_currentSentenceIndex + 1} of ${_sentences.length}',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+              Expanded(
+                child: Text(
+                  _isPaused
+                      ? 'Paused'
+                      : 'Sentence ${_currentSentenceIndex + 1}/${_sentences.length}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  ),
                 ),
               ),
+              // Current word being read
+              if (_currentHighlightedWord.isNotEmpty && !_isPaused)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primary,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    _currentHighlightedWord,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Theme.of(context).colorScheme.onPrimary,
+                    ),
+                  ),
+                ),
             ],
           ),
-          if (_currentReadingText.isNotEmpty) ...[
+          // Word progress bar
+          if (_currentSentenceWords.isNotEmpty) ...[
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
-                borderRadius: BorderRadius.circular(8),
+            LinearProgressIndicator(
+              value: _currentSentenceWords.isEmpty
+                  ? 0
+                  : (_currentWordIndex + 1) / _currentSentenceWords.length,
+              backgroundColor: Theme.of(context).colorScheme.surface,
+              valueColor: AlwaysStoppedAnimation<Color>(
+                Theme.of(context).colorScheme.primary,
               ),
-              child: Text(
-                _currentReadingText,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontStyle: FontStyle.italic,
-                  color: Theme.of(context).colorScheme.onSurface,
-                ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Word ${_currentWordIndex + 1} of ${_currentSentenceWords.length}',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
               ),
             ),
           ],

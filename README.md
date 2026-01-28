@@ -3,11 +3,11 @@
   <br>
 </div>
 
-# MimikaStudio - Voice Cloning, TTS & PDF Reader
+# MimikaStudio - Voice Cloning, TTS & Audiobook Creator
 
-> **Custom Voice Cloning** • **Text-to-Speech** • **PDF Read Aloud**
+> **Custom Voice Cloning** • **Text-to-Speech** • **PDF Read Aloud** • **Audiobook Creator**
 
-A local-first desktop application with three core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, and **read PDFs aloud** with sentence-by-sentence highlighting.
+A local-first desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
 
 > *I ported my old Gradio app into this beautiful native Flutter desktop application, specifically optimized for Apple Silicon users who want a polished, responsive UI with proper macOS integration.*
 
@@ -54,6 +54,8 @@ MimikaStudio isn't just a TTS engine wrapper:
 
 - **PDF Reader with Voice**: Load any PDF from the `./pdf` directory and have it read aloud with sentence-by-sentence highlighting. Choose your preferred Kokoro voice, adjust speed, and let MimikaStudio narrate your documents.
 
+- **Audiobook Creator**: Convert entire documents (PDF, TXT, MD) into audiobook files with a single click. The system intelligently chunks text at sentence boundaries, generates audio for each segment using Kokoro TTS, and concatenates everything into a single WAV file. Track progress in real-time, manage your audiobook library, and play any generated audiobook with full playback controls (play, pause, stop).
+
 ![PDF Reader with TTS](assets/03-pdf-reader.png)
 
 - **Unified Voice Library**: All your custom voice samples (XTTS and Qwen3) in one unified list. Upload once, use with either engine.
@@ -92,6 +94,7 @@ This isn't a weekend hack:
 - **XTTS2**: Multi-language voice cloning
 - **Unified Voice Library**: Single voice list usable with both Qwen3 and XTTS engines
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
+- **Audiobook Creator**: Convert full documents to audiobook files with progress tracking and playback controls
 - **CLI Tool**: Full command-line interface for all TTS engines
 - **MCP Server**: Codex CLI integration for programmatic access
 

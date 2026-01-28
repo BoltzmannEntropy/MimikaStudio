@@ -770,6 +770,134 @@ async def qwen3_clear_cache():
         return {"message": f"Error clearing cache: {e}"}
 
 
+# ============== Audiobook Generation Endpoints ==============
+
+class AudiobookRequest(BaseModel):
+    text: str
+    title: str = "Untitled"
+    voice: str = "bf_emma"
+    speed: float = 1.0
+
+
+@app.post("/api/audiobook/generate")
+async def audiobook_generate(request: AudiobookRequest):
+    """Start audiobook generation from text.
+
+    Returns a job_id that can be used to poll for status.
+    The generation runs in the background.
+    """
+    from tts.audiobook import create_audiobook_job
+
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    job = create_audiobook_job(
+        text=request.text,
+        title=request.title,
+        voice=request.voice,
+        speed=request.speed,
+    )
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status.value,
+        "total_chunks": job.total_chunks,
+    }
+
+
+@app.get("/api/audiobook/status/{job_id}")
+async def audiobook_status(job_id: str):
+    """Get the status of an audiobook generation job."""
+    from tts.audiobook import get_job, JobStatus
+
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    result = {
+        "job_id": job.job_id,
+        "status": job.status.value,
+        "current_chunk": job.current_chunk,
+        "total_chunks": job.total_chunks,
+        "percent": job.percent,
+        "elapsed_seconds": round(job.elapsed_seconds, 1),
+    }
+
+    if job.status == JobStatus.COMPLETED:
+        result["audio_url"] = f"/audio/{job.audio_path.name}"
+        result["duration_seconds"] = round(job.duration_seconds, 1)
+        result["file_size_mb"] = round(job.file_size_mb, 2)
+
+    if job.status == JobStatus.FAILED:
+        result["error"] = job.error_message
+
+    return result
+
+
+@app.post("/api/audiobook/cancel/{job_id}")
+async def audiobook_cancel(job_id: str):
+    """Cancel an in-progress audiobook generation job."""
+    from tts.audiobook import cancel_job, get_job
+
+    job = get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    success = cancel_job(job_id)
+    if success:
+        return {"message": "Cancellation requested", "job_id": job_id}
+    else:
+        return {"message": "Job cannot be cancelled (already completed or failed)", "job_id": job_id}
+
+
+@app.get("/api/audiobook/list")
+async def audiobook_list():
+    """List all generated audiobooks."""
+    import os
+    from datetime import datetime
+
+    audiobooks = []
+    audiobook_pattern = "audiobook-"
+
+    for file in outputs_dir.glob(f"{audiobook_pattern}*.wav"):
+        stat = file.stat()
+        # Parse job_id from filename: audiobook-{job_id}.wav
+        job_id = file.stem.replace(audiobook_pattern, "")
+
+        # Get audio duration using soundfile
+        try:
+            import soundfile as sf
+            info = sf.info(str(file))
+            duration_seconds = info.duration
+        except Exception:
+            duration_seconds = 0
+
+        audiobooks.append({
+            "job_id": job_id,
+            "filename": file.name,
+            "audio_url": f"/audio/{file.name}",
+            "size_mb": round(stat.st_size / (1024 * 1024), 2),
+            "duration_seconds": round(duration_seconds, 1),
+            "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+        })
+
+    # Sort by creation time, newest first
+    audiobooks.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return {"audiobooks": audiobooks, "total": len(audiobooks)}
+
+
+@app.delete("/api/audiobook/{job_id}")
+async def audiobook_delete(job_id: str):
+    """Delete an audiobook file."""
+    file_path = outputs_dir / f"audiobook-{job_id}.wav"
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Audiobook '{job_id}' not found")
+
+    file_path.unlink()
+    return {"message": "Audiobook deleted", "job_id": job_id}
+
+
 # ============== Sample Texts Endpoints ==============
 
 @app.get("/api/samples/{engine}")

@@ -425,4 +425,78 @@ class ApiService {
     throw Exception('Failed to load pregenerated IPA');
   }
 
+  // ============== Audiobook Generation ==============
+
+  /// Start audiobook generation from text.
+  /// Returns job info including job_id for status polling.
+  Future<Map<String, dynamic>> startAudiobookGeneration({
+    required String text,
+    String title = 'Untitled',
+    String voice = 'bf_emma',
+    double speed = 1.0,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/audiobook/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'text': text,
+        'title': title,
+        'voice': voice,
+        'speed': speed,
+      }),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to start audiobook generation: ${response.body}');
+  }
+
+  /// Get the status of an audiobook generation job.
+  Future<Map<String, dynamic>> getAudiobookStatus(String jobId) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/audiobook/status/$jobId'),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to get audiobook status: ${response.body}');
+  }
+
+  /// Cancel an in-progress audiobook generation job.
+  Future<void> cancelAudiobookGeneration(String jobId) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/audiobook/cancel/$jobId'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to cancel audiobook: ${response.body}');
+    }
+  }
+
+  /// Get the full URL for an audiobook file.
+  String getAudiobookUrl(String audioPath) {
+    return '$baseUrl$audioPath';
+  }
+
+  /// List all generated audiobooks.
+  Future<List<Map<String, dynamic>>> getAudiobooks() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/audiobook/list'),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['audiobooks']);
+    }
+    throw Exception('Failed to list audiobooks: ${response.body}');
+  }
+
+  /// Delete an audiobook.
+  Future<void> deleteAudiobook(String jobId) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/audiobook/$jobId'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete audiobook: ${response.body}');
+    }
+  }
+
 }
