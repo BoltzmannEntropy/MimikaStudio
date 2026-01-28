@@ -11,6 +11,8 @@ A local-first desktop application with four core capabilities: **clone any voice
 
 > *I ported my old Gradio app into this beautiful native Flutter desktop application, specifically optimized for Apple Silicon users who want a polished, responsive UI with proper macOS integration.*
 
+![MimikaStudio](assets/00-mimikastudio-hero.png)
+
 **MimikaStudio is the most comprehensive desktop application for voice cloning and text-to-speech synthesis.** Whether you want to clone your own voice from just 3 seconds of audio, use one of 9 premium preset speakers, or leverage fast high-quality TTS engines for narration and content creation - MimikaStudio has you covered.
 
 ![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
