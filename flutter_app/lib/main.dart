@@ -207,10 +207,12 @@ class _MainScreenState extends State<MainScreen> {
           toolbarHeight: 40,
           title: _buildSystemStatsBar(),
           bottom: const TabBar(
+            labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            unselectedLabelStyle: TextStyle(fontSize: 14),
             tabs: [
-              Tab(icon: Icon(Icons.volume_up), text: 'Kokoro TTS'),
-              Tab(icon: Icon(Icons.record_voice_over), text: 'Voice Clone'),
-              Tab(icon: Icon(Icons.menu_book), text: 'PDF Reader'),
+              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'Kokoro TTS'),
+              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Voice Clone'),
+              Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
             ],
           ),
         ),
