@@ -71,6 +71,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool _isLoadingAudiobooks = false;
   String? _playingAudiobookId;
   bool _isAudiobookPaused = false;
+  double _audiobookPlaybackSpeed = 1.0;
+  StreamSubscription<PlayerState>? _audiobookPlayerSubscription;
 
   // Kokoro British voices (supported by backend)
   final List<Map<String, String>> _voices = [
@@ -160,6 +162,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   void dispose() {
     _positionSubscription?.cancel();
     _audiobookPollTimer?.cancel();
+    _audiobookPlayerSubscription?.cancel();
     _audioPlayer.dispose();
     _pdfController.dispose();
     super.dispose();
@@ -920,6 +923,29 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ],
             ),
           ),
+          // Playback speed control
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                const Text('Speed:', style: TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: _audiobookPlaybackSpeed,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    label: '${_audiobookPlaybackSpeed.toStringAsFixed(1)}x',
+                    onChanged: _setAudiobookSpeed,
+                  ),
+                ),
+                Text(
+                  '${_audiobookPlaybackSpeed.toStringAsFixed(1)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ],
+            ),
+          ),
           // List
           if (_isLoadingAudiobooks)
             const Padding(
@@ -1063,6 +1089,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         return;
       }
 
+      // Cancel previous subscription
+      await _audiobookPlayerSubscription?.cancel();
+
       // Stop any current playback
       if (_playingAudiobookId != null) {
         await _audioPlayer.stop();
@@ -1070,14 +1099,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
       // Start new playback
       await _audioPlayer.setUrl(_api.getAudiobookUrl(audioUrl));
+      await _audioPlayer.setSpeed(_audiobookPlaybackSpeed);
       await _audioPlayer.play();
+
       setState(() {
         _playingAudiobookId = jobId;
         _isAudiobookPaused = false;
       });
 
-      // Listen for completion
-      _audioPlayer.playerStateStream.listen((state) {
+      // Listen for completion with managed subscription
+      _audiobookPlayerSubscription = _audioPlayer.playerStateStream.listen((state) {
         if (state.processingState == ProcessingState.completed) {
           if (mounted) {
             setState(() {
@@ -1097,16 +1128,27 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Future<void> _pauseAudiobookPlayback() async {
-    await _audioPlayer.pause();
-    setState(() => _isAudiobookPaused = true);
+    if (_playingAudiobookId != null) {
+      await _audioPlayer.pause();
+      setState(() => _isAudiobookPaused = true);
+    }
   }
 
   Future<void> _stopAudiobookPlayback() async {
+    await _audiobookPlayerSubscription?.cancel();
+    _audiobookPlayerSubscription = null;
     await _audioPlayer.stop();
     setState(() {
       _playingAudiobookId = null;
       _isAudiobookPaused = false;
     });
+  }
+
+  Future<void> _setAudiobookSpeed(double speed) async {
+    setState(() => _audiobookPlaybackSpeed = speed);
+    if (_playingAudiobookId != null) {
+      await _audioPlayer.setSpeed(speed);
+    }
   }
 
   Future<void> _deleteAudiobook(String jobId) async {
