@@ -3,11 +3,17 @@
   <br>
 </div>
 
-# MimikaStudio - Local-First Voice Cloning
+# MimikaStudio - Voice Cloning, TTS & PDF Reader
+
+> **Custom Voice Cloning** • **Text-to-Speech** • **PDF Read Aloud**
+
+A local-first desktop application with three core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, and **read PDFs aloud** with sentence-by-sentence highlighting.
 
 > *I ported my old Gradio app into this beautiful native Flutter desktop application, specifically optimized for Apple Silicon users who want a polished, responsive UI with proper macOS integration.*
 
 **MimikaStudio is the most comprehensive desktop application for voice cloning and text-to-speech synthesis.** Whether you want to clone your own voice from just 3 seconds of audio, use one of 9 premium preset speakers, or leverage fast high-quality TTS engines for narration and content creation - MimikaStudio has you covered.
+
+![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
 
 ## Why MimikaStudio?
 
@@ -28,8 +34,6 @@ Clone any voice from remarkably short audio samples. Our **[Qwen3-TTS](https://g
 ### Premium Preset Speakers
 
 Don't have reference audio? No problem. MimikaStudio includes **9 premium preset speakers** across 4 languages (English, Chinese, Japanese, Korean), each with distinct personalities - from the dynamic rhythm of Ryan to the warm emotional tones of Sohee. These CustomVoice speakers require no audio samples at all - just type your text and generate.
-
-![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
 
 ### Multiple State-of-the-Art Models
 
