@@ -595,7 +595,7 @@ async def qwen3_list_voices():
     """List saved voice samples for Qwen3 cloning."""
     try:
         engine = get_qwen3_engine()
-        voices = engine.get_saved_voices()
+        voices = engine.get_saved_voices(include_xtts=True)
         return {"voices": voices}
     except ImportError:
         return {"voices": [], "error": "Qwen3-TTS not installed"}
