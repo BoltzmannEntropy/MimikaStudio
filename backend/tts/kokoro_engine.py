@@ -21,7 +21,7 @@ class KokoroEngine:
     def __init__(self):
         self.pipeline = None
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
-        self.outputs_dir.mkdir(exist_ok=True)
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
     def load_model(self):
         if self.pipeline is None:
@@ -37,6 +37,7 @@ class KokoroEngine:
         if voice not in BRITISH_VOICES:
             voice = DEFAULT_VOICE
 
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"kokoro-{voice}-{short_uuid}.wav"
 

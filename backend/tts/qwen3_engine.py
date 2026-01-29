@@ -84,7 +84,7 @@ class Qwen3TTSEngine:
         self.device = None
         self.dtype = None
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
-        self.outputs_dir.mkdir(exist_ok=True)
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self.voices_dir = Path(__file__).parent.parent / "data" / "samples" / "qwen3_voices"
         self.voices_dir.mkdir(parents=True, exist_ok=True)
         self._voice_prompts = {}  # Cache for voice clone prompts
@@ -227,6 +227,7 @@ class Qwen3TTSEngine:
             audio_data = self._adjust_speed(audio_data, sr, speed)
 
         # Save to file
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"qwen3-clone-{short_uuid}.wav"
         sf.write(str(output_file), audio_data, sr)
@@ -288,6 +289,7 @@ class Qwen3TTSEngine:
             audio_data = self._adjust_speed(audio_data, sr, speed)
 
         # Save to file
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"qwen3-custom-{short_uuid}.wav"
         sf.write(str(output_file), audio_data, sr)

@@ -116,30 +116,45 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     // Collect documents first
     final foundDocs = <Map<String, String>>[];
 
-    // Hardcoded path that we know works
-    const pdfDir = '/Volumes/SSD4tb/Dropbox/DSS/artifacts/code/TSSUi/pdf';
+    // Default PDF for read aloud
+    const defaultPdfPath =
+        '/Volumes/SSD4tb/Dropbox/DSS/artifacts/code/TSSUi/backend/data/pdf/jusadbellum.pdf';
+    final pdfDirs = <String>{p.dirname(defaultPdfPath)};
 
     try {
-      final dir = Directory(pdfDir);
-      if (await dir.exists()) {
-        debugPrint('PDF directory exists: $pdfDir');
-        await for (final entity in dir.list()) {
-          if (entity is File) {
-            final lowerPath = entity.path.toLowerCase();
-            if (lowerPath.endsWith('.pdf') ||
-                lowerPath.endsWith('.txt') ||
-                lowerPath.endsWith('.md')) {
-              final name = p.basename(entity.path);
-              foundDocs.add({'path': entity.path, 'name': name});
-              debugPrint('Found document: $name');
+      for (final pdfDir in pdfDirs) {
+        final dir = Directory(pdfDir);
+        if (await dir.exists()) {
+          debugPrint('PDF directory exists: $pdfDir');
+          await for (final entity in dir.list()) {
+            if (entity is File) {
+              final lowerPath = entity.path.toLowerCase();
+              if (lowerPath.endsWith('.pdf') ||
+                  lowerPath.endsWith('.txt') ||
+                  lowerPath.endsWith('.md')) {
+                final name = p.basename(entity.path);
+                foundDocs.add({'path': entity.path, 'name': name});
+                debugPrint('Found document: $name');
+              }
             }
           }
+        } else {
+          debugPrint('PDF directory does not exist: $pdfDir');
         }
-      } else {
-        debugPrint('PDF directory does not exist: $pdfDir');
       }
     } catch (e) {
       debugPrint('Error loading PDFs: $e');
+    }
+
+    // Ensure default PDF is included if present
+    try {
+      final defaultFile = File(defaultPdfPath);
+      if (await defaultFile.exists() &&
+          !foundDocs.any((doc) => doc['path'] == defaultPdfPath)) {
+        foundDocs.add({'path': defaultPdfPath, 'name': p.basename(defaultPdfPath)});
+      }
+    } catch (e) {
+      debugPrint('Error checking default PDF: $e');
     }
 
     // Update state with all documents at once
@@ -151,10 +166,22 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         debugPrint('setState called. _pdfLibrary.length=${_pdfLibrary.length}');
       });
 
-      // Auto-select first document if found
-      if (_pdfLibrary.isNotEmpty && _selectedPdfPath == null) {
-        debugPrint('Auto-selecting first document: ${_pdfLibrary.first['name']}');
-        _selectPdf(_pdfLibrary.first['path']!, _pdfLibrary.first['name']!);
+      // Auto-select default PDF if present, else first document
+      if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
+        Map<String, String>? defaultDoc;
+        for (final doc in _pdfLibrary) {
+          if (doc['path'] == defaultPdfPath) {
+            defaultDoc = doc;
+            break;
+          }
+        }
+        if (defaultDoc != null) {
+          debugPrint('Auto-selecting default document: ${defaultDoc['name']}');
+          _selectPdf(defaultDoc['path']!, defaultDoc['name']!);
+        } else {
+          debugPrint('Auto-selecting first document: ${_pdfLibrary.first['name']}');
+          _selectPdf(_pdfLibrary.first['path']!, _pdfLibrary.first['name']!);
+        }
       }
     }
   }
