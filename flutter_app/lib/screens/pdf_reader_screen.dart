@@ -45,6 +45,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   List<String> _sentences = [];
   int _currentSentenceIndex = -1;
   String _currentReadingText = '';
+  String _readingSource = '';
+  int _currentSentenceStartIndex = 0;
 
   // Word-level sync state
   List<String> _currentSentenceWords = [];
@@ -52,6 +54,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String _currentHighlightedWord = '';
   StreamSubscription<Duration>? _positionSubscription;
   List<int> _wordTimings = []; // Estimated start time (ms) for each word
+  List<String> _globalWords = [];
+  List<int> _globalWordOccurrences = [];
+  List<int> _sentenceWordStart = [];
+  int _searchRequestId = 0;
 
   // TTS settings
   String _selectedVoice = 'bf_emma';
@@ -314,13 +320,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
     // Get text: selected text first, then extracted PDF text, then text file content
     String textToRead = _selectedText ?? '';
+    _readingSource = '';
 
     if (textToRead.isEmpty && _pdfExtractedText != null) {
       textToRead = _pdfExtractedText!;
+      _readingSource = 'pdf';
     }
 
     if (textToRead.isEmpty && _textFileContent != null) {
       textToRead = _textFileContent!;
+      _readingSource = 'text';
+    }
+
+    if (_selectedText != null && _selectedText!.isNotEmpty) {
+      _readingSource = 'selection';
     }
 
     if (textToRead.isEmpty) {
@@ -345,6 +358,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     // Split into sentences
     _sentences = _splitIntoSentences(textToRead);
     if (_sentences.isEmpty) return;
+    _buildWordIndex(_sentences);
 
     setState(() {
       _isReading = true;
@@ -384,6 +398,39 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     return sentences;
   }
 
+  String _cleanWordForSearch(String word) {
+    final cleaned = word.replaceAll(RegExp(r'[^\w]'), '');
+    return cleaned.toLowerCase();
+  }
+
+  List<String> _splitSentenceWords(String sentence) {
+    return sentence
+        .split(RegExp(r'\s+'))
+        .map((w) => w.trim())
+        .where((w) => _cleanWordForSearch(w).length >= 2)
+        .toList();
+  }
+
+  void _buildWordIndex(List<String> sentences) {
+    _globalWords = [];
+    _globalWordOccurrences = [];
+    _sentenceWordStart = [];
+    final counts = <String, int>{};
+
+    for (final sentence in sentences) {
+      _sentenceWordStart.add(_globalWords.length);
+      final words = _splitSentenceWords(sentence);
+      for (final word in words) {
+        final clean = _cleanWordForSearch(word);
+        if (clean.length < 2) continue;
+        final nextCount = (counts[clean] ?? 0) + 1;
+        counts[clean] = nextCount;
+        _globalWords.add(clean);
+        _globalWordOccurrences.add(nextCount);
+      }
+    }
+  }
+
   Future<void> _readNextSentence() async {
     if (!_isReading || _isPaused) return;
     if (_currentSentenceIndex >= _sentences.length) {
@@ -397,11 +444,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     });
 
     // Split sentence into words for word-level highlighting
-    _currentSentenceWords = sentence
-        .split(RegExp(r'\s+'))
-        .where((w) => w.isNotEmpty && w.length > 1)
-        .toList();
+    _currentSentenceWords = _splitSentenceWords(sentence);
     _currentWordIndex = -1;
+    _currentSentenceStartIndex = (_currentSentenceIndex >= 0 &&
+            _currentSentenceIndex < _sentenceWordStart.length)
+        ? _sentenceWordStart[_currentSentenceIndex]
+        : 0;
 
     try {
       // Generate TTS audio
@@ -517,22 +565,51 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
 
     final word = _currentSentenceWords[_currentWordIndex];
-
-    // Clear previous highlight
-    _searchResult?.clear();
-
-    // Only search for words with enough characters to be meaningful
-    if (word.length >= 2) {
-      // Remove punctuation for better matching
-      final cleanWord = word.replaceAll(RegExp(r'[^\w]'), '');
-      if (cleanWord.isNotEmpty) {
-        _searchResult = _pdfController.searchText(cleanWord);
-      }
-    }
+    final globalIndex = _currentSentenceStartIndex + _currentWordIndex;
+    final hasGlobalWord =
+        globalIndex >= 0 && globalIndex < _globalWords.length;
 
     setState(() {
       _currentHighlightedWord = word;
     });
+
+    if (_readingSource != 'pdf' || _isTextFile || !hasGlobalWord) {
+      return;
+    }
+
+    final cleanWord = _globalWords[globalIndex];
+    if (cleanWord.isEmpty) return;
+    final targetInstance = _globalWordOccurrences[globalIndex];
+
+    _searchResult?.clear();
+    final searchResult = _pdfController.searchText(cleanWord);
+    _searchResult = searchResult;
+
+    final int requestId = ++_searchRequestId;
+    void handleSearchUpdate() {
+      if (requestId != _searchRequestId) {
+        searchResult.removeListener(handleSearchUpdate);
+        return;
+      }
+      if (!searchResult.hasResult || !searchResult.isSearchCompleted) return;
+
+      final total = searchResult.totalInstanceCount;
+      if (total <= 0) {
+        searchResult.removeListener(handleSearchUpdate);
+        return;
+      }
+
+      final desired = targetInstance.clamp(1, total);
+      int safety = 0;
+      while (searchResult.currentInstanceIndex != desired && safety < total) {
+        searchResult.nextInstance();
+        safety++;
+      }
+      searchResult.removeListener(handleSearchUpdate);
+    }
+
+    searchResult.addListener(handleSearchUpdate);
+    handleSearchUpdate();
   }
 
   void _pauseReading() {
@@ -573,6 +650,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _sentences = [];
       _currentSentenceWords = [];
       _wordTimings = [];
+      _globalWords = [];
+      _globalWordOccurrences = [];
+      _sentenceWordStart = [];
+      _currentSentenceStartIndex = 0;
     });
     _audioPlayer.stop();
   }
