@@ -1732,7 +1732,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
               final voice = allVoices[index];
               final name = voice['name'] as String;
               final transcript = voice['transcript'] as String? ?? '';
-              final source = voice['source'] as String? ?? 'qwen3';
               final isSelected = name == _selectedQwen3Voice;
 
               return Card(
@@ -1752,25 +1751,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                         name,
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                      const SizedBox(width: 8),
-                      if (source == 'qwen3')
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.teal.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            'Qwen3',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: Colors.teal.shade700,
-                            ),
-                          ),
-                        ),
                     ],
                   ),
                   subtitle: transcript.isNotEmpty

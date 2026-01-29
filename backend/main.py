@@ -596,7 +596,16 @@ async def qwen3_list_voices():
     try:
         engine = get_qwen3_engine()
         voices = engine.get_saved_voices(include_xtts=True)
-        return {"voices": voices}
+        # De-duplicate by name, prefer Qwen3 voices when present
+        merged = {}
+        for voice in voices:
+            name = (voice.get("name") or "").strip()
+            if not name:
+                continue
+            key = name.lower()
+            if key not in merged or voice.get("source") == "qwen3":
+                merged[key] = voice
+        return {"voices": list(merged.values())}
     except ImportError:
         return {"voices": [], "error": "Qwen3-TTS not installed"}
 
