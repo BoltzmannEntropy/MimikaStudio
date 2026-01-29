@@ -7,7 +7,7 @@ pydantic>=2.0.0
 # TTS Engines
 TTS>=0.22.0                       # XTTS2 voice cloning (Coqui)
 kokoro>=0.9.4                     # Kokoro TTS (British voices)
-transformers>=4.35.0,<4.45.0      # For TTS compatibility
+transformers==4.57.3              # Required by qwen-tts; XTTS patched for compat
 
 # Audio processing
 soundfile>=0.12.1

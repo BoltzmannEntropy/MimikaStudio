@@ -1,9 +1,48 @@
 import platform
 import torch
 from pathlib import Path
-from TTS.api import TTS
 import uuid
 import html as html_module
+
+
+def _ensure_transformers_compat():
+    """Patch transformers exports for XTTS on newer versions."""
+    try:
+        from transformers import BeamSearchScorer  # noqa: F401
+        return
+    except Exception:
+        pass
+
+    BeamSearchScorer = None
+    try:
+        from transformers.generation import BeamSearchScorer as _BeamSearchScorer  # type: ignore
+        BeamSearchScorer = _BeamSearchScorer
+    except Exception:
+        try:
+            from transformers.generation.beam_search import BeamSearchScorer as _BeamSearchScorer  # type: ignore
+            BeamSearchScorer = _BeamSearchScorer
+        except Exception:
+            BeamSearchScorer = None
+
+    if BeamSearchScorer is None:
+        return
+
+    import transformers
+    transformers.BeamSearchScorer = BeamSearchScorer
+
+    # Ensure LazyModule exposes the symbol
+    import_structure = getattr(transformers, "_import_structure", None)
+    if isinstance(import_structure, dict):
+        generation_exports = import_structure.get("generation")
+        if isinstance(generation_exports, list) and "BeamSearchScorer" not in generation_exports:
+            generation_exports.append("BeamSearchScorer")
+
+    # Preload XTTS stream generator so subsequent imports reuse patched transformers
+    try:
+        import importlib
+        importlib.import_module("TTS.tts.layers.xtts.stream_generator")
+    except Exception:
+        pass
 
 # Language mapping for XTTS
 LANGUAGES = {
@@ -40,6 +79,8 @@ class XTTSEngine:
     def load_model(self):
         if self.model is None:
             self.device = self._get_device()
+            _ensure_transformers_compat()
+            from TTS.api import TTS
             self.model = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2").to(self.device)
             print(f"XTTS model loaded on {self.device}")
         return self.model

@@ -6,7 +6,10 @@ from pydantic import BaseModel
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
+import json
+import os
 import shutil
+import subprocess
 
 from database import init_db, seed_db, get_connection
 from tts.xtts_engine import get_xtts_engine
@@ -93,6 +96,42 @@ app.add_middleware(
 outputs_dir = Path(__file__).parent / "outputs"
 outputs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
+
+# XTTS subprocess config (isolated env to avoid transformer conflicts)
+XTTS_PYTHON = Path(__file__).parent / "venv_xtts" / "bin" / "python"
+XTTS_SCRIPT = Path(__file__).parent / "scripts" / "xtts_generate.py"
+
+
+def _run_xtts_subprocess(text: str, speaker_wav_path: str, language: str, speed: float) -> Optional[Path]:
+    if not XTTS_PYTHON.exists() or not XTTS_SCRIPT.exists():
+        return None
+
+    payload = {
+        "text": text,
+        "speaker_wav_path": speaker_wav_path,
+        "language": language,
+        "speed": speed,
+    }
+    proc = subprocess.run(
+        [str(XTTS_PYTHON), str(XTTS_SCRIPT)],
+        input=json.dumps(payload),
+        text=True,
+        capture_output=True,
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "XTTS subprocess failed"
+        raise HTTPException(status_code=500, detail=detail)
+
+    try:
+        data = json.loads(proc.stdout.strip())
+        output_path = data.get("output_path")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"XTTS subprocess parse error: {exc}")
+
+    if not output_path:
+        raise HTTPException(status_code=500, detail="XTTS subprocess did not return output path")
+
+    return Path(output_path)
 
 # Health check
 @app.get("/api/health")
@@ -240,13 +279,24 @@ async def xtts_generate(request: XTTSRequest):
     if not Path(speaker_path).exists():
         raise HTTPException(status_code=404, detail=f"Voice file not found: {speaker_path}")
 
-    engine = get_xtts_engine()
-    output_path = engine.generate(
-        text=request.text,
-        speaker_wav_path=speaker_path,
-        language=request.language,
-        speed=request.speed
-    )
+    output_path = None
+    use_subprocess = os.environ.get("XTTS_USE_SUBPROCESS", "1") != "0"
+    if use_subprocess:
+        output_path = _run_xtts_subprocess(
+            text=request.text,
+            speaker_wav_path=speaker_path,
+            language=request.language,
+            speed=request.speed,
+        )
+
+    if output_path is None:
+        engine = get_xtts_engine()
+        output_path = engine.generate(
+            text=request.text,
+            speaker_wav_path=speaker_path,
+            language=request.language,
+            speed=request.speed
+        )
 
     return {
         "audio_url": f"/audio/{output_path.name}",

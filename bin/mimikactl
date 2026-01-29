@@ -90,6 +90,30 @@ start_backend() {
         source "$BACKEND_DIR/venv/bin/activate"
     fi
 
+    # Ensure backend deps match pinned versions (notably transformers)
+    if ! python3 - <<'PY'
+import sys
+import pkg_resources as pr
+try:
+    import transformers
+    v = pr.parse_version(transformers.__version__)
+except Exception:
+    sys.exit(1)
+target = pr.parse_version("4.57.3")
+sys.exit(0 if v == target else 1)
+PY
+    then
+        pip install -r "$BACKEND_DIR/requirements.txt"
+    fi
+
+    # Ensure XTTS isolated environment
+    XTTS_VENV="$BACKEND_DIR/venv_xtts"
+    if [ ! -x "$XTTS_VENV/bin/python" ]; then
+        echo "Creating XTTS virtual environment..."
+        python3 -m venv "$XTTS_VENV"
+    fi
+    "$XTTS_VENV/bin/pip" install -r "$BACKEND_DIR/requirements-xtts.txt" >/dev/null
+
     # Start FastAPI
     cd "$BACKEND_DIR"
     nohup python main.py > "$LOG_DIR/backend.log" 2>&1 &
