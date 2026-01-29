@@ -350,11 +350,8 @@ class Qwen3TTSEngine:
             "transcript": transcript,
         }
 
-    def get_saved_voices(self) -> list:
-        """Get list of saved voice samples.
-
-        Includes both Qwen3-specific voices and XTTS voice samples.
-        """
+    def get_saved_voices(self, include_xtts: bool = False) -> list:
+        """Get list of saved voice samples."""
         voices = []
 
         # Qwen3-specific voices (with transcripts)
@@ -369,20 +366,21 @@ class Qwen3TTSEngine:
                 "source": "qwen3",
             })
 
-        # Also include XTTS voice samples
-        xtts_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "voices"
-        if xtts_voices_dir.exists():
-            for wav_file in xtts_voices_dir.glob("*.wav"):
-                name = wav_file.stem
-                # Check if there's a transcript file
-                transcript_file = xtts_voices_dir / f"{name}.txt"
-                transcript = transcript_file.read_text().strip() if transcript_file.exists() else ""
-                voices.append({
-                    "name": name,
-                    "audio_path": str(wav_file),
-                    "transcript": transcript,
-                    "source": "xtts",
-                })
+        if include_xtts:
+            # Also include XTTS voice samples
+            xtts_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "voices"
+            if xtts_voices_dir.exists():
+                for wav_file in xtts_voices_dir.glob("*.wav"):
+                    name = wav_file.stem
+                    # Check if there's a transcript file
+                    transcript_file = xtts_voices_dir / f"{name}.txt"
+                    transcript = transcript_file.read_text().strip() if transcript_file.exists() else ""
+                    voices.append({
+                        "name": name,
+                        "audio_path": str(wav_file),
+                        "transcript": transcript,
+                        "source": "xtts",
+                    })
 
         return voices
 
