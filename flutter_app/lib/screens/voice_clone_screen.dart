@@ -157,12 +157,12 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
       // Load common data
       final systemInfo = await _api.getSystemInfo();
 
-      // Load unified custom voices (both XTTS and Qwen3)
-      List<Map<String, dynamic>> customVoices = [];
+      // Load XTTS voices
+      List<Map<String, dynamic>> xttsVoices = [];
       try {
-        customVoices = await _api.getCustomVoices();
+        xttsVoices = await _api.getXttsVoices();
       } catch (e) {
-        debugPrint('Custom voices not available: $e');
+        debugPrint('XTTS voices not available: $e');
       }
 
       // Load XTTS languages
@@ -179,13 +179,16 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         debugPrint('Qwen3 not available: $e');
       }
 
-      // Split voices by source for backwards compatibility
-      final xttsVoices = customVoices
-          .where((v) => v['source'] == 'xtts')
-          .toList();
-      final qwen3Voices = customVoices
-          .where((v) => v['source'] == 'qwen3')
-          .toList();
+      // Load Qwen3 voices
+      List<Map<String, dynamic>> qwen3Voices = [];
+      try {
+        final qwen3VoiceResponse = await _api.getQwen3Voices();
+        qwen3Voices = List<Map<String, dynamic>>.from(
+          qwen3VoiceResponse['voices'] as List<dynamic>? ?? [],
+        );
+      } catch (e) {
+        debugPrint('Qwen3 voices not available: $e');
+      }
 
       setState(() {
         _systemInfo = systemInfo;
