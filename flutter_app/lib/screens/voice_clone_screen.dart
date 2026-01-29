@@ -1653,8 +1653,16 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   }
 
   Widget _buildQwen3VoiceSection() {
-    // Only show Qwen3 voices in the Qwen3 panel
-    final allVoices = [..._qwen3Voices, ..._xttsVoices];
+    // Qwen3 list already includes XTTS samples (from backend); de-duplicate by name
+    final merged = <String, Map<String, dynamic>>{};
+    for (final voice in _qwen3Voices) {
+      final name = (voice['name'] as String? ?? '').toLowerCase();
+      if (name.isEmpty) continue;
+      if (!merged.containsKey(name) || voice['source'] == 'qwen3') {
+        merged[name] = voice;
+      }
+    }
+    final allVoices = merged.values.toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
