@@ -225,7 +225,7 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
     """Background worker that generates the audiobook."""
     engine = get_kokoro_engine()
     outputs_dir = Path(__file__).parent.parent / "outputs"
-    outputs_dir.mkdir(exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
 
     all_audio = []
     sample_rate = 24000  # Kokoro outputs at 24kHz

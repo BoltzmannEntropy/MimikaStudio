@@ -30,7 +30,7 @@ class XTTSEngine:
         self.model = None
         self.device = None
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
-        self.outputs_dir.mkdir(exist_ok=True)
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_device(self):
         if platform.system() == 'Darwin':
@@ -51,6 +51,7 @@ class XTTSEngine:
         text = html_module.unescape(text)
         lang_code = LANGUAGES.get(language, "en")
 
+        self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"xtts-{short_uuid}.wav"
 

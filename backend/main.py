@@ -91,7 +91,7 @@ app.add_middleware(
 
 # Mount outputs directory for serving audio files
 outputs_dir = Path(__file__).parent / "outputs"
-outputs_dir.mkdir(exist_ok=True)
+outputs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
 
 # Health check
@@ -611,7 +611,8 @@ async def qwen3_upload_voice(
         engine = get_qwen3_engine()
 
         # Save uploaded file temporarily
-        temp_path = Path(__file__).parent / "outputs" / f"temp_{name}.wav"
+        outputs_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = outputs_dir / f"temp_{name}.wav"
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
