@@ -994,6 +994,77 @@ async def kokoro_audio_delete(filename: str):
     return {"message": "Audio file deleted", "filename": filename}
 
 
+# ============== Voice Clone Audio Library Endpoints ==============
+
+@app.get("/api/voice-clone/audio/list")
+async def voice_clone_audio_list():
+    """List all generated Qwen3/XTTS voice clone audio files."""
+    from datetime import datetime
+
+    audio_files = []
+    patterns = [
+        ("qwen3", "qwen3-*.wav"),
+        ("xtts", "xtts-*.wav"),
+    ]
+
+    for engine, pattern in patterns:
+        for file in outputs_dir.glob(pattern):
+            stat = file.stat()
+            stem = file.stem
+            parts = stem.split("-")
+
+            mode = "clone"
+            if engine == "qwen3" and len(parts) > 1:
+                mode = parts[1]
+
+            label = "XTTS Clone"
+            if engine == "qwen3":
+                label = f"Qwen3 {mode.capitalize()}"
+
+            # Get audio duration using soundfile
+            try:
+                import soundfile as sf
+                info = sf.info(str(file))
+                duration_seconds = info.duration
+            except Exception:
+                duration_seconds = 0
+
+            audio_files.append({
+                "id": stem,
+                "filename": file.name,
+                "engine": engine,
+                "mode": mode,
+                "label": label,
+                "audio_url": f"/audio/{file.name}",
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "duration_seconds": round(duration_seconds, 1),
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            })
+
+    # Sort by creation time, newest first
+    audio_files.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return {"audio_files": audio_files, "total": len(audio_files)}
+
+
+@app.delete("/api/voice-clone/audio/{filename}")
+async def voice_clone_audio_delete(filename: str):
+    """Delete a voice clone audio file."""
+    # Security: ensure filename starts with qwen3-/xtts- and ends with .wav
+    if not (
+        filename.endswith(".wav")
+        and (filename.startswith("qwen3-") or filename.startswith("xtts-"))
+    ):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    file_path = outputs_dir / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
+
+    file_path.unlink()
+    return {"message": "Audio file deleted", "filename": filename}
+
+
 # ============== Sample Texts Endpoints ==============
 
 @app.get("/api/samples/{engine}")

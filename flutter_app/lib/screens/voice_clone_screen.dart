@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -107,19 +108,47 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   String? _audioFilename;
   String? _error;
 
+  // Audio library state
+  List<Map<String, dynamic>> _audioFiles = [];
+  bool _isLoadingAudioFiles = false;
+  String? _playingAudioId;
+  bool _isAudioPaused = false;
+  double _libraryPlaybackSpeed = 1.0;
+  StreamSubscription<PlayerState>? _playerSubscription;
+
   @override
   void initState() {
     super.initState();
     _loadData();
+    _loadAudioFiles();
   }
 
   @override
   void dispose() {
+    _playerSubscription?.cancel();
     _audioPlayer.dispose();
     _textController.dispose();
     _transcriptController.dispose();
     _instructController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAudioFiles() async {
+    setState(() => _isLoadingAudioFiles = true);
+    try {
+      final files = await _api.getVoiceCloneAudioFiles();
+      if (mounted) {
+        setState(() {
+          _audioFiles = files;
+          _isLoadingAudioFiles = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to load audio files: $e');
+      if (mounted) {
+        setState(() => _isLoadingAudioFiles = false);
+      }
+    }
   }
 
   Future<void> _loadData() async {
@@ -255,6 +284,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
 
       await _audioPlayer.setUrl(audioUrl);
       await _audioPlayer.play();
+      _loadAudioFiles();
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -348,8 +378,11 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
             onPressed: () => Navigator.pop(context, controller.text),
             child: const Text('Save'),
           ),
-        ],
-      ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -429,39 +462,43 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     // Qwen3 is available - custom mode with preset speakers always works
     final qwen3Available = true;
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Engine Selector
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: SegmentedButton<VoiceCloneEngine>(
-                segments: [
-                  ButtonSegment(
-                    value: VoiceCloneEngine.qwen3,
-                    label: const Text('Qwen3-TTS'),
-                    icon: Icon(
-                      Icons.auto_awesome,
-                      color: qwen3Available ? null : Colors.grey,
+    return Row(
+      children: [
+        _buildSidebar(),
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Engine Selector
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: SegmentedButton<VoiceCloneEngine>(
+                      segments: [
+                        ButtonSegment(
+                          value: VoiceCloneEngine.qwen3,
+                          label: const Text('Qwen3-TTS'),
+                          icon: Icon(
+                            Icons.auto_awesome,
+                            color: qwen3Available ? null : Colors.grey,
+                          ),
+                        ),
+                        const ButtonSegment(
+                          value: VoiceCloneEngine.xtts,
+                          label: Text('XTTS2'),
+                          icon: Icon(Icons.record_voice_over),
+                        ),
+                      ],
+                      selected: {_selectedEngine},
+                      onSelectionChanged: (selection) {
+                        setState(() => _selectedEngine = selection.first);
+                      },
                     ),
                   ),
-                  const ButtonSegment(
-                    value: VoiceCloneEngine.xtts,
-                    label: Text('XTTS2'),
-                    icon: Icon(Icons.record_voice_over),
-                  ),
-                ],
-                selected: {_selectedEngine},
-                onSelectionChanged: (selection) {
-                  setState(() => _selectedEngine = selection.first);
-                },
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
+                ),
+                const SizedBox(height: 16),
 
           // Model Header with System Info
           _buildModelHeader(isQwen3, qwen3Available),
@@ -743,6 +780,319 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildSidebar() {
+    return Container(
+      width: 280,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.library_music, size: 20),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Audio Library',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  onPressed: _loadAudioFiles,
+                  tooltip: 'Refresh',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+          // Playback speed control
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Text('Speed:', style: TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: _libraryPlaybackSpeed,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    label: '${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
+                    onChanged: _setLibraryPlaybackSpeed,
+                  ),
+                ),
+                Text(
+                  '${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          // Audio files list
+          Expanded(
+            child: _isLoadingAudioFiles
+                ? const Center(child: CircularProgressIndicator())
+                : _audioFiles.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(
+                            'No audio files yet.\nGenerate speech to see it here.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: _audioFiles.length,
+                        itemBuilder: (context, index) {
+                          final file = _audioFiles[index];
+                          return _buildAudioFileItem(file);
+                        },
+                      ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAudioFileItem(Map<String, dynamic> file) {
+    final fileId = file['id'] as String;
+    final filename = file['filename'] as String;
+    final label = (file['label'] as String?) ?? 'Voice Clone';
+    final engine = (file['engine'] as String?) ?? '';
+    final mode = (file['mode'] as String?) ?? '';
+    final duration = (file['duration_seconds'] as num?) ?? 0;
+    final sizeMb = (file['size_mb'] as num?) ?? 0;
+    final isThisPlaying = _playingAudioId == fileId;
+
+    final mins = (duration / 60).floor();
+    final secs = (duration % 60).round();
+    final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
+    final engineLabel = engine.isNotEmpty ? engine.toUpperCase() : 'VOICE';
+    final modeLabel = mode.isNotEmpty ? mode.toUpperCase() : '';
+    final meta = [
+      engineLabel,
+      modeLabel,
+      durationStr,
+      '${sizeMb.toStringAsFixed(1)} MB',
+    ].where((part) => part.isNotEmpty).join(' • ');
+
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: isThisPlaying
+            ? Theme.of(context).colorScheme.primaryContainer
+            : Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            leading: Icon(
+              Icons.audiotrack,
+              color: isThisPlaying ? Theme.of(context).colorScheme.primary : null,
+              size: 20,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+            subtitle: Text(
+              meta,
+              style: const TextStyle(fontSize: 10),
+            ),
+            trailing: IconButton(
+              icon: const Icon(Icons.delete_outline, size: 16),
+              onPressed: () => _deleteAudioFile(filename),
+              tooltip: 'Delete',
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+          // Playback controls
+          Padding(
+            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  onPressed: (!isThisPlaying || _isAudioPaused)
+                      ? () => _playAudioFile(file)
+                      : null,
+                  tooltip: 'Play',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.pause, size: 20),
+                  onPressed: (isThisPlaying && !_isAudioPaused)
+                      ? _pauseAudioPlayback
+                      : null,
+                  tooltip: 'Pause',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop, size: 20),
+                  onPressed: isThisPlaying ? _stopAudioPlayback : null,
+                  tooltip: 'Stop',
+                  visualDensity: VisualDensity.compact,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _playAudioFile(Map<String, dynamic> file) async {
+    final fileId = file['id'] as String;
+    final audioUrl = file['audio_url'] as String;
+
+    if (_playingAudioId == fileId && _isAudioPaused) {
+      setState(() => _isAudioPaused = false);
+      await _audioPlayer.play();
+      return;
+    }
+
+    setState(() {
+      _playingAudioId = fileId;
+      _isAudioPaused = false;
+    });
+
+    await Future.delayed(Duration.zero);
+    if (!mounted) return;
+
+    try {
+      await _playerSubscription?.cancel();
+      await _audioPlayer.stop();
+
+      await _audioPlayer.setUrl('${ApiService.baseUrl}$audioUrl');
+      await _audioPlayer.setSpeed(_libraryPlaybackSpeed);
+      await _audioPlayer.play();
+
+      _playerSubscription = _audioPlayer.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed) {
+          if (mounted) {
+            setState(() {
+              _playingAudioId = null;
+              _isAudioPaused = false;
+            });
+          }
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _playingAudioId = null;
+          _isAudioPaused = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to play: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _pauseAudioPlayback() async {
+    if (_playingAudioId != null) {
+      await _audioPlayer.pause();
+      setState(() => _isAudioPaused = true);
+    }
+  }
+
+  Future<void> _stopAudioPlayback() async {
+    await _playerSubscription?.cancel();
+    _playerSubscription = null;
+    await _audioPlayer.stop();
+    setState(() {
+      _playingAudioId = null;
+      _isAudioPaused = false;
+    });
+  }
+
+  Future<void> _setLibraryPlaybackSpeed(double speed) async {
+    setState(() => _libraryPlaybackSpeed = speed);
+    if (_playingAudioId != null) {
+      await _audioPlayer.setSpeed(speed);
+    }
+  }
+
+  Future<void> _deleteAudioFile(String filename) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Audio'),
+        content: const Text('Delete this audio file?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        if (_playingAudioId != null) {
+          final currentFile = _audioFiles.firstWhere(
+            (f) => f['id'] == _playingAudioId,
+            orElse: () => {},
+          );
+          if (currentFile['filename'] == filename) {
+            await _stopAudioPlayback();
+          }
+        }
+
+        await _api.deleteVoiceCloneAudio(filename);
+        _loadAudioFiles();
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete: $e')),
+          );
+        }
+      }
+    }
   }
 
   Widget _buildLanguageSelector() {

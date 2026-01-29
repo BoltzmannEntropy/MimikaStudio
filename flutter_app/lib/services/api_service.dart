@@ -526,4 +526,28 @@ class ApiService {
     }
   }
 
+  // ============== Voice Clone Audio Library ==============
+
+  /// List all generated voice clone audio files (Qwen3 + XTTS).
+  Future<List<Map<String, dynamic>>> getVoiceCloneAudioFiles() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/voice-clone/audio/list'),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['audio_files']);
+    }
+    throw Exception('Failed to list voice clone audio files: ${response.body}');
+  }
+
+  /// Delete a voice clone audio file.
+  Future<void> deleteVoiceCloneAudio(String filename) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/voice-clone/audio/$filename'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete audio file: ${response.body}');
+    }
+  }
+
 }
