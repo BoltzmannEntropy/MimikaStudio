@@ -17,7 +17,6 @@ venv/
 backend/venv/
 backend/data/outputs/
 backend/data/samples/qwen3_voices/
-backend/data/samples/voices/
 backend/*.db
 backend/data/*.db
 backend/outputs/
@@ -32,7 +31,8 @@ flutter_app/build/
 flutter_app/.dart_tool/
 
 # Models (large files)
-backend/models/
+backend/models/*
+!backend/models/registry.py
 
 # IDE
 .idea/
