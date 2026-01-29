@@ -1654,9 +1654,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
 
   Widget _buildQwen3VoiceSection() {
     // Only show Qwen3 voices in the Qwen3 panel
-    final allVoices = _qwen3Voices
-        .where((voice) => (voice['source'] as String? ?? 'qwen3') != 'xtts')
-        .toList();
+    final allVoices = [..._qwen3Voices, ..._xttsVoices];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1747,27 +1745,24 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                         style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: source == 'qwen3'
-                              ? Colors.teal.shade100
-                              : Colors.blue.shade100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          source == 'qwen3' ? 'Qwen3' : 'XTTS',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: source == 'qwen3'
-                                ? Colors.teal.shade700
-                                : Colors.blue.shade700,
+                      if (source == 'qwen3')
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.shade100,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            'Qwen3',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.teal.shade700,
+                            ),
                           ),
                         ),
-                      ),
                     ],
                   ),
                   subtitle: transcript.isNotEmpty
