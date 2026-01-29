@@ -1650,8 +1650,10 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   }
 
   Widget _buildQwen3VoiceSection() {
-    // Combine all custom voices for unified display
-    final allVoices = [..._qwen3Voices, ..._xttsVoices];
+    // Only show Qwen3 voices in the Qwen3 panel
+    final allVoices = _qwen3Voices
+        .where((voice) => (voice['source'] as String? ?? 'qwen3') != 'xtts')
+        .toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
