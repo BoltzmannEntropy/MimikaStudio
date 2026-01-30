@@ -427,15 +427,17 @@ class ApiService {
 
   // ============== Audiobook Generation ==============
 
-  /// Start audiobook generation from text.
+  /// Start audiobook generation from text with optional subtitles.
   /// Returns job info including job_id for status polling.
-  /// [outputFormat] can be "wav" or "mp3".
+  /// [outputFormat] can be "wav", "mp3", or "m4b".
+  /// [subtitleFormat] can be "none", "srt", or "vtt".
   Future<Map<String, dynamic>> startAudiobookGeneration({
     required String text,
     String title = 'Untitled',
     String voice = 'bf_emma',
     double speed = 1.0,
     String outputFormat = 'wav',
+    String subtitleFormat = 'none',
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/audiobook/generate'),
@@ -446,6 +448,7 @@ class ApiService {
         'voice': voice,
         'speed': speed,
         'output_format': outputFormat,
+        'subtitle_format': subtitleFormat,
       }),
     );
     if (response.statusCode == 200) {

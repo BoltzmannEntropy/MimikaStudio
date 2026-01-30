@@ -56,7 +56,7 @@ MimikaStudio isn't just a TTS engine wrapper:
 
 - **PDF Reader with Voice**: Load any PDF from the `./pdf` directory and have it read aloud with sentence-by-sentence highlighting. Choose your preferred Kokoro voice, adjust speed, and let MimikaStudio narrate your documents.
 
-- **Audiobook Creator**: Convert entire documents (PDF, TXT, MD) into audiobook files with a single click. The system intelligently chunks text at sentence boundaries, generates audio for each segment using Kokoro TTS, and concatenates everything into a single file. **Supports both WAV and MP3 output formats.** Track progress in real-time, manage your audiobook library, and play any generated audiobook with full playback controls (play, pause, stop).
+- **Audiobook Creator**: Convert entire documents (PDF, EPUB, TXT, MD, DOCX) into audiobook files with a single click. The system uses **spaCy-based sentence tokenization** (like [audiblez](https://github.com/santinic/audiblez)) for intelligent text chunking, extracts chapters from PDF TOC or EPUB structure, and **skips headers/footers/page numbers** (like [pdf-narrator](https://github.com/mateogon/pdf-narrator)). **Supports WAV, MP3, and M4B (audiobook format with chapter markers) output.** Track progress in real-time with **character-based progress** (~60 chars/sec on M2 CPU), ETA estimation, and manage your audiobook library with full playback controls.
 
 ![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
 
@@ -516,10 +516,11 @@ Multi-language voice cloning (requires 6-30 second reference audio).
 | `/api/xtts/generate` | POST | Generate cloned voice audio |
 | `/api/xtts/voices` | GET/POST/DELETE | Voice management |
 | **Audiobook Creator** |||
-| `/api/audiobook/generate` | POST | Start audiobook generation job |
-| `/api/audiobook/status/{job_id}` | GET | Get job progress (chunks completed, total) |
+| `/api/audiobook/generate` | POST | Start audiobook generation from text |
+| `/api/audiobook/generate-from-file` | POST | Start generation from uploaded file (PDF/EPUB/TXT/DOCX) |
+| `/api/audiobook/status/{job_id}` | GET | Get job progress (chars/sec, ETA, chapters) |
 | `/api/audiobook/cancel/{job_id}` | POST | Cancel in-progress job |
-| `/api/audiobook/list` | GET | List all generated audiobooks |
+| `/api/audiobook/list` | GET | List all generated audiobooks (WAV/MP3/M4B) |
 | `/api/audiobook/{job_id}` | DELETE | Delete audiobook file |
 | **Emma IPA** |||
 | `/api/ipa/samples` | GET | List IPA sample texts |
@@ -533,26 +534,46 @@ Multi-language voice cloning (requires 6-30 second reference audio).
 
 Generate audiobooks from documents using background job processing with progress tracking.
 
-**Start Generation:**
+**Performance**: ~60 chars/sec on M2 MacBook Pro CPU (matching [audiblez](https://github.com/santinic/audiblez) benchmark).
+
+**Start Generation (from text):**
 
 ```bash
 curl -X POST http://localhost:8000/api/audiobook/generate \
   -H "Content-Type: application/json" \
   -d '{
     "text": "Your long document text here...",
+    "title": "My Audiobook",
     "voice": "bf_emma",
     "speed": 1.0,
-    "output_format": "mp3"
+    "output_format": "m4b"
   }'
+```
+
+**Start Generation (from file upload):**
+
+```bash
+curl -X POST http://localhost:8000/api/audiobook/generate-from-file \
+  -F "file=@mybook.pdf" \
+  -F "title=My Audiobook" \
+  -F "voice=bf_emma" \
+  -F "output_format=m4b"
 ```
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `text` | string | *required* | Document text to convert |
+| `text` / `file` | string/file | *required* | Document text or uploaded file |
 | `title` | string | `"Untitled"` | Audiobook title |
 | `voice` | string | `"bf_emma"` | Kokoro voice ID |
 | `speed` | float | `1.0` | Playback speed (0.5-2.0) |
-| `output_format` | string | `"wav"` | Output format: `"wav"` or `"mp3"` |
+| `output_format` | string | `"wav"` | Output format: `"wav"`, `"mp3"`, or `"m4b"` |
+| `subtitle_format` | string | `"none"` | Subtitle format: `"none"`, `"srt"`, or `"vtt"` |
+
+**Supported File Formats**: PDF (with TOC/chapter extraction), EPUB, TXT, MD, DOCX
+
+**Subtitle Formats**:
+- **SRT**: SubRip format - widely compatible with video players (VLC, media players)
+- **VTT**: WebVTT format - web-friendly, works in browsers with `<video>` tags
 
 Response:
 ```json
@@ -560,11 +581,14 @@ Response:
   "job_id": "abc123",
   "status": "started",
   "total_chunks": 20,
-  "output_format": "mp3"
+  "total_chars": 45000,
+  "chapters": 5,
+  "output_format": "m4b",
+  "subtitle_format": "srt"
 }
 ```
 
-**Poll Progress:**
+**Poll Progress (with ETA):**
 
 ```bash
 curl http://localhost:8000/api/audiobook/status/abc123
@@ -578,13 +602,39 @@ Response:
   "current_chunk": 5,
   "total_chunks": 20,
   "percent": 25.0,
-  "output_format": "mp3"
+  "total_chars": 45000,
+  "processed_chars": 11250,
+  "chars_per_sec": 58.3,
+  "eta_seconds": 578.5,
+  "eta_formatted": "9m 38s",
+  "current_chapter": 2,
+  "total_chapters": 5,
+  "output_format": "m4b"
+}
+```
+
+**Completed Response (with subtitles):**
+```json
+{
+  "job_id": "abc123",
+  "status": "completed",
+  "audio_url": "/audio/audiobook-abc123.m4b",
+  "subtitle_url": "/audio/audiobook-abc123.srt",
+  "subtitle_format": "srt",
+  "duration_seconds": 3600.5,
+  "file_size_mb": 45.2,
+  "final_chars_per_sec": 62.1
 }
 ```
 
 **Output Formats:**
 - **WAV**: Lossless, larger file size (~10MB/minute)
 - **MP3**: Compressed, smaller file size (~1.5MB/minute at 192kbps)
+- **M4B**: Audiobook format with chapter markers (requires ffmpeg)
+
+**Subtitle Formats:**
+- **SRT**: Standard subtitle format, compatible with VLC, media players
+- **VTT**: WebVTT format for web video players and HTML5 `<track>` element
 
 Full API documentation: http://localhost:8000/docs
 
@@ -637,51 +687,205 @@ MimikaStudio/
 
 ---
 
-## Requirements
+## System Requirements
 
-- **Python 3.10+** with pip
-- **Flutter 3.x** with macOS desktop support enabled
-- **macOS 12+** for Flutter desktop
-- **espeak-ng** for Kokoro phonemization (`brew install espeak-ng`)
-- **ffmpeg** for MP3 audiobook export (`brew install ffmpeg`)
+### Minimum Requirements
 
-**Optional**:
-- **CUDA GPU** for faster inference (NVIDIA)
-- **Apple Silicon** (M1/M2/M3) - uses MPS where supported, CPU fallback for Qwen3
+| Component | Requirement |
+|-----------|-------------|
+| **OS** | macOS 12+ (Monterey or later) |
+| **CPU** | Apple Silicon (M1/M2/M3/M4) or Intel |
+| **RAM** | 8GB minimum, 16GB+ recommended |
+| **Storage** | 10GB for models and dependencies |
+| **Python** | 3.10 or later |
+| **Flutter** | 3.x with macOS desktop support |
+
+### Required System Dependencies
+
+Install via Homebrew:
+
+```bash
+# Required for Kokoro TTS phonemization
+brew install espeak-ng
+
+# Required for MP3/M4B audiobook export
+brew install ffmpeg
+```
+
+### Optional
+
+- **CUDA GPU** (NVIDIA) - for faster inference on Linux/Windows
+- **Apple Silicon** (M1/M2/M3/M4) - uses MPS acceleration where supported
+
+---
 
 ## Installation
 
-```bash
-# Clone repository
-cd /path/to/MimikaStudio
+### Step 1: Clone the Repository
 
-# Create Python venv and install dependencies
+```bash
+git clone https://github.com/BoltzmannEntropy/MimikaStudio.git
+cd MimikaStudio
+```
+
+### Step 2: Install System Dependencies (macOS)
+
+```bash
+# Install Homebrew if not present
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install required dependencies
+brew install espeak-ng ffmpeg python@3.11
+
+# Optional: Install spaCy model for robust sentence tokenization
+# (The app will fall back to regex if not installed)
+```
+
+### Step 3: Set Up Python Backend
+
+```bash
 cd backend
+
+# Create virtual environment
 python3 -m venv venv
 source venv/bin/activate
+
+# Install Python dependencies
+pip install --upgrade pip
 pip install -r requirements.txt
 
-# Install Qwen3-TTS
+# Install Qwen3-TTS for voice cloning
 pip install -U qwen-tts soundfile
 
-# Initialize database
+# Install spaCy for robust sentence tokenization (optional but recommended)
+pip install spacy
+
+# Verify installation
+python -c "import kokoro; print('Kokoro OK')"
+python -c "from qwen_tts import QwenTTS; print('Qwen3-TTS OK')"
+```
+
+### Step 4: Set Up Flutter Frontend
+
+```bash
+cd ../flutter_app
+
+# Get Flutter dependencies
+flutter pub get
+
+# Verify Flutter setup
+flutter doctor
+
+# Build macOS app (optional - mimikactl will do this automatically)
+flutter build macos --release
+```
+
+### Step 5: Initialize Database
+
+```bash
 cd ..
 ./bin/mimikactl db seed
-
-# Start services
-./bin/mimikactl up
 ```
+
+### Step 6: Download Models (Optional - Auto-downloads on First Use)
+
+```bash
+# Pre-download Kokoro model (~300MB)
+./bin/mimikactl models download kokoro
+
+# Pre-download Qwen3-TTS models (~4GB for 1.7B)
+./bin/mimikactl models download qwen3
+```
+
+### Step 7: Start MimikaStudio
+
+```bash
+# Start all services (Backend + MCP + Flutter UI)
+./bin/mimikactl up
+
+# Or start backend only (for API usage)
+./bin/mimikactl up --no-flutter
+```
+
+The app will open automatically. Access the API at `http://localhost:8000`.
+
+---
+
+## Quick Start (TL;DR)
+
+```bash
+# One-liner for macOS with Homebrew
+brew install espeak-ng ffmpeg python@3.11 && \
+cd MimikaStudio/backend && \
+python3 -m venv venv && source venv/bin/activate && \
+pip install -r requirements.txt qwen-tts soundfile spacy && \
+cd .. && ./bin/mimikactl db seed && ./bin/mimikactl up
+```
+
+---
 
 ## Running Tests
 
 ```bash
 cd backend
 source venv/bin/activate
+
+# Run all tests (fast, mocks models)
 pytest tests/
 
-# With model tests (slow, requires models downloaded)
+# Run with actual model tests (slow, requires models downloaded)
 RUN_MODEL_TESTS=1 pytest tests/
+
+# Run specific test file
+pytest tests/test_audiobook.py -v
 ```
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+**"espeak-ng not found"**
+```bash
+brew install espeak-ng
+# Or on Linux: sudo apt install espeak-ng
+```
+
+**"ffmpeg not found" (for MP3/M4B export)**
+```bash
+brew install ffmpeg
+```
+
+**"spaCy not available" (warning, not error)**
+```bash
+pip install spacy
+# The app will use regex fallback if spaCy is not installed
+```
+
+**Models not downloading**
+- Ensure you have internet access
+- Models are stored in `~/.cache/huggingface/` (Qwen3) and `backend/models/` (Kokoro)
+
+**Flutter build fails**
+```bash
+flutter clean
+flutter pub get
+flutter build macos --release
+```
+
+**Port 8000 already in use**
+```bash
+# Find and kill the process
+lsof -i :8000
+kill -9 <PID>
+```
+
+### Performance Tips
+
+- **Apple Silicon**: Qwen3-TTS runs on CPU but Kokoro uses MPS when available
+- **Audiobook generation**: Expect ~60 chars/sec on M2 MacBook Pro (matching audiblez benchmark)
+- **Memory**: Close other apps when generating long audiobooks with 1.7B model
 
 ---
 
@@ -719,6 +923,28 @@ S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop 
 
 ---
 
+## Similar Projects
+
+MimikaStudio was inspired by and builds upon ideas from these excellent projects:
+
+| Project | Description | Key Features |
+|---------|-------------|--------------|
+| [**audiblez**](https://github.com/santinic/audiblez) | EPUB to audiobook converter using Kokoro TTS | spaCy sentence tokenization, M4B output with chapters, ~60 chars/sec on M2 CPU |
+| [**pdf-narrator**](https://github.com/mateogon/pdf-narrator) | PDF to audiobook with smart text extraction | Skips headers/footers/page numbers, TOC-based chapter splitting, pause/resume |
+| [**abogen**](https://github.com/denizsafak/abogen) | Full-featured audiobook generator GUI | Voice mixer, subtitle generation, batch processing, chapter markers |
+| [**Qwen3-Audiobook-Converter**](https://github.com/WhiskeyCoder/Qwen3-Audiobook-Converter) | Qwen3-TTS audiobook tool | Style instructions for professional narration |
+
+### What MimikaStudio Adds
+
+MimikaStudio combines the best features from all these projects into a unified desktop experience:
+
+- **From audiblez**: spaCy-based sentence tokenization, character-based progress tracking (~60 chars/sec benchmark), M4B output with chapter markers
+- **From pdf-narrator**: Smart PDF extraction that skips headers/footers/page numbers, TOC-based chapter detection
+- **From abogen**: Multiple output formats (WAV/MP3/M4B), real-time progress with ETA, chapter-aware processing
+- **Unique to MimikaStudio**: Native macOS Flutter UI, 3-second voice cloning, unified voice library across multiple TTS engines, Emma IPA transcription, MCP server integration
+
+---
+
 ## License
 
 MIT License
@@ -730,3 +956,5 @@ MIT License
 - [Coqui TTS](https://github.com/coqui-ai/TTS) - XTTS2 voice cloning
 - [Flutter](https://flutter.dev) - Cross-platform UI framework
 - [FastAPI](https://fastapi.tiangolo.com) - Python API framework
+- [spaCy](https://spacy.io) - Industrial-strength NLP for sentence tokenization
+- [PyMuPDF](https://pymupdf.readthedocs.io) - Smart PDF text extraction

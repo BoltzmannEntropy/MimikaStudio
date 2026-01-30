@@ -71,7 +71,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String _audiobookStatus = '';
   Timer? _audiobookPollTimer;
   String? _audiobookUrl;
-  String _audiobookOutputFormat = 'mp3'; // 'wav' or 'mp3'
+  String _audiobookOutputFormat = 'mp3'; // 'wav', 'mp3', or 'm4b'
+  String _audiobookSubtitleFormat = 'none'; // 'none', 'srt', or 'vtt'
 
   // Audiobook library state
   List<Map<String, dynamic>> _audiobooks = [];
@@ -697,6 +698,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         voice: _selectedVoice,
         speed: _speed,
         outputFormat: _audiobookOutputFormat,
+        subtitleFormat: _audiobookSubtitleFormat,
       );
 
       _audiobookJobId = result['job_id'] as String;
@@ -1067,10 +1069,36 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   segments: const [
                     ButtonSegment(value: 'mp3', label: Text('MP3', style: TextStyle(fontSize: 10))),
                     ButtonSegment(value: 'wav', label: Text('WAV', style: TextStyle(fontSize: 10))),
+                    ButtonSegment(value: 'm4b', label: Text('M4B', style: TextStyle(fontSize: 10))),
                   ],
                   selected: {_audiobookOutputFormat},
                   onSelectionChanged: (Set<String> selection) {
                     setState(() => _audiobookOutputFormat = selection.first);
+                  },
+                  style: ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          // Subtitle format selector
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(
+              children: [
+                const Text('Subtitles:', style: TextStyle(fontSize: 11)),
+                const SizedBox(width: 8),
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'none', label: Text('None', style: TextStyle(fontSize: 10))),
+                    ButtonSegment(value: 'srt', label: Text('SRT', style: TextStyle(fontSize: 10))),
+                    ButtonSegment(value: 'vtt', label: Text('VTT', style: TextStyle(fontSize: 10))),
+                  ],
+                  selected: {_audiobookSubtitleFormat},
+                  onSelectionChanged: (Set<String> selection) {
+                    setState(() => _audiobookSubtitleFormat = selection.first);
                   },
                   style: ButtonStyle(
                     visualDensity: VisualDensity.compact,

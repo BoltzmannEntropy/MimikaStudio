@@ -28,7 +28,14 @@ httpx>=0.25.0
 
 # CLI file format support
 PyPDF2>=3.0.0                     # PDF text extraction
+pymupdf>=1.24.0                   # Better PDF extraction (skip headers/footers)
 python-docx>=1.0.0                # DOCX support
 docx2txt>=0.8                     # Legacy DOC support
 ebooklib>=0.18                    # EPUB support
 beautifulsoup4>=4.12.0            # HTML parsing for EPUB
+
+# Text processing
+spacy>=3.7.0                      # Robust sentence tokenization (like audiblez)
+
+# System monitoring
+psutil>=5.9.0
