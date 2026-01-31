@@ -107,6 +107,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   bool _isLoadingAudioFiles = false;
   String? _playingAudioId;
   bool _isAudioPaused = false;
+  String? _previewVoiceName;
+  bool _isPreviewPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
 
@@ -259,8 +261,14 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         _audioUrl = audioUrl;
         _audioFilename = filename;
         _isGenerating = false;
+        _playingAudioId = null;
+        _isAudioPaused = false;
+        _previewVoiceName = null;
+        _isPreviewPaused = false;
       });
 
+      await _playerSubscription?.cancel();
+      _playerSubscription = null;
       await _audioPlayer.setUrl(audioUrl);
       await _audioPlayer.play();
       _loadAudioFiles();
@@ -811,6 +819,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     setState(() {
       _playingAudioId = fileId;
       _isAudioPaused = false;
+      _previewVoiceName = null;
+      _isPreviewPaused = false;
     });
 
     await Future.delayed(Duration.zero);
@@ -825,7 +835,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
       await _audioPlayer.play();
 
       _playerSubscription = _audioPlayer.playerStateStream.listen((state) {
-        if (state.processingState == ProcessingState.completed) {
+        if (state.processingState == ProcessingState.completed ||
+            state.processingState == ProcessingState.idle) {
           if (mounted) {
             setState(() {
               _playingAudioId = null;
@@ -1366,6 +1377,15 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   }
 
   Future<void> _previewQwen3Voice(Map<String, dynamic> voice) async {
+    final name = voice['name'] as String? ?? '';
+    if (name.isEmpty) return;
+
+    if (_previewVoiceName == name && _isPreviewPaused) {
+      setState(() => _isPreviewPaused = false);
+      await _audioPlayer.play();
+      return;
+    }
+
     try {
       final audioUrl = voice['audio_url'] as String?;
       if (audioUrl == null || audioUrl.isEmpty) {
@@ -1373,14 +1393,59 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
       }
       final playUrl =
           audioUrl.startsWith('http') ? audioUrl : '${ApiService.baseUrl}$audioUrl';
+
+      await _playerSubscription?.cancel();
+      _playerSubscription = null;
+      await _audioPlayer.stop();
+
+      if (!mounted) return;
+      setState(() {
+        _playingAudioId = null;
+        _isAudioPaused = false;
+        _previewVoiceName = name;
+        _isPreviewPaused = false;
+      });
+
       await _audioPlayer.setUrl(playUrl);
+      await _audioPlayer.setSpeed(1.0);
       await _audioPlayer.play();
+
+      _playerSubscription = _audioPlayer.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed ||
+            state.processingState == ProcessingState.idle) {
+          if (mounted) {
+            setState(() {
+              _previewVoiceName = null;
+              _isPreviewPaused = false;
+            });
+          }
+        }
+      });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
       }
+    }
+  }
+
+  Future<void> _pausePreviewPlayback() async {
+    if (_previewVoiceName != null && !_isPreviewPaused) {
+      await _audioPlayer.pause();
+      setState(() => _isPreviewPaused = true);
+    }
+  }
+
+  Future<void> _stopPreviewPlayback() async {
+    await _playerSubscription?.cancel();
+    _playerSubscription = null;
+    await _audioPlayer.stop();
+    if (mounted) {
+      setState(() {
+        _previewVoiceName = null;
+        _isPreviewPaused = false;
+      });
     }
   }
 
@@ -1398,6 +1463,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         final name = voice['name'] as String;
         final transcript = voice['transcript'] as String? ?? '';
         final isSelected = name == _selectedQwen3Voice;
+        final isPreviewing = _previewVoiceName == name;
 
         return Card(
           color: isSelected
@@ -1450,9 +1516,29 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.play_circle_outline),
-                  onPressed: () => _previewQwen3Voice(voice),
-                  tooltip: 'Preview',
+                  icon: const Icon(Icons.play_arrow),
+                  onPressed: (!isPreviewing || _isPreviewPaused)
+                      ? () => _previewQwen3Voice(voice)
+                      : null,
+                  tooltip: 'Play',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.pause),
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreviewPlayback
+                      : null,
+                  tooltip: 'Pause',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop),
+                  onPressed: isPreviewing ? _stopPreviewPlayback : null,
+                  tooltip: 'Stop',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 32),
                 ),
                 if (allowEdit) ...[
                   IconButton(
@@ -1518,7 +1604,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.upload),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Voice'),
+              label: Text(_isUploading ? 'Uploading...' : 'Upload Voice (WAV only)'),
             ),
           ],
         ),
@@ -1538,7 +1624,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Upload a 3+ second audio clip with its transcript to clone a voice',
+                    'Upload a 3+ second WAV clip with its transcript to clone a voice',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
