@@ -3,11 +3,11 @@
   <br>
 </div>
 
-# MimikaStudio - Voice Cloning, TTS & Audiobook Creator
+# MimikaStudio - Voice Cloning, TTS & Audiobook Creator - Platforms (macOS + Web)
 
 > **Custom Voice Cloning** • **Text-to-Speech** • **PDF Read Aloud** • **Audiobook Creator**
 
-A local-first desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+A local-first (Platforms macOS + Web) desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
 
 > *I ported my old Gradio app into this beautiful native Flutter desktop application, specifically optimized for Apple Silicon users who want a polished, responsive UI with proper macOS integration.*
 
