@@ -1,6 +1,9 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as pdf;
@@ -27,9 +30,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool get wantKeepAlive => true;
 
   // Library state
-  List<Map<String, String>> _pdfLibrary = [];
+  List<Map<String, dynamic>> _pdfLibrary = [];
   String? _selectedPdfPath;
   String? _selectedPdfName;
+  Uint8List? _selectedPdfBytes;
   bool _isInitialized = false;
   String? _textFileContent; // For .txt and .md files
   String? _pdfExtractedText; // Extracted text from PDF
@@ -123,8 +127,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Future<void> _loadSamplePdfs() async {
+    if (kIsWeb) {
+      setState(() {
+        _pdfLibrary = [];
+        _isInitialized = true;
+      });
+      return;
+    }
+
     // Collect documents first
-    final foundDocs = <Map<String, String>>[];
+    final foundDocs = <Map<String, dynamic>>[];
 
     // Default PDF for read aloud
     const defaultPdfPath =
@@ -178,7 +190,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
       // Auto-select default PDF if present, else first document
       if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
-        Map<String, String>? defaultDoc;
+        Map<String, dynamic>? defaultDoc;
         for (final doc in _pdfLibrary) {
           if (doc['path'] == defaultPdfPath) {
             defaultDoc = doc;
@@ -187,10 +199,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         }
         if (defaultDoc != null) {
           debugPrint('Auto-selecting default document: ${defaultDoc['name']}');
-          _selectPdf(defaultDoc['path']!, defaultDoc['name']!);
+          _selectPdf(defaultDoc['path'] as String, defaultDoc['name'] as String);
         } else {
           debugPrint('Auto-selecting first document: ${_pdfLibrary.first['name']}');
-          _selectPdf(_pdfLibrary.first['path']!, _pdfLibrary.first['name']!);
+          _selectPdf(
+            _pdfLibrary.first['path'] as String,
+            _pdfLibrary.first['name'] as String,
+          );
         }
       }
     }
@@ -210,27 +225,32 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'txt', 'md'],
+      withData: kIsWeb,
     );
 
-    if (result != null && result.files.single.path != null) {
-      final path = result.files.single.path!;
-      final name = p.basename(path);
+    if (result != null && result.files.isNotEmpty) {
+      final file = result.files.single;
+      final path = file.path ??
+          'memory://${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+      final name = file.path != null ? p.basename(path) : file.name;
+      final bytes = file.bytes;
 
       // Add to library if not exists
       if (!_pdfLibrary.any((p) => p['path'] == path)) {
         setState(() {
-          _pdfLibrary.add({'path': path, 'name': name});
+          _pdfLibrary.add({'path': path, 'name': name, 'bytes': bytes});
         });
       }
 
-      _selectPdf(path, name);
+      _selectPdf(path, name, bytes: bytes);
     }
   }
 
-  void _selectPdf(String path, String name) {
+  void _selectPdf(String path, String name, {Uint8List? bytes}) {
     setState(() {
       _selectedPdfPath = path;
       _selectedPdfName = name;
+      _selectedPdfBytes = bytes;
       _currentPage = 1;
       _totalPages = 0;
       _textFileContent = null;
@@ -241,6 +261,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
     // Load text content for .txt and .md files
     final lowerPath = path.toLowerCase();
+    if (bytes != null && kIsWeb) {
+      if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
+        _loadTextFromBytes(bytes);
+      } else if (lowerPath.endsWith('.pdf')) {
+        _extractPdfTextFromBytes(bytes);
+      }
+      return;
+    }
+
     if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
       _loadTextFile(path);
     } else if (lowerPath.endsWith('.pdf')) {
@@ -267,17 +296,47 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
+  Future<void> _loadTextFromBytes(Uint8List bytes) async {
+    try {
+      final content = utf8.decode(bytes);
+      setState(() {
+        _textFileContent = content;
+        _selectedText = content; // Auto-select all text for reading
+        _totalPages = 1;
+      });
+    } catch (e) {
+      debugPrint('Error loading text bytes: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading file: $e')),
+        );
+      }
+    }
+  }
+
   Future<void> _extractPdfText(String path) async {
     setState(() => _isExtractingText = true);
 
     try {
       final file = File(path);
       final bytes = await file.readAsBytes();
-      final document = pdf.PdfDocument(inputBytes: bytes);
+      await _extractPdfTextFromBytes(bytes);
+    } catch (e) {
+      debugPrint('Error extracting PDF text: $e');
+      if (mounted) {
+        setState(() => _isExtractingText = false);
+      }
+    }
+  }
 
+  Future<void> _extractPdfTextFromBytes(Uint8List bytes) async {
+    try {
+      if (mounted) {
+        setState(() => _isExtractingText = true);
+      }
+      final document = pdf.PdfDocument(inputBytes: bytes);
       final textExtractor = pdf.PdfTextExtractor(document);
       final text = textExtractor.extractText();
-
       document.dispose();
 
       if (mounted) {
@@ -314,6 +373,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       if (_selectedPdfPath == path) {
         _selectedPdfPath = null;
         _selectedPdfName = null;
+        _selectedPdfBytes = null;
         _stopReading();
       }
     });
@@ -908,9 +968,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     itemCount: _pdfLibrary.length,
                     itemBuilder: (context, index) {
                       final pdf = _pdfLibrary[index];
-                      final isSelected = pdf['path'] == _selectedPdfPath;
+                      final name = (pdf['name'] as String?) ?? 'Untitled';
+                      final path = (pdf['path'] as String?) ?? '';
+                      final isSelected = path == _selectedPdfPath;
 
-                      final lowerName = pdf['name']!.toLowerCase();
+                      final lowerName = name.toLowerCase();
                       final IconData icon;
                       if (lowerName.endsWith('.md')) {
                         icon = Icons.code;
@@ -930,7 +992,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                           size: 20,
                         ),
                         title: Text(
-                          pdf['name']!,
+                          name,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 13,
@@ -939,10 +1001,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                         ),
                         trailing: IconButton(
                           icon: const Icon(Icons.close, size: 16),
-                          onPressed: () => _removePdf(pdf['path']!),
+                          onPressed: () => _removePdf(path),
                           visualDensity: VisualDensity.compact,
                         ),
-                        onTap: () => _selectPdf(pdf['path']!, pdf['name']!),
+                        onTap: () => _selectPdf(path, name, bytes: pdf['bytes'] as Uint8List?),
                       );
                     },
                   ),
@@ -1452,6 +1514,43 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Widget _buildPdfViewer() {
+    // Use text viewer for .txt and .md files
+    if (_isTextFile) {
+      return _buildTextViewer();
+    }
+
+    if (_selectedPdfBytes != null) {
+      return Column(
+        children: [
+          _buildToolbar(),
+          if (_isReading) _buildReadingIndicator(),
+          Expanded(
+            child: SfPdfViewer.memory(
+              _selectedPdfBytes!,
+              key: _pdfViewerKey,
+              controller: _pdfController,
+              onDocumentLoaded: (details) {
+                setState(() {
+                  _totalPages = details.document.pages.count;
+                });
+              },
+              onPageChanged: (details) {
+                setState(() {
+                  _currentPage = details.newPageNumber;
+                });
+              },
+              onTextSelectionChanged: (details) {
+                setState(() {
+                  _selectedText = details.selectedText;
+                });
+              },
+            ),
+          ),
+          _buildPageIndicator(),
+        ],
+      );
+    }
+
     final file = File(_selectedPdfPath!);
     if (!file.existsSync()) {
       return Center(
@@ -1464,11 +1563,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           ],
         ),
       );
-    }
-
-    // Use text viewer for .txt and .md files
-    if (_isTextFile) {
-      return _buildTextViewer();
     }
 
     return Column(

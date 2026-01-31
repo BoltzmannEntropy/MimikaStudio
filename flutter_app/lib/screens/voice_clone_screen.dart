@@ -44,6 +44,12 @@ const List<LanguageOption> kLanguages = [
   LanguageOption('Chinese', 'Chinese', '🇨🇳', Color(0xFFE91E63)),
   LanguageOption('Japanese', 'Japanese', '🇯🇵', Color(0xFF9C27B0)),
   LanguageOption('Korean', 'Korean', '🇰🇷', Color(0xFFFF5722)),
+  LanguageOption('German', 'German', '🇩🇪', Color(0xFF795548)),
+  LanguageOption('French', 'French', '🇫🇷', Color(0xFF3F51B5)),
+  LanguageOption('Russian', 'Russian', '🇷🇺', Color(0xFF9C27B0)),
+  LanguageOption('Portuguese', 'Portuguese', '🇵🇹', Color(0xFF4CAF50)),
+  LanguageOption('Spanish', 'Spanish', '🇪🇸', Color(0xFFF57C00)),
+  LanguageOption('Italian', 'Italian', '🇮🇹', Color(0xFF009688)),
 ];
 
 class VoiceCloneScreen extends StatefulWidget {
