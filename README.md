@@ -36,6 +36,7 @@ MimikaStudio ships two UIs backed by the same local FastAPI server:
 Then open: **http://127.0.0.1:5173**
 
 > The web UI uses the same backend and voice library as the desktop app. `mimikactl up --web` builds the web bundle and serves it locally.
+> In web mode, use **Open Document** to upload PDFs from your machine (the browser cannot scan the local `pdf/` folder).
 
 ## Why MimikaStudio?
 
