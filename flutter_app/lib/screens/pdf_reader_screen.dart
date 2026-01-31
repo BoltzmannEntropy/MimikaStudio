@@ -73,6 +73,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String? _audiobookUrl;
   String _audiobookOutputFormat = 'mp3'; // 'wav', 'mp3', or 'm4b'
   String _audiobookSubtitleFormat = 'none'; // 'none', 'srt', or 'vtt'
+  bool _audiobookSmartChunking = true;
+  int _audiobookMaxCharsPerChunk = 1500;
+  int _audiobookCrossfadeMs = 40;
 
   // Audiobook library state
   List<Map<String, dynamic>> _audiobooks = [];
@@ -699,6 +702,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         speed: _speed,
         outputFormat: _audiobookOutputFormat,
         subtitleFormat: _audiobookSubtitleFormat,
+        smartChunking: _audiobookSmartChunking,
+        maxCharsPerChunk: _audiobookMaxCharsPerChunk,
+        crossfadeMs: _audiobookCrossfadeMs,
       );
 
       _audiobookJobId = result['job_id'] as String;
@@ -1104,6 +1110,63 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     visualDensity: VisualDensity.compact,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Smart Chunking', style: TextStyle(fontSize: 11)),
+              value: _audiobookSmartChunking,
+              onChanged: (value) => setState(() => _audiobookSmartChunking = value),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(
+              children: [
+                const Text('Chunk size:', style: TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: _audiobookMaxCharsPerChunk.toDouble(),
+                    min: 400,
+                    max: 4000,
+                    divisions: 36,
+                    label: _audiobookMaxCharsPerChunk.toString(),
+                    onChanged: _audiobookSmartChunking
+                        ? (value) => setState(() => _audiobookMaxCharsPerChunk = value.round())
+                        : null,
+                  ),
+                ),
+                Text(
+                  _audiobookMaxCharsPerChunk.toString(),
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            child: Row(
+              children: [
+                const Text('Crossfade:', style: TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: _audiobookCrossfadeMs.toDouble(),
+                    min: 0,
+                    max: 200,
+                    divisions: 20,
+                    label: '${_audiobookCrossfadeMs}ms',
+                    onChanged: _audiobookSmartChunking
+                        ? (value) => setState(() => _audiobookCrossfadeMs = value.round())
+                        : null,
+                  ),
+                ),
+                Text(
+                  '${_audiobookCrossfadeMs}ms',
+                  style: const TextStyle(fontSize: 10),
                 ),
               ],
             ),

@@ -2,7 +2,7 @@
 """MimikaStudio MCP Server - Exposes TTS functionality to Codex CLI.
 
 Provides MCP tools for:
-- Generating TTS audio (Kokoro, XTTS, Qwen3)
+- Generating TTS audio (Kokoro, Qwen3)
 - Listing available voices
 - System information
 """
@@ -102,20 +102,6 @@ MCP_TOOLS = [
         }
     },
     {
-        "name": "tts_generate_xtts",
-        "description": "Generate speech using XTTS2 voice cloning. Clones from reference audio samples.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "text": {"type": "string", "description": "Text to convert to speech"},
-                "speaker_id": {"type": "string", "description": "Speaker voice name"},
-                "language": {"type": "string", "description": "Language (e.g., 'English', 'Russian')"},
-                "speed": {"type": "number", "description": "Speech speed (0.1-1.99, default 0.8)"}
-            },
-            "required": ["text", "speaker_id"]
-        }
-    },
-    {
         "name": "tts_generate_qwen3",
         "description": "Generate speech using Qwen3-TTS voice cloning (3-second samples, 10 languages).",
         "inputSchema": {
@@ -135,7 +121,7 @@ MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "engine": {"type": "string", "enum": ["kokoro", "xtts", "qwen3"], "description": "TTS engine"}
+                "engine": {"type": "string", "enum": ["kokoro", "qwen3"], "description": "TTS engine"}
             },
             "required": ["engine"]
         }
@@ -170,21 +156,6 @@ def handle_tool_call(name: str, arguments: dict) -> str:
             audio_url = f"{BACKEND_URL}{result['audio_url']}"
             return f"Audio generated: {audio_url}"
 
-        elif name == "tts_generate_xtts":
-            text = arguments.get("text", "")
-            speaker_id = arguments.get("speaker_id", "")
-            language = arguments.get("language", "English")
-            speed = arguments.get("speed", 0.8)
-
-            result = _call_backend("/api/xtts/generate", "POST", {
-                "text": text,
-                "speaker_id": speaker_id,
-                "language": language,
-                "speed": speed
-            })
-            audio_url = f"{BACKEND_URL}{result['audio_url']}"
-            return f"Audio generated: {audio_url}"
-
         elif name == "tts_generate_qwen3":
             text = arguments.get("text", "")
             voice_name = arguments.get("voice_name", "")
@@ -205,17 +176,12 @@ def handle_tool_call(name: str, arguments: dict) -> str:
 
             if engine == "kokoro":
                 result = _call_backend("/api/kokoro/voices")
-                voices = result.get("voices", {})
-                voice_list = []
-                for category, items in voices.items():
-                    for v in items:
-                        voice_list.append(f"{v['id']} ({v['name']}) - {category}")
+                voices = result.get("voices", [])
+                voice_list = [
+                    f"{v.get('code', 'unknown')} ({v.get('name', '')})"
+                    for v in voices
+                ]
                 return "Kokoro voices:\n" + "\n".join(voice_list[:20])  # Limit output
-
-            elif engine == "xtts":
-                result = _call_backend("/api/xtts/voices")
-                voices = [v['name'] for v in result]
-                return "XTTS voices:\n" + "\n".join(voices)
 
             elif engine == "qwen3":
                 result = _call_backend("/api/qwen3/voices")

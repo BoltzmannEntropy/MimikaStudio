@@ -6,9 +6,7 @@ Requires backend running on localhost:8000
 """
 
 import requests
-import json
 import sys
-from pathlib import Path
 
 BASE_URL = "http://localhost:8000"
 
@@ -37,54 +35,6 @@ def test_health():
         print_test("GET /api/health", False, str(e))
         return False
 
-def test_xtts_voices():
-    """Test XTTS voices listing."""
-    print(f"\n{Colors.BLUE}=== XTTS Voices ==={Colors.END}")
-    try:
-        r = requests.get(f"{BASE_URL}/api/xtts/voices")
-        voices = r.json()
-        passed = r.status_code == 200 and len(voices) > 0
-        print_test("GET /api/xtts/voices", passed, f"Found {len(voices)} voices")
-
-        if passed:
-            for v in voices:
-                print(f"         - {v['name']}")
-
-        return passed, voices
-    except Exception as e:
-        print_test("GET /api/xtts/voices", False, str(e))
-        return False, []
-
-def test_xtts_languages():
-    """Test XTTS languages listing."""
-    try:
-        r = requests.get(f"{BASE_URL}/api/xtts/languages")
-        data = r.json()
-        passed = r.status_code == 200 and "languages" in data
-        print_test("GET /api/xtts/languages", passed, f"Found {len(data.get('languages', []))} languages")
-        return passed
-    except Exception as e:
-        print_test("GET /api/xtts/languages", False, str(e))
-        return False
-
-def test_xtts_generate(speaker_id: str):
-    """Test XTTS generation."""
-    print(f"\n{Colors.BLUE}=== XTTS Generation ==={Colors.END}")
-    try:
-        payload = {
-            "text": "Hello, this is a test of the voice cloning system.",
-            "speaker_id": speaker_id,
-            "language": "English",
-            "speed": 0.8
-        }
-        r = requests.post(f"{BASE_URL}/api/xtts/generate", json=payload)
-        data = r.json()
-        passed = r.status_code == 200 and "audio_url" in data
-        print_test(f"POST /api/xtts/generate (speaker={speaker_id})", passed, data.get("audio_url", r.text))
-        return passed, data.get("audio_url")
-    except Exception as e:
-        print_test("POST /api/xtts/generate", False, str(e))
-        return False, None
 
 def test_kokoro_voices():
     """Test Kokoro voices listing."""
@@ -169,7 +119,7 @@ def test_samples():
     print(f"\n{Colors.BLUE}=== Sample Texts ==={Colors.END}")
     all_passed = True
 
-    for engine in ["xtts", "kokoro"]:
+    for engine in ["kokoro"]:
         try:
             r = requests.get(f"{BASE_URL}/api/samples/{engine}")
             data = r.json()
@@ -208,17 +158,6 @@ def main():
         print(f"\n{Colors.RED}Backend not running! Start with: tssctl up{Colors.END}")
         sys.exit(1)
     results.append(True)
-
-    # XTTS tests
-    passed, voices = test_xtts_voices()
-    results.append(passed)
-    results.append(test_xtts_languages())
-
-    if voices:
-        passed, audio_url = test_xtts_generate(voices[0]["name"])
-        results.append(passed)
-        if audio_url:
-            results.append(test_audio_access(audio_url))
 
     # Kokoro tests
     passed, default_voice = test_kokoro_voices()

@@ -39,7 +39,6 @@ def main():
 
     tests = [
         ("test_kokoro.py", "Kokoro TTS (British Voices)"),
-        ("test_xtts.py", "XTTS2 Voice Cloning"),
     ]
 
     results = []

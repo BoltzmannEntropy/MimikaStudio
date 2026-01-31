@@ -85,8 +85,10 @@ class Qwen3TTSEngine:
         self.dtype = None
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
-        self.voices_dir = Path(__file__).parent.parent / "data" / "samples" / "qwen3_voices"
-        self.voices_dir.mkdir(parents=True, exist_ok=True)
+        self.sample_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "qwen3_voices"
+        self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
+        self.user_voices_dir = Path(__file__).parent.parent / "data" / "user_voices" / "qwen3"
+        self.user_voices_dir.mkdir(parents=True, exist_ok=True)
         self._voice_prompts = {}  # Cache for voice clone prompts
 
     def _get_device_and_dtype(self) -> Tuple[str, torch.dtype]:
@@ -335,52 +337,53 @@ class Qwen3TTSEngine:
         """
         import shutil
 
-        # Copy audio to voices directory
+        # Copy audio to user voices directory
         src = Path(audio_path)
-        dest = self.voices_dir / f"{name}.wav"
+        dest = self.user_voices_dir / f"{name}.wav"
         shutil.copy2(src, dest)
 
         # Save transcript
-        transcript_file = self.voices_dir / f"{name}.txt"
+        transcript_file = self.user_voices_dir / f"{name}.txt"
         transcript_file.write_text(transcript)
 
         return {
             "name": name,
             "audio_path": str(dest),
             "transcript": transcript,
+            "source": "user",
         }
 
-    def get_saved_voices(self, include_xtts: bool = False) -> list:
+    def get_saved_voices(self) -> list:
         """Get list of saved voice samples."""
         voices = []
 
-        # Qwen3-specific voices (with transcripts)
-        for wav_file in self.voices_dir.glob("*.wav"):
+        merged = {}
+
+        # Shipped sample voices
+        for wav_file in self.sample_voices_dir.glob("*.wav"):
             name = wav_file.stem
-            transcript_file = self.voices_dir / f"{name}.txt"
+            transcript_file = self.sample_voices_dir / f"{name}.txt"
             transcript = transcript_file.read_text() if transcript_file.exists() else ""
-            voices.append({
+            merged[name.lower()] = {
                 "name": name,
                 "audio_path": str(wav_file),
                 "transcript": transcript,
-                "source": "qwen3",
-            })
+                "source": "default",
+            }
 
-        if include_xtts:
-            # Also include XTTS voice samples
-            xtts_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "voices"
-            if xtts_voices_dir.exists():
-                for wav_file in xtts_voices_dir.glob("*.wav"):
-                    name = wav_file.stem
-                    # Check if there's a transcript file
-                    transcript_file = xtts_voices_dir / f"{name}.txt"
-                    transcript = transcript_file.read_text().strip() if transcript_file.exists() else ""
-                    voices.append({
-                        "name": name,
-                        "audio_path": str(wav_file),
-                        "transcript": transcript,
-                        "source": "xtts",
-                    })
+        # User voices (override defaults on name conflict)
+        for wav_file in self.user_voices_dir.glob("*.wav"):
+            name = wav_file.stem
+            transcript_file = self.user_voices_dir / f"{name}.txt"
+            transcript = transcript_file.read_text() if transcript_file.exists() else ""
+            merged[name.lower()] = {
+                "name": name,
+                "audio_path": str(wav_file),
+                "transcript": transcript,
+                "source": "user",
+            }
+
+        voices.extend(merged.values())
 
         return voices
 

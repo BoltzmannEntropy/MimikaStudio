@@ -15,10 +15,6 @@ Usage:
     mimika qwen3 "Hello, world!" --clone --reference Alina.wav
     mimika qwen3 book.pdf --clone --reference Bella.wav --output book.wav
 
-    # XTTS Voice Clone
-    mimika xtts "Hello, world!" --voice Alina --language en
-    mimika xtts document.docx --voice Bella --output output.wav
-
 Supported file formats: .txt, .pdf, .epub, .docx, .doc
 """
 
@@ -232,26 +228,6 @@ def generate_qwen3_clone(
     return response.json()
 
 
-def generate_xtts(
-    text: str,
-    voice: str,
-    language: str = "en",
-    speed: float = 1.0,
-) -> dict:
-    """Generate audio using XTTS voice cloning."""
-    response = requests.post(
-        f"{API_BASE}/api/xtts/generate",
-        json={
-            "text": text,
-            "voice": voice,
-            "language": language,
-            "speed": speed,
-        }
-    )
-    response.raise_for_status()
-    return response.json()
-
-
 def download_audio(url: str, output_path: str) -> str:
     """Download audio from URL to file."""
     # Handle relative URLs
@@ -272,7 +248,6 @@ def list_voices(engine: str) -> None:
     endpoints = {
         'kokoro': '/api/kokoro/voices',
         'qwen3': '/api/qwen3/speakers',
-        'xtts': '/api/xtts/voices',
     }
 
     if engine not in endpoints:
@@ -288,13 +263,10 @@ def list_voices(engine: str) -> None:
 
     if engine == 'kokoro':
         for voice in data.get('voices', []):
-            print(f"  {voice['id']:20} {voice.get('name', '')}")
+            print(f"  {voice['code']:20} {voice.get('name', '')}")
     elif engine == 'qwen3':
         for speaker in data.get('speakers', []):
-            print(f"  {speaker['name']:20} ({speaker.get('language', '')})")
-    elif engine == 'xtts':
-        for voice in data.get('voices', []):
-            print(f"  {voice['name']}")
+            print(f"  {speaker:20}")
 
 
 # =============================================================================
@@ -387,44 +359,12 @@ def cmd_qwen3(args):
         sys.exit(1)
 
 
-def cmd_xtts(args):
-    """Handle XTTS command."""
-    # Get input text
-    if os.path.isfile(args.input):
-        text = extract_text(args.input)
-        default_output = Path(args.input).stem + ".wav"
-    else:
-        text = args.input
-        default_output = "output.wav"
-
-    output = args.output or default_output
-
-    print(f"Generating with XTTS...")
-    print(f"  Voice: {args.voice}")
-    print(f"  Language: {args.language}")
-    print(f"  Text length: {len(text)} chars")
-
-    result = generate_xtts(
-        text,
-        voice=args.voice,
-        language=args.language,
-        speed=args.speed,
-    )
-
-    if 'audio_url' in result:
-        download_audio(result['audio_url'], output)
-        print(f"  Output: {output}")
-    else:
-        print(f"Error: {result}")
-        sys.exit(1)
-
-
 def cmd_voices(args):
     """List available voices."""
     if args.engine:
         list_voices(args.engine)
     else:
-        for engine in ['kokoro', 'qwen3', 'xtts']:
+        for engine in ['kokoro', 'qwen3']:
             try:
                 list_voices(engine)
             except Exception as e:
@@ -444,7 +384,6 @@ Examples:
   %(prog)s kokoro "Hello, world!" --voice bf_emma
   %(prog)s qwen3 "Hello!" --speaker Ryan --style "whisper softly"
   %(prog)s qwen3 book.pdf --clone --reference Alina.wav
-  %(prog)s xtts "Hello!" --voice Bella
   %(prog)s voices --engine kokoro
         """
     )
@@ -482,21 +421,10 @@ Examples:
     qwen3_parser.add_argument('--top-k', type=int, default=50)
     qwen3_parser.add_argument('--output', '-o', help='Output WAV file path')
 
-    # XTTS subcommand
-    xtts_parser = subparsers.add_parser('xtts', help='XTTS multi-language voice cloning')
-    xtts_parser.add_argument('input', help='Text or file path (.txt, .pdf, .epub, .docx, .doc)')
-    xtts_parser.add_argument('--voice', '-v', required=True,
-        help='Voice name (from your voice library)')
-    xtts_parser.add_argument('--language', '-l', default='en',
-        help='Language code (default: en)')
-    xtts_parser.add_argument('--speed', '-s', type=float, default=1.0,
-        help='Speech speed (default: 1.0)')
-    xtts_parser.add_argument('--output', '-o', help='Output WAV file path')
-
     # Voices subcommand
     voices_parser = subparsers.add_parser('voices', help='List available voices')
     voices_parser.add_argument('--engine', '-e',
-        choices=['kokoro', 'qwen3', 'xtts'],
+        choices=['kokoro', 'qwen3'],
         help='Filter by engine')
 
     args = parser.parse_args()
@@ -517,7 +445,6 @@ Examples:
     commands = {
         'kokoro': cmd_kokoro,
         'qwen3': cmd_qwen3,
-        'xtts': cmd_xtts,
         'voices': cmd_voices,
     }
 

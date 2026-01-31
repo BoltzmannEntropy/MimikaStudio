@@ -6,30 +6,30 @@ from pydantic import BaseModel
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
-import json
 import os
+import re
 import shutil
-import subprocess
+import tempfile
+import uuid
+import soundfile as sf
 
 from database import init_db, seed_db, get_connection
-from tts.xtts_engine import get_xtts_engine
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
+from tts.text_chunking import smart_chunk_text
+from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
 from language.ipa_generator import generate_ipa_transcription, get_sample_text as get_ipa_sample_text
 from llm.factory import load_config as load_llm_config, save_config as save_llm_config, get_available_providers
 
 # Request models
-class XTTSRequest(BaseModel):
-    text: str
-    speaker_id: str
-    language: str = "English"
-    speed: float = 0.8
-
 class KokoroRequest(BaseModel):
     text: str
     voice: str = DEFAULT_VOICE
     speed: float = 1.0
+    smart_chunking: bool = True
+    max_chars_per_chunk: int = 1500
+    crossfade_ms: int = 40
 
 class Qwen3Request(BaseModel):
     text: str
@@ -71,6 +71,7 @@ async def lifespan(app: FastAPI):
     print("Initializing database...")
     init_db()
     seed_db()
+    _migrate_legacy_voice_samples()
     print("Database ready.")
     yield
     # Shutdown
@@ -78,7 +79,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="MimikaStudio API",
-    description="Local-first Voice Cloning with Qwen3-TTS, Kokoro, and XTTS",
+    description="Local-first Voice Cloning with Qwen3-TTS and Kokoro",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -97,41 +98,90 @@ outputs_dir = Path(__file__).parent / "outputs"
 outputs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
 
-# XTTS subprocess config (isolated env to avoid transformer conflicts)
-XTTS_PYTHON = Path(__file__).parent / "venv_xtts" / "bin" / "python"
-XTTS_SCRIPT = Path(__file__).parent / "scripts" / "xtts_generate.py"
+# Qwen3 voice storage locations
+QWEN3_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "qwen3_voices"
+QWEN3_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "qwen3"
+DEFAULT_QWEN3_VOICES = {"Natasha", "Suzan"}
 
 
-def _run_xtts_subprocess(text: str, speaker_wav_path: str, language: str, speed: float) -> Optional[Path]:
-    if not XTTS_PYTHON.exists() or not XTTS_SCRIPT.exists():
-        return None
+def _migrate_legacy_voice_samples() -> None:
+    """Move legacy or user voices into the non-synced user voices folder."""
+    legacy_dir = Path(__file__).parent / "data" / "samples" / "voices"
+    QWEN3_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
-    payload = {
-        "text": text,
-        "speaker_wav_path": speaker_wav_path,
-        "language": language,
-        "speed": speed,
-    }
-    proc = subprocess.run(
-        [str(XTTS_PYTHON), str(XTTS_SCRIPT)],
-        input=json.dumps(payload),
-        text=True,
-        capture_output=True,
-    )
-    if proc.returncode != 0:
-        detail = proc.stderr.strip() or proc.stdout.strip() or "XTTS subprocess failed"
-        raise HTTPException(status_code=500, detail=detail)
+    def move_voice(src_dir: Path, name: str) -> None:
+        src_wav = src_dir / f"{name}.wav"
+        src_txt = src_dir / f"{name}.txt"
+        if src_wav.exists():
+            dest_wav = QWEN3_USER_VOICES_DIR / src_wav.name
+            if dest_wav.exists():
+                src_wav.unlink()
+            else:
+                shutil.move(str(src_wav), str(dest_wav))
+        if src_txt.exists():
+            dest_txt = QWEN3_USER_VOICES_DIR / src_txt.name
+            if dest_txt.exists():
+                src_txt.unlink()
+            else:
+                shutil.move(str(src_txt), str(dest_txt))
 
-    try:
-        data = json.loads(proc.stdout.strip())
-        output_path = data.get("output_path")
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"XTTS subprocess parse error: {exc}")
+    # Migrate any legacy voices
+    if legacy_dir.exists():
+        for wav_file in legacy_dir.glob("*.wav"):
+            name = wav_file.stem
+            if name in DEFAULT_QWEN3_VOICES:
+                dest_wav = QWEN3_SAMPLE_VOICES_DIR / wav_file.name
+                if not dest_wav.exists():
+                    shutil.copy2(wav_file, dest_wav)
+                src_txt = wav_file.with_suffix(".txt")
+                dest_txt = QWEN3_SAMPLE_VOICES_DIR / src_txt.name
+                if src_txt.exists() and not dest_txt.exists():
+                    shutil.copy2(src_txt, dest_txt)
+            else:
+                move_voice(legacy_dir, name)
 
-    if not output_path:
-        raise HTTPException(status_code=500, detail="XTTS subprocess did not return output path")
+    # Ensure only default voices remain in the sample folder
+    for wav_file in QWEN3_SAMPLE_VOICES_DIR.glob("*.wav"):
+        if wav_file.stem not in DEFAULT_QWEN3_VOICES:
+            move_voice(QWEN3_SAMPLE_VOICES_DIR, wav_file.stem)
 
-    return Path(output_path)
+
+def _safe_tag(value: str, fallback: str = "model") -> str:
+    tag = re.sub(r"[^a-zA-Z0-9_-]+", "", value.replace("/", "-").replace(" ", "-")).strip("-_")
+    return tag[:32] if tag else fallback
+
+
+def _generate_chunked_audio(
+    text: str,
+    max_chars_per_chunk: int,
+    crossfade_ms: int,
+    smart_chunking: bool,
+    generate_fn,
+) -> tuple:
+    chunks = smart_chunk_text(text, max_chars=max_chars_per_chunk) if smart_chunking else [text]
+    chunks = [c for c in chunks if c.strip()]
+    if not chunks:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    all_audio = []
+    sample_rate = None
+
+    for chunk in chunks:
+        audio, sr = generate_fn(chunk)
+        if audio is None or len(audio) == 0:
+            continue
+        if sample_rate is None:
+            sample_rate = sr
+        elif sr != sample_rate:
+            audio = resample_audio(audio, sr, sample_rate)
+        all_audio.append(audio)
+
+    if not all_audio or sample_rate is None:
+        raise HTTPException(status_code=500, detail="No audio generated")
+
+    merged = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=crossfade_ms)
+    return merged, sample_rate, len(chunks)
 
 # Health check
 @app.get("/api/health")
@@ -156,8 +206,8 @@ async def system_info():
 
     # Get model versions from each engine
     kokoro_info = {"model": "Kokoro v0.19", "voice_pack": "British English"}
-    xtts_info = {"model": "XTTS v2.0", "framework": "Coqui TTS"}
     qwen3_info = {"model": "Qwen3-TTS-12Hz-0.6B-Base", "features": "3-sec voice clone"}
+    # Additional engines can be added here if needed.
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -167,7 +217,6 @@ async def system_info():
         "torch_version": torch.__version__,
         "models": {
             "kokoro": kokoro_info,
-            "xtts": xtts_info,
             "qwen3": qwen3_info,
         }
     }
@@ -223,24 +272,17 @@ async def system_stats():
 
 @app.get("/api/voices/custom")
 async def list_all_custom_voices():
-    """List all custom voice samples from both XTTS and Qwen3 for unified voice cloning."""
+    """List all custom voice samples for unified voice cloning."""
+    samples_root = Path(__file__).parent / "data" / "samples"
+
+    def _audio_url_from_path(path: Path) -> Optional[str]:
+        try:
+            rel_path = path.relative_to(samples_root)
+        except ValueError:
+            return None
+        return f"/samples/{rel_path.as_posix()}"
+
     voices = []
-
-    # Get XTTS voices from database
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT name, file_path FROM xtts_voices")
-    xtts_rows = cursor.fetchall()
-    conn.close()
-
-    for row in xtts_rows:
-        name, file_path = row
-        voices.append({
-            "name": name,
-            "source": "xtts",
-            "transcript": None,
-            "has_audio": file_path and Path(file_path).exists(),
-        })
 
     # Get Qwen3 voices
     try:
@@ -249,11 +291,14 @@ async def list_all_custom_voices():
         for voice in qwen3_voices:
             # Avoid duplicates by checking name
             if not any(v["name"] == voice["name"] and v["source"] == "qwen3" for v in voices):
+                audio_path = Path(voice.get("audio_path", ""))
+                audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
                 voices.append({
                     "name": voice["name"],
                     "source": "qwen3",
                     "transcript": voice.get("transcript"),
                     "has_audio": True,
+                    "audio_url": audio_url,
                 })
     except ImportError:
         pass  # Qwen3 not installed
@@ -261,178 +306,36 @@ async def list_all_custom_voices():
     return {"voices": voices, "total": len(voices)}
 
 
-# ============== XTTS Endpoints ==============
-
-@app.post("/api/xtts/generate")
-async def xtts_generate(request: XTTSRequest):
-    """Generate speech using XTTS voice cloning."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path FROM xtts_voices WHERE name = ?", (request.speaker_id,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Voice '{request.speaker_id}' not found")
-
-    speaker_path = row[0]
-    if not Path(speaker_path).exists():
-        raise HTTPException(status_code=404, detail=f"Voice file not found: {speaker_path}")
-
-    output_path = None
-    use_subprocess = os.environ.get("XTTS_USE_SUBPROCESS", "1") != "0"
-    if use_subprocess:
-        output_path = _run_xtts_subprocess(
-            text=request.text,
-            speaker_wav_path=speaker_path,
-            language=request.language,
-            speed=request.speed,
-        )
-
-    if output_path is None:
-        engine = get_xtts_engine()
-        output_path = engine.generate(
-            text=request.text,
-            speaker_wav_path=speaker_path,
-            language=request.language,
-            speed=request.speed
-        )
-
-    return {
-        "audio_url": f"/audio/{output_path.name}",
-        "filename": output_path.name
-    }
-
-@app.get("/api/xtts/voices")
-async def xtts_list_voices():
-    """List available XTTS voices for cloning."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, file_path FROM xtts_voices")
-    rows = cursor.fetchall()
-    conn.close()
-
-    return [
-        {"id": row[0], "name": row[1], "file_path": row[2]}
-        for row in rows
-    ]
-
-@app.post("/api/xtts/voices")
-async def xtts_upload_voice(
-    file: UploadFile = File(...),
-    name: str = Form(...)
-):
-    """Upload a new voice sample for XTTS cloning."""
-    voices_dir = Path(__file__).parent / "data" / "samples" / "voices"
-    voices_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = voices_dir / f"{name}.wav"
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT OR REPLACE INTO xtts_voices (name, file_path) VALUES (?, ?)",
-        (name, str(file_path))
-    )
-    conn.commit()
-    conn.close()
-
-    return {"message": f"Voice '{name}' uploaded successfully", "name": name}
-
-@app.delete("/api/xtts/voices/{name}")
-async def xtts_delete_voice(name: str):
-    """Delete an XTTS voice sample."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path FROM xtts_voices WHERE name = ?", (name,))
-    row = cursor.fetchone()
-
-    if row is None:
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
-
-    file_path = Path(row[0])
-    if file_path.exists():
-        file_path.unlink()
-
-    cursor.execute("DELETE FROM xtts_voices WHERE name = ?", (name,))
-    conn.commit()
-    conn.close()
-
-    return {"message": f"Voice '{name}' deleted successfully"}
-
-
-@app.put("/api/xtts/voices/{name}")
-async def xtts_update_voice(
-    name: str,
-    new_name: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-):
-    """Update an XTTS voice sample (rename or replace audio)."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT file_path FROM xtts_voices WHERE name = ?", (name,))
-    row = cursor.fetchone()
-
-    if row is None:
-        conn.close()
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
-
-    old_file_path = Path(row[0])
-    voices_dir = Path(__file__).parent / "data" / "samples" / "voices"
-
-    # Update audio file if provided
-    if file:
-        if old_file_path.exists():
-            old_file_path.unlink()
-        new_file_path = voices_dir / f"{new_name or name}.wav"
-        with open(new_file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-    else:
-        new_file_path = old_file_path
-        if new_name and new_name != name:
-            # Rename file
-            renamed_path = voices_dir / f"{new_name}.wav"
-            old_file_path.rename(renamed_path)
-            new_file_path = renamed_path
-
-    # Update database
-    final_name = new_name or name
-    cursor.execute("DELETE FROM xtts_voices WHERE name = ?", (name,))
-    cursor.execute(
-        "INSERT INTO xtts_voices (name, file_path) VALUES (?, ?)",
-        (final_name, str(new_file_path))
-    )
-    conn.commit()
-    conn.close()
-
-    return {"message": f"Voice updated successfully", "name": final_name}
-
-
-@app.get("/api/xtts/languages")
-async def xtts_list_languages():
-    """List available languages for XTTS."""
-    engine = get_xtts_engine()
-    return {"languages": engine.get_languages()}
-
 # ============== Kokoro Endpoints ==============
 
 @app.post("/api/kokoro/generate")
 async def kokoro_generate(request: KokoroRequest):
     """Generate speech using Kokoro with predefined British voice."""
-    engine = get_kokoro_engine()
-    output_path = engine.generate(
-        text=request.text,
-        voice=request.voice,
-        speed=request.speed
-    )
+    try:
+        engine = get_kokoro_engine()
+        voice = request.voice if request.voice in BRITISH_VOICES else DEFAULT_VOICE
 
-    return {
-        "audio_url": f"/audio/{output_path.name}",
-        "filename": output_path.name
-    }
+        audio, sample_rate, _ = _generate_chunked_audio(
+            text=request.text,
+            max_chars_per_chunk=request.max_chars_per_chunk,
+            crossfade_ms=request.crossfade_ms,
+            smart_chunking=request.smart_chunking,
+            generate_fn=lambda chunk: engine.generate_audio(chunk, voice=voice, speed=request.speed),
+        )
+
+        short_uuid = str(uuid.uuid4())[:8]
+        output_path = outputs_dir / f"kokoro-{voice}-{short_uuid}.wav"
+        sf.write(str(output_path), audio, sample_rate)
+
+        return {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Kokoro not installed. Run: pip install kokoro. Error: {e}",
+        )
 
 @app.get("/api/kokoro/voices")
 async def kokoro_list_voices():
@@ -595,17 +498,8 @@ async def qwen3_list_voices():
     """List saved voice samples for Qwen3 cloning."""
     try:
         engine = get_qwen3_engine()
-        voices = engine.get_saved_voices(include_xtts=True)
-        # De-duplicate by name, prefer Qwen3 voices when present
-        merged = {}
-        for voice in voices:
-            name = (voice.get("name") or "").strip()
-            if not name:
-                continue
-            key = name.lower()
-            if key not in merged or voice.get("source") == "qwen3":
-                merged[key] = voice
-        return {"voices": list(merged.values())}
+        voices = engine.get_saved_voices()
+        return {"voices": voices}
     except ImportError:
         return {"voices": [], "error": "Qwen3-TTS not installed"}
 
@@ -665,6 +559,11 @@ async def qwen3_upload_voice(
             status_code=400,
             detail="Transcript is required for voice cloning"
         )
+    if name in DEFAULT_QWEN3_VOICES:
+        raise HTTPException(
+            status_code=400,
+            detail="That name is reserved for default voices"
+        )
 
     try:
         engine = get_qwen3_engine()
@@ -701,25 +600,24 @@ async def qwen3_upload_voice(
 @app.delete("/api/qwen3/voices/{name}")
 async def qwen3_delete_voice(name: str):
     """Delete a Qwen3 voice sample."""
-    voices_dir = Path(__file__).parent / "data" / "samples" / "voices"
-    qwen3_voices_dir = Path(__file__).parent / "data" / "samples" / "qwen3_voices"
+    # Prevent deleting shipped voices
+    if (QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
-    # Check both directories
-    for vdir in [qwen3_voices_dir, voices_dir]:
-        audio_file = vdir / f"{name}.wav"
-        transcript_file = vdir / f"{name}.txt"
+    audio_file = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+    transcript_file = QWEN3_USER_VOICES_DIR / f"{name}.txt"
 
-        if audio_file.exists():
-            audio_file.unlink()
-            if transcript_file.exists():
-                transcript_file.unlink()
-            # Clear cache for this voice
-            try:
-                engine = get_qwen3_engine()
-                engine.clear_cache()
-            except ImportError:
-                pass
-            return {"message": f"Voice '{name}' deleted successfully"}
+    if audio_file.exists():
+        audio_file.unlink()
+        if transcript_file.exists():
+            transcript_file.unlink()
+        # Clear cache for this voice
+        try:
+            engine = get_qwen3_engine()
+            engine.clear_cache()
+        except ImportError:
+            pass
+        return {"message": f"Voice '{name}' deleted successfully"}
 
     raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
@@ -732,29 +630,25 @@ async def qwen3_update_voice(
     file: Optional[UploadFile] = File(None),
 ):
     """Update a Qwen3 voice sample (rename, update transcript, or replace audio)."""
-    voices_dir = Path(__file__).parent / "data" / "samples" / "voices"
-    qwen3_voices_dir = Path(__file__).parent / "data" / "samples" / "qwen3_voices"
+    # Prevent editing shipped voices
+    if (QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
-    # Find the voice
-    found_dir = None
-    for vdir in [qwen3_voices_dir, voices_dir]:
-        if (vdir / f"{name}.wav").exists():
-            found_dir = vdir
-            break
-
-    if found_dir is None:
+    old_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+    old_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+    if not old_audio.exists():
         raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    old_audio = found_dir / f"{name}.wav"
-    old_transcript = found_dir / f"{name}.txt"
     final_name = new_name or name
+    if final_name in DEFAULT_QWEN3_VOICES:
+        raise HTTPException(
+            status_code=400,
+            detail="That name is reserved for default voices"
+        )
+    QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # If renaming or updating audio, move to qwen3_voices dir
-    target_dir = qwen3_voices_dir
-    target_dir.mkdir(parents=True, exist_ok=True)
-
-    new_audio = target_dir / f"{final_name}.wav"
-    new_transcript = target_dir / f"{final_name}.txt"
+    new_audio = QWEN3_USER_VOICES_DIR / f"{final_name}.wav"
+    new_transcript = QWEN3_USER_VOICES_DIR / f"{final_name}.txt"
 
     # Update audio if provided
     if file:
@@ -841,6 +735,9 @@ class AudiobookRequest(BaseModel):
     speed: float = 1.0
     output_format: str = "wav"  # "wav", "mp3", or "m4b"
     subtitle_format: str = "none"  # "none", "srt", or "vtt"
+    smart_chunking: bool = True
+    max_chars_per_chunk: int = 1500
+    crossfade_ms: int = 40
 
 
 @app.post("/api/audiobook/generate")
@@ -884,6 +781,12 @@ async def audiobook_generate(request: AudiobookRequest):
             detail=f"Invalid subtitle_format: {request.subtitle_format}. Use 'none', 'srt', or 'vtt'"
         )
 
+    if request.max_chars_per_chunk <= 0:
+        raise HTTPException(status_code=400, detail="max_chars_per_chunk must be > 0")
+
+    if request.crossfade_ms < 0:
+        raise HTTPException(status_code=400, detail="crossfade_ms must be >= 0")
+
     job = create_audiobook_job(
         text=request.text,
         title=request.title,
@@ -891,6 +794,9 @@ async def audiobook_generate(request: AudiobookRequest):
         speed=request.speed,
         output_format=output_format,
         subtitle_format=subtitle_format,
+        smart_chunking=request.smart_chunking,
+        max_chars_per_chunk=request.max_chars_per_chunk,
+        crossfade_ms=request.crossfade_ms,
     )
 
     return {
@@ -911,6 +817,9 @@ async def audiobook_generate_from_file(
     speed: float = Form(1.0),
     output_format: str = Form("wav"),
     subtitle_format: str = Form("none"),
+    smart_chunking: bool = Form(True),
+    max_chars_per_chunk: int = Form(1500),
+    crossfade_ms: int = Form(40),
 ):
     """Start audiobook generation from uploaded file with optional timestamped subtitles.
 
@@ -951,6 +860,12 @@ async def audiobook_generate_from_file(
         shutil.copyfileobj(file.file, tmp)
         tmp_path = tmp.name
 
+    if max_chars_per_chunk <= 0:
+        raise HTTPException(status_code=400, detail="max_chars_per_chunk must be > 0")
+
+    if crossfade_ms < 0:
+        raise HTTPException(status_code=400, detail="crossfade_ms must be >= 0")
+
     try:
         job = create_audiobook_from_file(
             file_path=tmp_path,
@@ -959,6 +874,9 @@ async def audiobook_generate_from_file(
             speed=speed,
             output_format=output_format,
             subtitle_format=subtitle_format,
+            smart_chunking=smart_chunking,
+            max_chars_per_chunk=max_chars_per_chunk,
+            crossfade_ms=crossfade_ms,
         )
 
         return {
@@ -1117,6 +1035,66 @@ async def audiobook_delete(job_id: str):
 
 # ============== Kokoro Audio Library Endpoints ==============
 
+@app.get("/api/tts/audio/list")
+async def tts_audio_list():
+    """List all generated TTS audio files (Kokoro)."""
+    from datetime import datetime
+
+    audio_files = []
+    patterns = [
+        ("kokoro", "kokoro-*.wav"),
+    ]
+
+    for engine, pattern in patterns:
+        for file in outputs_dir.glob(pattern):
+            stat = file.stat()
+            stem = file.stem
+            parts = stem.split("-")
+
+            label = engine
+            voice = None
+
+            if engine == "kokoro":
+                voice = parts[1] if len(parts) > 2 else "unknown"
+                label = BRITISH_VOICES.get(voice, {}).get("name", voice)
+            # kokoro handled above
+
+            try:
+                info = sf.info(str(file))
+                duration_seconds = info.duration
+            except Exception:
+                duration_seconds = 0
+
+            audio_files.append({
+                "id": stem,
+                "filename": file.name,
+                "engine": engine,
+                "label": label,
+                "voice": voice,
+                "audio_url": f"/audio/{file.name}",
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "duration_seconds": round(duration_seconds, 1),
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            })
+
+    audio_files.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"audio_files": audio_files, "total": len(audio_files)}
+
+
+@app.delete("/api/tts/audio/{filename}")
+async def tts_audio_delete(filename: str):
+    """Delete a TTS audio file (Kokoro)."""
+    if not (filename.endswith(".wav") and filename.startswith("kokoro-")):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    file_path = outputs_dir / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
+
+    file_path.unlink()
+    return {"message": "Audio file deleted", "filename": filename}
+
+
 @app.get("/api/kokoro/audio/list")
 async def kokoro_audio_list():
     """List all generated Kokoro TTS audio files."""
@@ -1175,13 +1153,12 @@ async def kokoro_audio_delete(filename: str):
 
 @app.get("/api/voice-clone/audio/list")
 async def voice_clone_audio_list():
-    """List all generated Qwen3/XTTS voice clone audio files."""
+    """List all generated Qwen3 voice clone audio files."""
     from datetime import datetime
 
     audio_files = []
     patterns = [
         ("qwen3", "qwen3-*.wav"),
-        ("xtts", "xtts-*.wav"),
     ]
 
     for engine, pattern in patterns:
@@ -1194,9 +1171,7 @@ async def voice_clone_audio_list():
             if engine == "qwen3" and len(parts) > 1:
                 mode = parts[1]
 
-            label = "XTTS Clone"
-            if engine == "qwen3":
-                label = f"Qwen3 {mode.capitalize()}"
+            label = f"Qwen3 {mode.capitalize()}"
 
             # Get audio duration using soundfile
             try:
@@ -1227,11 +1202,8 @@ async def voice_clone_audio_list():
 @app.delete("/api/voice-clone/audio/{filename}")
 async def voice_clone_audio_delete(filename: str):
     """Delete a voice clone audio file."""
-    # Security: ensure filename starts with qwen3-/xtts- and ends with .wav
-    if not (
-        filename.endswith(".wav")
-        and (filename.startswith("qwen3-") or filename.startswith("xtts-"))
-    ):
+    # Security: ensure filename starts with qwen3- and ends with .wav
+    if not (filename.endswith(".wav") and filename.startswith("qwen3-")):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     file_path = outputs_dir / filename
@@ -1247,7 +1219,7 @@ async def voice_clone_audio_delete(filename: str):
 @app.get("/api/samples/{engine}")
 async def get_sample_texts(engine: str):
     """Get sample texts for a specific TTS engine."""
-    valid_engines = ["xtts", "kokoro"]
+    valid_engines = ["kokoro"]
     if engine not in valid_engines:
         raise HTTPException(status_code=400, detail=f"Invalid engine. Use one of: {valid_engines}")
 

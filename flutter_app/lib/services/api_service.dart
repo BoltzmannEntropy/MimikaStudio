@@ -33,98 +33,6 @@ class ApiService {
     throw Exception('Failed to load system stats');
   }
 
-  // ============== Unified Custom Voices ==============
-
-  /// Get all custom voice samples from both XTTS and Qwen3
-  Future<List<Map<String, dynamic>>> getCustomVoices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/voices/custom'));
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return List<Map<String, dynamic>>.from(data['voices']);
-    }
-    throw Exception('Failed to load custom voices');
-  }
-
-  // ============== XTTS ==============
-
-  Future<List<Map<String, dynamic>>> getXttsVoices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/xtts/voices'));
-    if (response.statusCode == 200) {
-      return List<Map<String, dynamic>>.from(json.decode(response.body));
-    }
-    throw Exception('Failed to load XTTS voices');
-  }
-
-  Future<List<String>> getXttsLanguages() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/xtts/languages'));
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return List<String>.from(data['languages']);
-    }
-    throw Exception('Failed to load XTTS languages');
-  }
-
-  Future<String> generateXtts({
-    required String text,
-    required String speakerId,
-    String language = 'English',
-    double speed = 0.8,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/xtts/generate'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'text': text,
-        'speaker_id': speakerId,
-        'language': language,
-        'speed': speed,
-      }),
-    );
-    if (response.statusCode == 200) {
-      final data = json.decode(response.body);
-      return '$baseUrl${data['audio_url']}';
-    }
-    throw Exception('Failed to generate XTTS audio: ${response.body}');
-  }
-
-  Future<void> uploadXttsVoice(String name, File file) async {
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$baseUrl/api/xtts/voices'),
-    );
-    request.fields['name'] = name;
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
-
-    final response = await request.send();
-    if (response.statusCode != 200) {
-      throw Exception('Failed to upload voice');
-    }
-  }
-
-  Future<void> deleteXttsVoice(String name) async {
-    final response = await http.delete(Uri.parse('$baseUrl/api/xtts/voices/$name'));
-    if (response.statusCode != 200) {
-      throw Exception('Failed to delete voice: ${response.body}');
-    }
-  }
-
-  Future<void> updateXttsVoice(String name, {String? newName, File? file}) async {
-    var request = http.MultipartRequest(
-      'PUT',
-      Uri.parse('$baseUrl/api/xtts/voices/$name'),
-    );
-    if (newName != null) request.fields['new_name'] = newName;
-    if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
-    }
-
-    final response = await request.send();
-    if (response.statusCode != 200) {
-      final body = await response.stream.bytesToString();
-      throw Exception('Failed to update voice: $body');
-    }
-  }
-
   // ============== Kokoro ==============
 
   Future<Map<String, dynamic>> getKokoroVoices() async {
@@ -139,6 +47,9 @@ class ApiService {
     required String text,
     required String voice,
     double speed = 1.0,
+    bool smartChunking = true,
+    int maxCharsPerChunk = 1500,
+    int crossfadeMs = 40,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/kokoro/generate'),
@@ -147,6 +58,9 @@ class ApiService {
         'text': text,
         'voice': voice,
         'speed': speed,
+        'smart_chunking': smartChunking,
+        'max_chars_per_chunk': maxCharsPerChunk,
+        'crossfade_ms': crossfadeMs,
       }),
     );
     if (response.statusCode == 200) {
@@ -438,6 +352,9 @@ class ApiService {
     double speed = 1.0,
     String outputFormat = 'wav',
     String subtitleFormat = 'none',
+    bool smartChunking = true,
+    int maxCharsPerChunk = 1500,
+    int crossfadeMs = 40,
   }) async {
     final response = await http.post(
       Uri.parse('$baseUrl/api/audiobook/generate'),
@@ -449,6 +366,9 @@ class ApiService {
         'speed': speed,
         'output_format': outputFormat,
         'subtitle_format': subtitleFormat,
+        'smart_chunking': smartChunking,
+        'max_chars_per_chunk': maxCharsPerChunk,
+        'crossfade_ms': crossfadeMs,
       }),
     );
     if (response.statusCode == 200) {
@@ -507,6 +427,28 @@ class ApiService {
 
   // ============== Kokoro Audio Library ==============
 
+  /// List all generated TTS audio files (Kokoro).
+  Future<List<Map<String, dynamic>>> getTtsAudioFiles() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/tts/audio/list'),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['audio_files']);
+    }
+    throw Exception('Failed to list TTS audio files: ${response.body}');
+  }
+
+  /// Delete a TTS audio file.
+  Future<void> deleteTtsAudio(String filename) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/tts/audio/$filename'),
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete audio file: ${response.body}');
+    }
+  }
+
   /// List all generated Kokoro TTS audio files.
   Future<List<Map<String, dynamic>>> getKokoroAudioFiles() async {
     final response = await http.get(
@@ -531,7 +473,7 @@ class ApiService {
 
   // ============== Voice Clone Audio Library ==============
 
-  /// List all generated voice clone audio files (Qwen3 + XTTS).
+  /// List all generated voice clone audio files (Qwen3).
   Future<List<Map<String, dynamic>>> getVoiceCloneAudioFiles() async {
     final response = await http.get(
       Uri.parse('$baseUrl/api/voice-clone/audio/list'),

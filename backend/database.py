@@ -1,5 +1,4 @@
 import sqlite3
-import json
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "data" / "mimikastudio.db"
@@ -35,12 +34,6 @@ def init_db():
             title TEXT NOT NULL,
             content_type TEXT NOT NULL,
             content_json TEXT NOT NULL
-        );
-
-        CREATE TABLE IF NOT EXISTS xtts_voices (
-            id INTEGER PRIMARY KEY,
-            name TEXT NOT NULL UNIQUE,
-            file_path TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS pregenerated_samples (
@@ -106,12 +99,6 @@ def seed_db():
 
     # Seed sample texts
     sample_texts = [
-        # XTTS samples
-        ("xtts", "Even in the darkest nights, a single spark of hope can ignite the fire of determination within us.", "en", "inspirational"),
-        ("xtts", "Hello, how are you today? I hope you're having a wonderful day.", "en", "greeting"),
-        ("xtts", "The quick brown fox jumps over the lazy dog.", "en", "pangram"),
-        ("xtts", "Welcome to the text to speech demonstration. This technology can clone any voice.", "en", "demo"),
-        # Kokoro samples
         ("kokoro", "Good morning! The weather today is absolutely splendid.", "en", "greeting"),
         ("kokoro", "I'd be delighted to help you with that inquiry.", "en", "polite"),
         ("kokoro", "The British Museum houses an extraordinary collection of artifacts.", "en", "culture"),
@@ -121,14 +108,6 @@ def seed_db():
         "INSERT INTO sample_texts (engine, text, language, category) VALUES (?, ?, ?, ?)",
         sample_texts
     )
-
-    # Seed XTTS voices from samples directory
-    voices_dir = Path(__file__).parent / "data" / "samples" / "voices"
-    for wav_file in voices_dir.glob("*.wav"):
-        cursor.execute(
-            "INSERT OR IGNORE INTO xtts_voices (name, file_path) VALUES (?, ?)",
-            (wav_file.stem, str(wav_file))
-        )
 
     # Seed pregenerated samples
     pregen_dir = Path(__file__).parent / "data" / "pregenerated"

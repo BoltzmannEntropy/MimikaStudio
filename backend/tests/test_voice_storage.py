@@ -3,9 +3,10 @@ from tts.qwen3_engine import Qwen3TTSEngine
 
 
 def test_qwen3_engine_voices_dir():
-    """Test that Qwen3 engine creates voices directory."""
+    """Test that Qwen3 engine creates voices directories."""
     engine = Qwen3TTSEngine(model_size="0.6B")
-    assert engine.voices_dir.exists()
+    assert engine.sample_voices_dir.exists()
+    assert engine.user_voices_dir.exists()
 
 
 def test_qwen3_engine_outputs_dir():

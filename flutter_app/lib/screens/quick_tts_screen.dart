@@ -15,7 +15,6 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final TextEditingController _textController = TextEditingController();
-
   List<Map<String, dynamic>> _voices = [];
   List<Map<String, dynamic>> _voiceSamples = [];
   List<Map<String, dynamic>> _ipaSamples = [];
@@ -23,6 +22,12 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   Map<String, dynamic>? _selectedIpaSample;
   String _selectedVoice = 'bf_emma';
   double _speed = 1.0;
+  String _audioModelLabel = 'Kokoro';
+
+  // Smart chunking + merge
+  bool _smartChunking = true;
+  int _maxCharsPerChunk = 1500;
+  int _crossfadeMs = 40;
 
   bool _isLoading = false;
   bool _isGenerating = false;
@@ -70,7 +75,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   Future<void> _loadAudioFiles() async {
     setState(() => _isLoadingAudioFiles = true);
     try {
-      final files = await _api.getKokoroAudioFiles();
+      final files = await _api.getTtsAudioFiles();
       if (mounted) {
         setState(() {
           _audioFiles = files;
@@ -160,10 +165,14 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
         text: _textController.text,
         voice: _selectedVoice,
         speed: _speed,
+        smartChunking: _smartChunking,
+        maxCharsPerChunk: _maxCharsPerChunk,
+        crossfadeMs: _crossfadeMs,
       );
 
       setState(() {
         _audioUrl = audioUrl;
+        _audioModelLabel = 'Kokoro';
         _isGenerating = false;
       });
 
@@ -284,53 +293,53 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
               padding: const EdgeInsets.all(12),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.volume_up,
-                          color: Theme.of(context).colorScheme.onSecondaryContainer),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Kokoro TTS',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Theme.of(context).colorScheme.onSecondaryContainer,
-                        ),
-                      ),
-                      const Spacer(),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondary,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          'British English',
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.volume_up,
+                            color: Theme.of(context).colorScheme.onSecondaryContainer),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Kokoro TTS',
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Theme.of(context).colorScheme.onSecondary,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Theme.of(context).colorScheme.onSecondaryContainer,
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  if (_systemInfo != null) ...[
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 4,
-                      children: [
-                        _buildInfoChip(Icons.memory, _systemInfo!['device'] ?? 'Unknown'),
-                        _buildInfoChip(Icons.code, 'Python ${_systemInfo!['python_version'] ?? '?'}'),
-                        _buildInfoChip(Icons.library_books, _systemInfo!['models']?['kokoro']?['model'] ?? 'Kokoro'),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).colorScheme.secondary,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'British English',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Theme.of(context).colorScheme.onSecondary,
+                            ),
+                          ),
+                        ),
                       ],
                     ),
+                    if (_systemInfo != null) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 4,
+                        children: [
+                          _buildInfoChip(Icons.memory, _systemInfo!['device'] ?? 'Unknown'),
+                          _buildInfoChip(Icons.code, 'Python ${_systemInfo!['python_version'] ?? '?'}'),
+                          _buildInfoChip(Icons.library_books, _systemInfo!['models']?['kokoro']?['model'] ?? 'Kokoro'),
+                        ],
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
-          ),
           const SizedBox(height: 16),
 
           // Voice Samples Section
@@ -412,12 +421,68 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
             const SizedBox(height: 16),
           ],
 
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Smart Chunking', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Enable smart chunking', style: TextStyle(fontSize: 12)),
+                    value: _smartChunking,
+                    onChanged: (value) => setState(() => _smartChunking = value),
+                  ),
+                  Row(
+                    children: [
+                      const Text('Max chars:', style: TextStyle(fontSize: 12)),
+                      Expanded(
+                        child: Slider(
+                          value: _maxCharsPerChunk.toDouble(),
+                          min: 400,
+                          max: 4000,
+                          divisions: 36,
+                          label: _maxCharsPerChunk.toString(),
+                          onChanged: _smartChunking
+                              ? (v) => setState(() => _maxCharsPerChunk = v.round())
+                              : null,
+                        ),
+                      ),
+                      Text(_maxCharsPerChunk.toString()),
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      const Text('Crossfade:', style: TextStyle(fontSize: 12)),
+                      Expanded(
+                        child: Slider(
+                          value: _crossfadeMs.toDouble(),
+                          min: 0,
+                          max: 200,
+                          divisions: 20,
+                          label: '${_crossfadeMs}ms',
+                          onChanged: _smartChunking
+                              ? (v) => setState(() => _crossfadeMs = v.round())
+                              : null,
+                        ),
+                      ),
+                      Text('${_crossfadeMs}ms'),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
           // Audio Player
           if (_audioUrl != null) ...[
             AudioPlayerWidget(
               player: _audioPlayer,
               audioUrl: _audioUrl,
-              modelName: 'Kokoro',
+              modelName: _audioModelLabel,
             ),
             const SizedBox(height: 16),
           ],
@@ -434,167 +499,171 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
             const SizedBox(height: 16),
           ],
 
-          // British Voices Selection
-          const Text('British Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _voices.map((voice) {
-              final code = voice['code'] as String;
-              final name = voice['name'] as String;
-              final gender = voice['gender'] as String;
-              final grade = voice['grade'] as String;
-              final isSelected = code == _selectedVoice;
-
-              return ChoiceChip(
-                label: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(gender == 'female' ? Icons.female : Icons.male, size: 16),
-                    const SizedBox(width: 4),
-                    Text(name),
-                    const SizedBox(width: 4),
-                    Text('($grade)', style: TextStyle(fontSize: 10, color: isSelected ? null : Colors.grey)),
-                  ],
-                ),
-                selected: isSelected,
-                onSelected: (selected) {
-                  if (selected) setState(() => _selectedVoice = code);
-                },
-                avatar: voice['is_default'] == true ? const Icon(Icons.star, size: 16) : null,
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 16),
-
-          // Speed Slider
-          Row(
-            children: [
-              const Icon(Icons.speed, size: 20),
-              const SizedBox(width: 8),
-              const Text('Speed:'),
-              Expanded(
-                child: Slider(
-                  value: _speed,
-                  min: 0.5,
-                  max: 2.0,
-                  divisions: 15,
-                  label: '${_speed.toStringAsFixed(1)}x',
-                  onChanged: (value) => setState(() => _speed = value),
-                ),
-              ),
-              Text('${_speed.toStringAsFixed(1)}x'),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Emma IPA Section Header
-          Card(
-            color: Theme.of(context).colorScheme.tertiaryContainer.withOpacity(0.3),
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.indigo,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Text(
-                      'Emma IPA',
-                      style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Text('British Phonetic Transcription', style: TextStyle(fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  // LLM Provider dropdown
-                  SizedBox(
-                    width: 100,
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedProvider,
-                      decoration: const InputDecoration(
-                        labelText: 'LLM',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        isDense: true,
-                      ),
-                      items: _providers.map((p) {
-                        return DropdownMenuItem(value: p, child: Text(_providerLabel(p), style: const TextStyle(fontSize: 11)));
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() {
-                            _selectedProvider = value;
-                            final models = _modelsByProvider[value] ?? ['default'];
-                            _selectedModel = models.isNotEmpty ? models.first : 'default';
-                          });
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Model dropdown
-                  SizedBox(
-                    width: 160,
-                    child: DropdownButtonFormField<String>(
-                      value: (_modelsByProvider[_selectedProvider]?.contains(_selectedModel) ?? false)
-                          ? _selectedModel
-                          : (_modelsByProvider[_selectedProvider]?.isNotEmpty ?? false)
-                              ? _modelsByProvider[_selectedProvider]!.first
-                              : null,
-                      decoration: const InputDecoration(
-                        labelText: 'Model',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        isDense: true,
-                      ),
-                      items: (_modelsByProvider[_selectedProvider] ?? []).map((m) {
-                        final displayName = m.length > 20 ? '${m.substring(0, 18)}...' : m;
-                        return DropdownMenuItem(value: m, child: Text(displayName, style: const TextStyle(fontSize: 11)));
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() => _selectedModel = value);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-
-          // Sample text selector chips
-          if (_ipaSamples.isNotEmpty)
+          ...[
+            // British Voices Selection
+            const Text('British Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: _ipaSamples.map((sample) {
-                final isSelected = _selectedIpaSample?['id'] == sample['id'];
-                final hasPreloadedIpa = sample['has_preloaded_ipa'] == true;
-                return ActionChip(
+              children: _voices.map((voice) {
+                final code = voice['code'] as String;
+                final name = voice['name'] as String;
+                final gender = voice['gender'] as String;
+                final grade = voice['grade'] as String;
+                final isSelected = code == _selectedVoice;
+
+                return ChoiceChip(
                   label: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(sample['title'] ?? 'Sample', style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : null)),
-                      if (hasPreloadedIpa) ...[
-                        const SizedBox(width: 4),
-                        Icon(Icons.check_circle, size: 14, color: isSelected ? Colors.white : Colors.green),
-                      ],
+                      Icon(gender == 'female' ? Icons.female : Icons.male, size: 16),
+                      const SizedBox(width: 4),
+                      Text(name),
+                      const SizedBox(width: 4),
+                      Text('($grade)', style: TextStyle(fontSize: 10, color: isSelected ? null : Colors.grey)),
                     ],
                   ),
-                  backgroundColor: isSelected
-                      ? Theme.of(context).colorScheme.primary
-                      : hasPreloadedIpa ? Colors.green.shade50 : null,
-                  onPressed: () => _selectIpaSample(sample),
+                  selected: isSelected,
+                  onSelected: (selected) {
+                    if (selected) setState(() => _selectedVoice = code);
+                  },
+                  avatar: voice['is_default'] == true ? const Icon(Icons.star, size: 16) : null,
                 );
               }).toList(),
             ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 16),
+
+            // Speed Slider
+            Row(
+              children: [
+                const Icon(Icons.speed, size: 20),
+                const SizedBox(width: 8),
+                const Text('Speed:'),
+                Expanded(
+                  child: Slider(
+                    value: _speed,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 15,
+                    label: '${_speed.toStringAsFixed(1)}x',
+                    onChanged: (value) => setState(() => _speed = value),
+                  ),
+                ),
+                Text('${_speed.toStringAsFixed(1)}x'),
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          ...[
+            // Emma IPA Section Header
+            Card(
+              color: Theme.of(context).colorScheme.tertiaryContainer.withOpacity(0.3),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.indigo,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'Emma IPA',
+                        style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    const Text('British Phonetic Transcription', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Spacer(),
+                    // LLM Provider dropdown
+                    SizedBox(
+                      width: 100,
+                      child: DropdownButtonFormField<String>(
+                        value: _selectedProvider,
+                        decoration: const InputDecoration(
+                          labelText: 'LLM',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          isDense: true,
+                        ),
+                        items: _providers.map((p) {
+                          return DropdownMenuItem(value: p, child: Text(_providerLabel(p), style: const TextStyle(fontSize: 11)));
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() {
+                              _selectedProvider = value;
+                              final models = _modelsByProvider[value] ?? ['default'];
+                              _selectedModel = models.isNotEmpty ? models.first : 'default';
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Model dropdown
+                    SizedBox(
+                      width: 160,
+                      child: DropdownButtonFormField<String>(
+                        value: (_modelsByProvider[_selectedProvider]?.contains(_selectedModel) ?? false)
+                            ? _selectedModel
+                            : (_modelsByProvider[_selectedProvider]?.isNotEmpty ?? false)
+                                ? _modelsByProvider[_selectedProvider]!.first
+                                : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Model',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          isDense: true,
+                        ),
+                        items: (_modelsByProvider[_selectedProvider] ?? []).map((m) {
+                          final displayName = m.length > 20 ? '${m.substring(0, 18)}...' : m;
+                          return DropdownMenuItem(value: m, child: Text(displayName, style: const TextStyle(fontSize: 11)));
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value != null) {
+                            setState(() => _selectedModel = value);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Sample text selector chips
+            if (_ipaSamples.isNotEmpty)
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: _ipaSamples.map((sample) {
+                  final isSelected = _selectedIpaSample?['id'] == sample['id'];
+                  final hasPreloadedIpa = sample['has_preloaded_ipa'] == true;
+                  return ActionChip(
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(sample['title'] ?? 'Sample', style: TextStyle(fontSize: 12, color: isSelected ? Colors.white : null)),
+                        if (hasPreloadedIpa) ...[
+                          const SizedBox(width: 4),
+                          Icon(Icons.check_circle, size: 14, color: isSelected ? Colors.white : Colors.green),
+                        ],
+                      ],
+                    ),
+                    backgroundColor: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : hasPreloadedIpa ? Colors.green.shade50 : null,
+                    onPressed: () => _selectIpaSample(sample),
+                  );
+                }).toList(),
+              ),
+            const SizedBox(height: 12),
+          ],
 
           // Main Text Input (editable Emma IPA text)
           TextField(
@@ -627,14 +696,16 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
                   label: Text(_isGenerating ? 'Generating...' : 'Generate Speech'),
                 ),
               ),
-              const SizedBox(width: 12),
-              FilledButton.tonalIcon(
-                onPressed: _isGeneratingIpa || _textController.text.isEmpty ? null : _generateIpa,
-                icon: _isGeneratingIpa
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.auto_awesome),
-                label: Text(_isGeneratingIpa ? 'Generating...' : 'Generate IPA'),
-              ),
+              ...[
+                const SizedBox(width: 12),
+                FilledButton.tonalIcon(
+                  onPressed: _isGeneratingIpa || _textController.text.isEmpty ? null : _generateIpa,
+                  icon: _isGeneratingIpa
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.auto_awesome),
+                  label: Text(_isGeneratingIpa ? 'Generating...' : 'Generate IPA'),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -803,7 +874,8 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   Widget _buildAudioFileItem(Map<String, dynamic> file) {
     final fileId = file['id'] as String;
     final filename = file['filename'] as String;
-    final voice = file['voice'] as String;
+    final engine = (file['engine'] as String?) ?? 'tts';
+    final label = (file['label'] as String?) ?? (file['voice'] as String?) ?? 'Unknown';
     final duration = file['duration_seconds'] as num;
     final sizeMb = file['size_mb'] as num;
     final isThisPlaying = _playingAudioId == fileId;
@@ -833,14 +905,14 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
               size: 20,
             ),
             title: Text(
-              voice,
+              label,
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
               ),
             ),
             subtitle: Text(
-              '$durationStr • ${sizeMb.toStringAsFixed(1)} MB',
+              '${engine.toUpperCase()} • $durationStr • ${sizeMb.toStringAsFixed(1)} MB',
               style: const TextStyle(fontSize: 10),
             ),
             trailing: IconButton(
@@ -999,7 +1071,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
           }
         }
 
-        await _api.deleteKokoroAudio(filename);
+        await _api.deleteTtsAudio(filename);
         _loadAudioFiles();
       } catch (e) {
         if (mounted) {

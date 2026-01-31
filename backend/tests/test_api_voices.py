@@ -23,9 +23,3 @@ def test_list_qwen3_speakers():
     assert "Ryan" in data["speakers"]
     assert "Aiden" in data["speakers"]
 
-
-def test_list_xtts_voices():
-    """Test listing XTTS voices."""
-    client = TestClient(app)
-    response = client.get("/api/xtts/voices")
-    assert response.status_code == 200

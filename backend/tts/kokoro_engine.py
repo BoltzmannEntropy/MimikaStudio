@@ -1,7 +1,11 @@
 from pathlib import Path
-from kokoro import KPipeline
-import soundfile as sf
 import uuid
+import soundfile as sf
+
+try:
+    from kokoro import KPipeline
+except ImportError:
+    KPipeline = None
 
 # British voices from Kokoro-82M
 BRITISH_VOICES = {
@@ -25,6 +29,8 @@ class KokoroEngine:
 
     def load_model(self):
         if self.pipeline is None:
+            if KPipeline is None:
+                raise ImportError("kokoro package not installed. Install with: pip install kokoro")
             # 'b' for British English
             self.pipeline = KPipeline(lang_code='b')
             print("Kokoro model loaded for British English")
@@ -32,30 +38,37 @@ class KokoroEngine:
 
     def generate(self, text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0) -> Path:
         """Generate speech using predefined British voice."""
-        self.load_model()
-
-        if voice not in BRITISH_VOICES:
-            voice = DEFAULT_VOICE
+        audio, sample_rate = self.generate_audio(text=text, voice=voice, speed=speed)
 
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"kokoro-{voice}-{short_uuid}.wav"
+        sf.write(str(output_file), audio, sample_rate)
+
+        return output_file
+
+    def generate_audio(self, text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0):
+        """Generate audio as a numpy array and sample rate."""
+        import numpy as np
+
+        self.load_model()
+
+        if voice not in BRITISH_VOICES:
+            voice = DEFAULT_VOICE
 
         # Generate audio
         generator = self.pipeline(text, voice=voice, speed=speed)
 
         # Kokoro returns a generator, we need to collect all audio chunks
         audio_chunks = []
-        for i, (gs, ps, audio) in enumerate(generator):
+        for _, (_, _, audio) in enumerate(generator):
             audio_chunks.append(audio)
 
-        # Concatenate and save
-        if audio_chunks:
-            import numpy as np
-            full_audio = np.concatenate(audio_chunks)
-            sf.write(str(output_file), full_audio, 24000)
+        if not audio_chunks:
+            return np.array([], dtype=np.float32), 24000
 
-        return output_file
+        full_audio = np.concatenate(audio_chunks)
+        return full_audio, 24000
 
     def get_voices(self) -> dict:
         return BRITISH_VOICES

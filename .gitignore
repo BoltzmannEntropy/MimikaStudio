@@ -17,7 +17,7 @@ venv/
 backend/venv/
 backend/venv_xtts/
 backend/data/outputs/
-backend/data/samples/qwen3_voices/
+backend/data/user_voices/
 backend/*.db
 backend/data/*.db
 backend/outputs/

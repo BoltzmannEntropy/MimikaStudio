@@ -5,9 +5,8 @@ python-multipart>=0.0.6
 pydantic>=2.0.0
 
 # TTS Engines
-TTS>=0.22.0                       # XTTS2 voice cloning (Coqui)
 kokoro>=0.9.4                     # Kokoro TTS (British voices)
-transformers==4.57.3              # Required by qwen-tts; XTTS patched for compat
+transformers==4.57.3              # Required by qwen-tts
 
 # Audio processing
 soundfile>=0.12.1
@@ -15,9 +14,9 @@ numpy>=1.24.0,<2.0.0
 pydub>=0.25.1                     # MP3 conversion for audiobooks
 scipy>=1.10.0                     # Audio resampling for speed adjustment
 
-# PyTorch (CPU for macOS) - pinned for TTS compatibility
-torch>=2.0.0,<2.6.0
-torchaudio>=2.0.0,<2.6.0
+# PyTorch (CPU for macOS) - keep torch/torchaudio on matching minor versions
+torch>=2.1.0
+torchaudio>=2.1.0
 
 # Database
 aiosqlite>=0.19.0

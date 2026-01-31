@@ -6,8 +6,6 @@ import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../widgets/audio_player_widget.dart';
 
-enum VoiceCloneEngine { xtts, qwen3 }
-
 // Speaker data with colors for CustomVoice mode
 class Speaker {
   final String name;
@@ -62,9 +60,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   final TextEditingController _transcriptController = TextEditingController();
   final TextEditingController _instructController = TextEditingController();
 
-  // Engine selection
-  VoiceCloneEngine _selectedEngine = VoiceCloneEngine.qwen3;
-
   // Qwen3 mode: 'clone' or 'custom'
   String _qwen3Mode = 'custom';
 
@@ -74,11 +69,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   // Selected preset speaker for custom mode
   String _selectedSpeaker = 'Ryan';
 
-  // XTTS state
-  List<Map<String, dynamic>> _xttsVoices = [];
-  List<String> _xttsLanguages = [];
-  String? _selectedXttsVoice;
-
   // Qwen3 state
   List<Map<String, dynamic>> _qwen3Voices = [];
   List<String> _qwen3Languages = [];
@@ -86,10 +76,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   Map<String, dynamic>? _qwen3Info;
 
   // Common state
-  List<Map<String, dynamic>> _samples = [];
   Map<String, dynamic>? _systemInfo;
   String _selectedLanguage = 'Auto'; // For Qwen3
-  String _selectedXttsLanguage = 'English'; // For XTTS
   double _speed = 1.0;
 
   // Advanced parameters
@@ -119,6 +107,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   @override
   void initState() {
     super.initState();
+    _textController.text =
+        'For many, the experience of Vietnam had a radicalizing effect, leading them to conclude that US military intervention was not a well-intentioned mistake by policymakers, but part of a consistent effort to preserve American political, economic, and military domination globally, largely in service of corporate profits. From this perspective, embraced by the "New Left"—as opposed to the old-line socialist and communist groups marginalized by the early 1950s—official rhetoric about freedom, democracy, and progress was seen as mere lip service.';
     _loadData();
     _loadAudioFiles();
   }
@@ -154,20 +144,13 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
     try {
-      // Load common data
-      final systemInfo = await _api.getSystemInfo();
-
-      // Load XTTS voices
-      List<Map<String, dynamic>> xttsVoices = [];
+      // Load common data (non-fatal if unavailable)
+      Map<String, dynamic>? systemInfo;
       try {
-        xttsVoices = await _api.getXttsVoices();
+        systemInfo = await _api.getSystemInfo();
       } catch (e) {
-        debugPrint('XTTS voices not available: $e');
+        debugPrint('System info not available: $e');
       }
-
-      // Load XTTS languages
-      final xttsLanguages = await _api.getXttsLanguages();
-      final samples = await _api.getSamples('xtts');
 
       // Load Qwen3 languages
       List<String> qwen3Languages = [];
@@ -193,13 +176,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
       setState(() {
         _systemInfo = systemInfo;
 
-        // XTTS
-        _xttsVoices = xttsVoices;
-        _xttsLanguages = xttsLanguages;
-        if (xttsVoices.isNotEmpty) {
-          _selectedXttsVoice = xttsVoices[0]['name'];
-        }
-
         // Qwen3
         _qwen3Voices = qwen3Voices;
         _qwen3Languages = qwen3Languages;
@@ -207,8 +183,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         if (qwen3Voices.isNotEmpty) {
           _selectedQwen3Voice = qwen3Voices[0]['name'];
         }
-
-        _samples = samples;
         _isLoading = false;
       });
     } catch (e) {
@@ -229,56 +203,44 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
 
     try {
       String audioUrl;
-      if (_selectedEngine == VoiceCloneEngine.xtts) {
-        if (_selectedXttsVoice == null) {
-          throw Exception('Please select a voice');
+      // Qwen3-TTS with mode support
+      if (_qwen3Mode == 'clone') {
+        if (_selectedQwen3Voice == null) {
+          throw Exception('Please upload a voice sample first');
         }
-        audioUrl = await _api.generateXtts(
+        audioUrl = await _api.generateQwen3(
           text: _textController.text,
-          speakerId: _selectedXttsVoice!,
-          language: _selectedXttsLanguage,
+          mode: 'clone',
+          voiceName: _selectedQwen3Voice!,
+          language: _selectedLanguage,
           speed: _speed,
+          modelSize: _modelSize,
+          temperature: _temperature,
+          topP: _topP,
+          topK: _topK,
+          repetitionPenalty: _repetitionPenalty,
+          seed: _seed,
+          unloadAfter: _unloadAfter,
         );
       } else {
-        // Qwen3-TTS with mode support
-        if (_qwen3Mode == 'clone') {
-          if (_selectedQwen3Voice == null) {
-            throw Exception('Please upload a voice sample first');
-          }
-          audioUrl = await _api.generateQwen3(
-            text: _textController.text,
-            mode: 'clone',
-            voiceName: _selectedQwen3Voice!,
-            language: _selectedLanguage,
-            speed: _speed,
-            modelSize: _modelSize,
-            temperature: _temperature,
-            topP: _topP,
-            topK: _topK,
-            repetitionPenalty: _repetitionPenalty,
-            seed: _seed,
-            unloadAfter: _unloadAfter,
-          );
-        } else {
-          // Custom voice mode (preset speakers)
-          audioUrl = await _api.generateQwen3(
-            text: _textController.text,
-            mode: 'custom',
-            speaker: _selectedSpeaker,
-            language: _selectedLanguage,
-            speed: _speed,
-            modelSize: _modelSize,
-            instruct: _instructController.text.isNotEmpty
-                ? _instructController.text
-                : null,
-            temperature: _temperature,
-            topP: _topP,
-            topK: _topK,
-            repetitionPenalty: _repetitionPenalty,
-            seed: _seed,
-            unloadAfter: _unloadAfter,
-          );
-        }
+        // Custom voice mode (preset speakers)
+        audioUrl = await _api.generateQwen3(
+          text: _textController.text,
+          mode: 'custom',
+          speaker: _selectedSpeaker,
+          language: _selectedLanguage,
+          speed: _speed,
+          modelSize: _modelSize,
+          instruct: _instructController.text.isNotEmpty
+              ? _instructController.text
+              : null,
+          temperature: _temperature,
+          topP: _topP,
+          topK: _topK,
+          repetitionPenalty: _repetitionPenalty,
+          seed: _seed,
+          unloadAfter: _unloadAfter,
+        );
       }
 
       // Extract filename from URL (e.g., http://localhost:8000/audio/qwen3-xxx.wav -> qwen3-xxx.wav)
@@ -301,34 +263,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         _error = e.toString();
         _isGenerating = false;
       });
-    }
-  }
-
-  Future<void> _uploadXttsVoice() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
-      allowMultiple: false,
-    );
-
-    if (result != null && result.files.single.path != null) {
-      final name = await _showNameDialog();
-      if (name != null && name.isNotEmpty) {
-        try {
-          await _api.uploadXttsVoice(name, File(result.files.single.path!));
-          await _loadData();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Voice "$name" uploaded successfully')),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
-          }
-        }
-      }
     }
   }
 
@@ -369,33 +303,6 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
         }
       }
     }
-  }
-
-  Future<String?> _showNameDialog() async {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Voice Name'),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(
-            hintText: 'Enter name for this voice',
-          ),
-          autofocus: true,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
   }
 
   Future<Map<String, String>?> _showQwen3UploadDialog() async {
@@ -468,130 +375,33 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final isQwen3 = _selectedEngine == VoiceCloneEngine.qwen3;
-    // Qwen3 is available - custom mode with preset speakers always works
-    final qwen3Available = true;
-
     return Row(
       children: [
         _buildSidebar(),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Engine Selector
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: SegmentedButton<VoiceCloneEngine>(
-                      segments: [
-                        ButtonSegment(
-                          value: VoiceCloneEngine.qwen3,
-                          label: const Text('Qwen3-TTS'),
-                          icon: Icon(
-                            Icons.auto_awesome,
-                            color: qwen3Available ? null : Colors.grey,
-                          ),
-                        ),
-                        const ButtonSegment(
-                          value: VoiceCloneEngine.xtts,
-                          label: Text('XTTS2'),
-                          icon: Icon(Icons.record_voice_over),
-                        ),
-                      ],
-                      selected: {_selectedEngine},
-                      onSelectionChanged: (selection) {
-                        setState(() => _selectedEngine = selection.first);
-                      },
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
-
                 // Model Header with System Info
-                _buildModelHeader(isQwen3, qwen3Available),
+                _buildModelHeader(),
+                const SizedBox(height: 4),
+                // Model size selector
+                _buildModelSizeSelector(),
+                const SizedBox(height: 12),
+
+                // Language selector with flags
+                _buildLanguageSelector(),
                 const SizedBox(height: 16),
 
-                // Qwen3 not installed warning
-                if (isQwen3 && !qwen3Available)
-                  Card(
-                    color: Colors.orange.shade100,
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(Icons.warning, color: Colors.orange),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Qwen3-TTS Not Installed',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'Install with: pip install -U qwen-tts soundfile',
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Features: 3-second voice cloning, 10 languages, MPS/CUDA support',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Qwen3 Mode-specific UI
-                if (isQwen3) ...[
-                  // Model size selector
-                  _buildModelSizeSelector(),
-                  const SizedBox(height: 12),
-
-                  // Language selector with flags
-                  _buildLanguageSelector(),
-                  const SizedBox(height: 16),
-
-                  // Mode-specific content
-                  if (_qwen3Mode == 'custom') ...[
-                    _buildSpeakerCarousel(),
-                  ] else ...[
-                    _buildQwen3VoiceSection(),
-                  ],
-                  const SizedBox(height: 16),
+                // Mode-specific content
+                if (_qwen3Mode == 'custom') ...[
+                  _buildSpeakerCarousel(),
                 ] else ...[
-                  // XTTS Voice Selection
-                  _buildXttsVoiceSection(),
-                  const SizedBox(height: 16),
-
-                  // Language Selection for XTTS
-                  if (_xttsLanguages.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      value: _xttsLanguages.contains(_selectedXttsLanguage)
-                          ? _selectedXttsLanguage
-                          : _xttsLanguages.first,
-                      decoration: const InputDecoration(
-                        labelText: 'Language',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: _xttsLanguages.map((lang) {
-                        return DropdownMenuItem(value: lang, child: Text(lang));
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null)
-                          setState(() => _selectedXttsLanguage = value);
-                      },
-                    ),
-                  const SizedBox(height: 12),
+                  _buildQwen3VoiceSection(),
                 ],
+                const SizedBox(height: 16),
 
                 // Text Input
                 TextField(
@@ -614,8 +424,8 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                     Expanded(
                       child: Slider(
                         value: _speed,
-                        min: isQwen3 ? 0.5 : 0.1,
-                        max: isQwen3 ? 2.0 : 1.99,
+                        min: 0.5,
+                        max: 2.0,
                         divisions: 15,
                         label: '${_speed.toStringAsFixed(1)}x',
                         onChanged: (value) => setState(() => _speed = value),
@@ -625,42 +435,14 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                   ],
                 ),
 
-                // Advanced parameters (Qwen3 only)
-                if (isQwen3) ...[
-                  const SizedBox(height: 12),
-                  _buildAdvancedPanel(),
-                ],
+                const SizedBox(height: 12),
+                _buildAdvancedPanel(),
                 const SizedBox(height: 16),
-
-                // Sample Texts (XTTS only)
-                if (!isQwen3 && _samples.isNotEmpty) ...[
-                  const Text(
-                    'Sample texts:',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: _samples.map((s) {
-                      return ActionChip(
-                        label: Text(
-                          (s['text'] as String).length > 30
-                              ? '${(s['text'] as String).substring(0, 30)}...'
-                              : s['text'] as String,
-                        ),
-                        onPressed: () =>
-                            _textController.text = s['text'] as String,
-                      );
-                    }).toList(),
-                  ),
-                  const SizedBox(height: 16),
-                ],
 
                 // Generate Button
                 FilledButton.icon(
                   onPressed:
-                      (_isGenerating || !_canGenerate(isQwen3, qwen3Available))
+                      (_isGenerating || !_canGenerate())
                       ? null
                       : _generate,
                   icon: _isGenerating
@@ -720,7 +502,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                   AudioPlayerWidget(
                     player: _audioPlayer,
                     audioUrl: _audioUrl,
-                    modelName: isQwen3 ? 'Qwen3' : 'XTTS2',
+                    modelName: 'Qwen3',
                     filename: _audioFilename,
                   ),
                 ],
@@ -732,18 +514,13 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     );
   }
 
-  bool _canGenerate(bool isQwen3, bool qwen3Available) {
+  bool _canGenerate() {
     if (_textController.text.isEmpty) return false;
-    if (isQwen3) {
-      if (_qwen3Mode == 'clone') {
-        return _selectedQwen3Voice != null;
-      } else {
-        // Custom mode always available with preset speakers
-        return true;
-      }
-    } else {
-      return _selectedXttsVoice != null;
+    if (_qwen3Mode == 'clone') {
+      return _selectedQwen3Voice != null;
     }
+    // Custom mode always available with preset speakers
+    return true;
   }
 
   Widget _buildModeToggle() {
@@ -1422,132 +1199,62 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     );
   }
 
-  Widget _buildModelHeader(bool isQwen3, bool qwen3Available) {
-    if (isQwen3) {
-      return Card(
-        color: Colors.teal.shade50,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.auto_awesome, color: Colors.teal.shade700),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Qwen3-TTS',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal.shade700,
-                    ),
+  Widget _buildModelHeader() {
+    return Card(
+      color: Colors.teal.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.auto_awesome, color: Colors.teal.shade700),
+                const SizedBox(width: 8),
+                Text(
+                  'Qwen3-TTS',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.teal.shade700,
                   ),
-                  const Spacer(),
-                  _buildModeToggle(),
-                ],
-              ),
+                ),
+                const Spacer(),
+                _buildModeToggle(),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _qwen3Mode == 'clone'
+                  ? 'Clone a voice from your audio samples (3+ seconds).'
+                  : 'Use preset premium speakers - no audio required.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            if (_systemInfo != null) ...[
               const SizedBox(height: 8),
-              Text(
-                _qwen3Mode == 'clone'
-                    ? 'Clone a voice from your audio samples (3+ seconds).'
-                    : 'Use preset premium speakers - no audio required.',
-                style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-              ),
-              if (_systemInfo != null) ...[
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 4,
-                  children: [
-                    _buildInfoChip(
-                      Icons.memory,
-                      _systemInfo!['device'] ?? 'Unknown',
-                    ),
-                    _buildInfoChip(
-                      Icons.code,
-                      'Python ${_systemInfo!['python_version'] ?? '?'}',
-                    ),
-                    _buildInfoChip(
-                      Icons.library_books,
-                      'Qwen3-TTS-$_modelSize-${_qwen3Mode == 'clone' ? 'Base' : 'CustomVoice'}',
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ),
-      );
-    } else {
-      return Card(
-        color: Theme.of(context).colorScheme.primaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+              Wrap(
+                spacing: 12,
+                runSpacing: 4,
                 children: [
-                  Icon(
-                    Icons.record_voice_over,
-                    color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  _buildInfoChip(
+                    Icons.memory,
+                    _systemInfo!['device'] ?? 'Unknown',
                   ),
-                  const SizedBox(width: 8),
-                  Text(
-                    'XTTS2 Voice Cloning',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimaryContainer,
-                    ),
+                  _buildInfoChip(
+                    Icons.code,
+                    'Python ${_systemInfo!['python_version'] ?? '?'}',
                   ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      'Coqui AI',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Theme.of(context).colorScheme.onPrimary,
-                      ),
-                    ),
+                  _buildInfoChip(
+                    Icons.library_books,
+                    'Qwen3-TTS-$_modelSize-${_qwen3Mode == 'clone' ? 'Base' : 'CustomVoice'}',
                   ),
                 ],
               ),
-              if (_systemInfo != null) ...[
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 12,
-                  runSpacing: 4,
-                  children: [
-                    _buildInfoChip(
-                      Icons.memory,
-                      _systemInfo!['device'] ?? 'Unknown',
-                    ),
-                    _buildInfoChip(
-                      Icons.code,
-                      'Python ${_systemInfo!['python_version'] ?? '?'}',
-                    ),
-                    _buildInfoChip(
-                      Icons.library_books,
-                      _systemInfo!['models']?['xtts']?['model'] ?? 'XTTS v2',
-                    ),
-                  ],
-                ),
-              ],
             ],
-          ),
+          ],
         ),
-      );
-    }
+      ),
+    );
   }
 
   Future<void> _deleteQwen3Voice(String name) async {
@@ -1652,17 +1359,103 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     }
   }
 
+  Widget _buildQwen3VoiceList(
+    List<Map<String, dynamic>> voices, {
+    bool allowEdit = false,
+    bool showDefaultBadge = false,
+  }) {
+    return ListView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: voices.length,
+      itemBuilder: (context, index) {
+        final voice = voices[index];
+        final name = voice['name'] as String;
+        final transcript = voice['transcript'] as String? ?? '';
+        final isSelected = name == _selectedQwen3Voice;
+
+        return Card(
+          color: isSelected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
+          child: ListTile(
+            leading: Radio<String>(
+              value: name,
+              groupValue: _selectedQwen3Voice,
+              onChanged: (value) => setState(() => _selectedQwen3Voice = value),
+            ),
+            title: Row(
+              children: [
+                Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                if (showDefaultBadge) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            subtitle: transcript.isNotEmpty
+                ? Text(
+                    transcript.length > 50
+                        ? '${transcript.substring(0, 50)}...'
+                        : transcript,
+                    style: const TextStyle(fontSize: 12),
+                  )
+                : const Text(
+                    'No transcript',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+            trailing: allowEdit
+                ? Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit, size: 20),
+                        onPressed: () => _editQwen3Voice(name, transcript),
+                        tooltip: 'Edit',
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete,
+                            size: 20, color: Colors.red),
+                        onPressed: () => _deleteQwen3Voice(name),
+                        tooltip: 'Delete',
+                      ),
+                    ],
+                  )
+                : null,
+            onTap: () => setState(() => _selectedQwen3Voice = name),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildQwen3VoiceSection() {
-    // Qwen3 list already includes XTTS samples (from backend); de-duplicate by name
-    final merged = <String, Map<String, dynamic>>{};
-    for (final voice in _qwen3Voices) {
-      final name = (voice['name'] as String? ?? '').toLowerCase();
-      if (name.isEmpty) continue;
-      if (!merged.containsKey(name) || voice['source'] == 'qwen3') {
-        merged[name] = voice;
-      }
-    }
-    final allVoices = merged.values.toList();
+    final voices = _qwen3Voices;
+    final defaults = voices
+        .where((voice) => (voice['source'] as String?) == 'default')
+        .toList()
+      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    final users = voices
+        .where((voice) => (voice['source'] as String?) != 'default')
+        .toList()
+      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1681,7 +1474,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                '${allVoices.length} voices',
+                '${voices.length} voices',
                 style: TextStyle(fontSize: 10, color: Colors.grey.shade700),
               ),
             ),
@@ -1700,7 +1493,7 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
           ],
         ),
         const SizedBox(height: 8),
-        if (allVoices.isEmpty)
+        if (voices.isEmpty)
           Card(
             color: Colors.blue.shade50,
             child: const Padding(
@@ -1723,288 +1516,38 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
               ),
             ),
           )
-        else
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: allVoices.length,
-            itemBuilder: (context, index) {
-              final voice = allVoices[index];
-              final name = voice['name'] as String;
-              final transcript = voice['transcript'] as String? ?? '';
-              final isSelected = name == _selectedQwen3Voice;
-
-              return Card(
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : null,
-                child: ListTile(
-                  leading: Radio<String>(
-                    value: name,
-                    groupValue: _selectedQwen3Voice,
-                    onChanged: (value) =>
-                        setState(() => _selectedQwen3Voice = value),
-                  ),
-                  title: Row(
-                    children: [
-                      Text(
-                        name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                    ],
-                  ),
-                  subtitle: transcript.isNotEmpty
-                      ? Text(
-                          transcript.length > 50
-                              ? '${transcript.substring(0, 50)}...'
-                              : transcript,
-                          style: const TextStyle(fontSize: 12),
-                        )
-                      : const Text(
-                          'No transcript',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontStyle: FontStyle.italic,
-                          ),
-                        ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, size: 20),
-                        onPressed: () => _editQwen3Voice(name, transcript),
-                        tooltip: 'Edit',
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.delete,
-                          size: 20,
-                          color: Colors.red,
-                        ),
-                        onPressed: () => _deleteQwen3Voice(name),
-                        tooltip: 'Delete',
-                      ),
-                    ],
-                  ),
-                  onTap: () => setState(() => _selectedQwen3Voice = name),
-                ),
-              );
-            },
-          ),
-      ],
-    );
-  }
-
-  Future<void> _deleteXttsVoice(String name) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Voice'),
-        content: Text('Delete voice "$name"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true) {
-      try {
-        await _api.deleteXttsVoice(name);
-        await _loadData();
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Voice "$name" deleted')));
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
-        }
-      }
-    }
-  }
-
-  Future<void> _editXttsVoice(String name) async {
-    final nameController = TextEditingController(text: name);
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Edit Voice: $name'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Voice Name'),
+        else ...[
+          if (defaults.isNotEmpty) ...[
+            const Text(
+              'Default Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: () async {
-                final result = await FilePicker.platform.pickFiles(
-                  type: FileType.audio,
-                );
-                if (result != null && result.files.single.path != null) {
-                  Navigator.pop(context, {
-                    'name': nameController.text,
-                    'file': File(result.files.single.path!),
-                  });
-                }
-              },
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Replace Audio File'),
-            ),
+            const SizedBox(height: 8),
+            _buildQwen3VoiceList(defaults, showDefaultBadge: true),
+            const SizedBox(height: 12),
           ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () =>
-                Navigator.pop(context, {'name': nameController.text}),
-            child: const Text('Save Name'),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null) {
-      try {
-        await _api.updateXttsVoice(
-          name,
-          newName: result['name'] != name ? result['name'] as String : null,
-          file: result['file'] as File?,
-        );
-        await _loadData();
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
-        }
-      }
-    }
-  }
-
-  Widget _buildXttsVoiceSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<String>(
-                value: _selectedXttsVoice,
-                decoration: const InputDecoration(
-                  labelText: 'Speaker Voice',
-                  border: OutlineInputBorder(),
+          if (users.isNotEmpty) ...[
+            const Text(
+              'Your Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            _buildQwen3VoiceList(users, allowEdit: true),
+          ] else ...[
+            Card(
+              color: Colors.blue.shade50,
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Text(
+                  'No user voices yet. Upload a sample to add your own voice.',
+                  style: TextStyle(fontSize: 12),
                 ),
-                items: _xttsVoices.map((v) {
-                  return DropdownMenuItem(
-                    value: v['name'] as String,
-                    child: Text(v['name'] as String),
-                  );
-                }).toList(),
-                onChanged: (value) =>
-                    setState(() => _selectedXttsVoice = value),
               ),
             ),
-            const SizedBox(width: 8),
-            IconButton.filled(
-              onPressed: _uploadXttsVoice,
-              icon: const Icon(Icons.add),
-              tooltip: 'Upload voice sample',
-            ),
           ],
-        ),
-        if (_xttsVoices.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          const Text(
-            'Manage voices:',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ListView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: _xttsVoices.length,
-            itemBuilder: (context, index) {
-              final voice = _xttsVoices[index];
-              final name = voice['name'] as String;
-              final isSelected = name == _selectedXttsVoice;
-
-              return Card(
-                color: isSelected
-                    ? Theme.of(context).colorScheme.primaryContainer
-                    : null,
-                child: ListTile(
-                  leading: IconButton(
-                    icon: const Icon(Icons.play_circle_outline),
-                    onPressed: () async {
-                      try {
-                        final audioUrl = await _api.generateXtts(
-                          text: 'Hello, this is a voice preview for $name.',
-                          speakerId: name,
-                          language: 'English',
-                          speed: 0.8,
-                        );
-                        await _audioPlayer.setUrl(audioUrl);
-                        await _audioPlayer.play();
-                      } catch (e) {
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text('Preview failed: $e')),
-                          );
-                        }
-                      }
-                    },
-                    tooltip: 'Preview',
-                  ),
-                  title: Text(
-                    name,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, size: 20),
-                        onPressed: () => _editXttsVoice(name),
-                        tooltip: 'Edit',
-                      ),
-                      IconButton(
-                        icon: const Icon(
-                          Icons.delete,
-                          size: 20,
-                          color: Colors.red,
-                        ),
-                        onPressed: () => _deleteXttsVoice(name),
-                        tooltip: 'Delete',
-                      ),
-                    ],
-                  ),
-                  onTap: () => setState(() => _selectedXttsVoice = name),
-                ),
-              );
-            },
-          ),
         ],
       ],
     );
   }
+
 }

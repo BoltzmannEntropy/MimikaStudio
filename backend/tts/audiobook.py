@@ -21,46 +21,18 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, Literal, List, Tuple
-from types import SimpleNamespace
 import numpy as np
 import soundfile as sf
 
 from .kokoro_engine import get_kokoro_engine, DEFAULT_VOICE
+from .text_chunking import smart_chunk_text
+from .audio_utils import merge_audio_chunks, resample_audio
 
 # Output format type
 OutputFormat = Literal["wav", "mp3", "m4b"]
 
 # Subtitle format type
 SubtitleFormat = Literal["none", "srt", "vtt"]
-
-# Try to load spaCy for robust sentence tokenization
-_nlp = None
-_spacy_available = False
-
-def _get_spacy_nlp():
-    """Lazy-load spaCy with sentencizer for sentence splitting."""
-    global _nlp, _spacy_available
-    if _nlp is not None:
-        return _nlp
-
-    try:
-        import spacy
-        # Use blank English model with just sentencizer (lightweight)
-        _nlp = spacy.blank("en")
-        _nlp.add_pipe("sentencizer")
-        _spacy_available = True
-        print("[Audiobook] spaCy sentencizer loaded successfully")
-    except ImportError:
-        print("[Audiobook] spaCy not available, using regex fallback")
-        _spacy_available = False
-        _nlp = None
-    except Exception as e:
-        print(f"[Audiobook] spaCy load error: {e}, using regex fallback")
-        _spacy_available = False
-        _nlp = None
-
-    return _nlp
-
 
 class JobStatus(str, Enum):
     STARTED = "started"
@@ -119,6 +91,9 @@ class AudiobookJob:
     voice: str
     speed: float
     total_chunks: int
+    smart_chunking: bool = True
+    max_chars_per_chunk: int = 1500
+    crossfade_ms: int = 40
     output_format: OutputFormat = "wav"
     subtitle_format: SubtitleFormat = "none"
     current_chunk: int = 0
@@ -182,115 +157,9 @@ _jobs: dict[str, AudiobookJob] = {}
 _jobs_lock = threading.Lock()
 
 
-def split_into_sentences_spacy(text: str) -> list[str]:
-    """Split text into sentences using spaCy (like audiblez)."""
-    nlp = _get_spacy_nlp()
-    if nlp is None:
-        return split_into_sentences_regex(text)
-
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-
-    doc = nlp(text)
-    sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
-
-    return sentences if sentences else [text]
-
-
-def split_into_sentences_regex(text: str) -> list[str]:
-    """Fallback regex-based sentence splitting."""
-    # Normalize whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-
-    # Split on sentence-ending punctuation followed by space or end
-    # Handles: . ! ? and common abbreviations
-    sentence_pattern = r'(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$'
-
-    # Simple split that respects sentence boundaries
-    parts = re.split(sentence_pattern, text)
-
-    sentences = []
-    for part in parts:
-        part = part.strip()
-        if part:
-            sentences.append(part)
-
-    # If no sentences found, split by newlines or return whole text
-    if not sentences:
-        sentences = [s.strip() for s in text.split('\n') if s.strip()]
-
-    if not sentences:
-        sentences = [text]
-
-    return sentences
-
-
-def split_into_sentences(text: str) -> list[str]:
-    """Split text into sentences using best available method."""
-    if _spacy_available or _get_spacy_nlp() is not None:
-        return split_into_sentences_spacy(text)
-    return split_into_sentences_regex(text)
-
-
 def chunk_text_for_kokoro(text: str, max_chars: int = 1500) -> list[str]:
-    """
-    Split text into chunks that respect:
-    1. Sentence boundaries (never split mid-sentence)
-    2. ~1500 chars per chunk (~400-500 tokens, safe margin for Kokoro's 510 limit)
-
-    Args:
-        text: The full text to chunk
-        max_chars: Maximum characters per chunk (default 1500)
-
-    Returns:
-        List of text chunks
-    """
-    sentences = split_into_sentences(text)
-    chunks = []
-    current_chunk = []
-    current_length = 0
-
-    for sentence in sentences:
-        sentence_len = len(sentence)
-
-        # If single sentence exceeds max, we need to split it (rare edge case)
-        if sentence_len > max_chars:
-            # Flush current chunk first
-            if current_chunk:
-                chunks.append(' '.join(current_chunk))
-                current_chunk = []
-                current_length = 0
-
-            # Split long sentence by commas or at max_chars
-            words = sentence.split()
-            temp_chunk = []
-            temp_len = 0
-            for word in words:
-                if temp_len + len(word) + 1 > max_chars and temp_chunk:
-                    chunks.append(' '.join(temp_chunk))
-                    temp_chunk = [word]
-                    temp_len = len(word)
-                else:
-                    temp_chunk.append(word)
-                    temp_len += len(word) + 1
-            if temp_chunk:
-                chunks.append(' '.join(temp_chunk))
-            continue
-
-        # Check if adding this sentence would exceed limit
-        if current_length + sentence_len + 1 > max_chars and current_chunk:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = [sentence]
-            current_length = sentence_len
-        else:
-            current_chunk.append(sentence)
-            current_length += sentence_len + 1  # +1 for space
-
-    # Don't forget the last chunk
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-
-    return chunks
+    """Chunk text using shared smart chunking utility."""
+    return smart_chunk_text(text, max_chars=max_chars)
 
 
 # ============== PDF Processing (like pdf-narrator) ==============
@@ -497,6 +366,9 @@ def create_audiobook_job(
     output_format: OutputFormat = "wav",
     subtitle_format: SubtitleFormat = "none",
     chapters: Optional[List[Chapter]] = None,
+    smart_chunking: bool = True,
+    max_chars_per_chunk: int = 1500,
+    crossfade_ms: int = 40,
 ) -> AudiobookJob:
     """
     Create a new audiobook generation job.
@@ -514,7 +386,7 @@ def create_audiobook_job(
         AudiobookJob instance
     """
     job_id = str(uuid.uuid4())[:8]
-    chunks = chunk_text_for_kokoro(text)
+    chunks = smart_chunk_text(text, max_chars=max_chars_per_chunk) if smart_chunking else [text]
     total_chars = sum(len(c) for c in chunks)
 
     job = AudiobookJob(
@@ -524,6 +396,9 @@ def create_audiobook_job(
         speed=speed,
         total_chunks=len(chunks),
         total_chars=total_chars,
+        smart_chunking=smart_chunking,
+        max_chars_per_chunk=max_chars_per_chunk,
+        crossfade_ms=crossfade_ms,
         output_format=output_format,
         subtitle_format=subtitle_format,
         chapters=chapters or [],
@@ -550,6 +425,9 @@ def create_audiobook_from_file(
     speed: float = 1.0,
     output_format: OutputFormat = "wav",
     subtitle_format: SubtitleFormat = "none",
+    smart_chunking: bool = True,
+    max_chars_per_chunk: int = 1500,
+    crossfade_ms: int = 40,
 ) -> AudiobookJob:
     """
     Create audiobook from a file (PDF, EPUB, TXT, etc.).
@@ -604,6 +482,9 @@ def create_audiobook_from_file(
         output_format=output_format,
         subtitle_format=subtitle_format,
         chapters=chapters,
+        smart_chunking=smart_chunking,
+        max_chars_per_chunk=max_chars_per_chunk,
+        crossfade_ms=crossfade_ms,
     )
 
 
@@ -700,21 +581,27 @@ def _write_subtitles(job: AudiobookJob, outputs_dir: Path) -> Optional[Path]:
     return subtitle_file
 
 
+def _generate_chunk_audio(job: AudiobookJob, chunk: str) -> Tuple[np.ndarray, int]:
+    """Generate audio for a single chunk based on selected engine."""
+    engine = get_kokoro_engine()
+    return engine.generate_audio(chunk, voice=job.voice, speed=job.speed)
+
+
 def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
     """
     Background worker that generates the audiobook.
     Enhanced with character-based progress tracking (like audiblez).
     Now also generates timestamped subtitles (like abogen).
     """
-    engine = get_kokoro_engine()
     outputs_dir = Path(__file__).parent.parent / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
     all_audio = []
-    sample_rate = 24000  # Kokoro outputs at 24kHz
+    sample_rate: Optional[int] = None
     chapter_timestamps = []  # For M4B chapter markers
     current_time = 0.0
     subtitle_index = 1  # SRT indices start at 1
+    prev_chunk_len = 0
 
     try:
         job.status = JobStatus.PROCESSING
@@ -738,23 +625,31 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
 
             job.current_chunk = i + 1
             chunk_chars = len(chunk)
-            chunk_start_time = current_time
 
             # Generate audio for this chunk
-            engine.load_model()
-            generator = engine.pipeline(chunk, voice=job.voice, speed=job.speed)
+            chunk_audio, chunk_sr = _generate_chunk_audio(job, chunk)
 
-            chunk_audio = []
-            for gs, ps, audio in generator:
-                chunk_audio.append(audio)
+            if chunk_audio is not None and len(chunk_audio) > 0:
+                if sample_rate is None:
+                    sample_rate = chunk_sr
+                elif chunk_sr != sample_rate:
+                    chunk_audio = resample_audio(chunk_audio, chunk_sr, sample_rate)
 
-            if chunk_audio:
-                chunk_audio_concat = np.concatenate(chunk_audio)
-                all_audio.append(chunk_audio_concat)
+                all_audio.append(chunk_audio)
 
-                # Update timing for chapter markers
-                chunk_duration = len(chunk_audio_concat) / sample_rate
-                current_time += chunk_duration
+                if sample_rate is None:
+                    raise ValueError("Sample rate could not be determined")
+
+                crossfade_samples = max(0, int(sample_rate * job.crossfade_ms / 1000))
+                overlap_samples = 0
+                if crossfade_samples > 0 and prev_chunk_len > 0:
+                    overlap_samples = min(crossfade_samples, prev_chunk_len, max(1, len(chunk_audio) - 1))
+
+                chunk_duration = len(chunk_audio) / sample_rate
+                effective_duration = (len(chunk_audio) - overlap_samples) / sample_rate
+                chunk_start_time = current_time
+                current_time += effective_duration
+                prev_chunk_len = len(chunk_audio)
 
                 # Create subtitle entry for this chunk (if subtitles enabled)
                 if job.subtitle_format != "none":
@@ -768,14 +663,14 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
                         current_sub_text = []
                         current_sub_len = 0
                         sub_start = chunk_start_time
-                        words_per_sec = len(words) / chunk_duration if chunk_duration > 0 else 10
+                        words_per_sec = len(words) / effective_duration if effective_duration > 0 else 10
 
                         for word in words:
                             current_sub_text.append(word)
                             current_sub_len += len(word) + 1
 
                             if current_sub_len >= max_subtitle_len:
-                                sub_duration = len(current_sub_text) / words_per_sec
+                                sub_duration = len(current_sub_text) / words_per_sec if words_per_sec > 0 else 0
                                 job.subtitles.append(SubtitleEntry(
                                     index=subtitle_index,
                                     start_time=sub_start,
@@ -829,7 +724,10 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
 
         # Concatenate all audio
         if all_audio:
-            full_audio = np.concatenate(all_audio)
+            if sample_rate is None:
+                raise ValueError("Sample rate could not be determined")
+
+            full_audio = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=job.crossfade_ms)
             job.duration_seconds = len(full_audio) / sample_rate
 
             # Save to WAV first
