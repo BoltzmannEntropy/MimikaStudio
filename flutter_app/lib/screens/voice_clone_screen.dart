@@ -1359,6 +1359,25 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
     }
   }
 
+  Future<void> _previewQwen3Voice(Map<String, dynamic> voice) async {
+    try {
+      final audioUrl = voice['audio_url'] as String?;
+      if (audioUrl == null || audioUrl.isEmpty) {
+        throw Exception('Preview audio not available');
+      }
+      final playUrl =
+          audioUrl.startsWith('http') ? audioUrl : '${ApiService.baseUrl}$audioUrl';
+      await _audioPlayer.setUrl(playUrl);
+      await _audioPlayer.play();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
+      }
+    }
+  }
+
   Widget _buildQwen3VoiceList(
     List<Map<String, dynamic>> voices, {
     bool allowEdit = false,
@@ -1421,24 +1440,29 @@ class _VoiceCloneScreenState extends State<VoiceCloneScreen> {
                       fontStyle: FontStyle.italic,
                     ),
                   ),
-            trailing: allowEdit
-                ? Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.edit, size: 20),
-                        onPressed: () => _editQwen3Voice(name, transcript),
-                        tooltip: 'Edit',
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete,
-                            size: 20, color: Colors.red),
-                        onPressed: () => _deleteQwen3Voice(name),
-                        tooltip: 'Delete',
-                      ),
-                    ],
-                  )
-                : null,
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.play_circle_outline),
+                  onPressed: () => _previewQwen3Voice(voice),
+                  tooltip: 'Preview',
+                ),
+                if (allowEdit) ...[
+                  IconButton(
+                    icon: const Icon(Icons.edit, size: 20),
+                    onPressed: () => _editQwen3Voice(name, transcript),
+                    tooltip: 'Edit',
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete,
+                        size: 20, color: Colors.red),
+                    onPressed: () => _deleteQwen3Voice(name),
+                    tooltip: 'Delete',
+                  ),
+                ],
+              ],
+            ),
             onTap: () => setState(() => _selectedQwen3Voice = name),
           ),
         );

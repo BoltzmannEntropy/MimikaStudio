@@ -499,9 +499,27 @@ async def qwen3_list_voices():
     try:
         engine = get_qwen3_engine()
         voices = engine.get_saved_voices()
+        for voice in voices:
+            name = voice.get("name")
+            if name:
+                voice["audio_url"] = f"/api/qwen3/voices/{name}/audio"
         return {"voices": voices}
     except ImportError:
         return {"voices": [], "error": "Qwen3-TTS not installed"}
+
+
+@app.get("/api/qwen3/voices/{name}/audio")
+async def qwen3_voice_audio(name: str):
+    """Serve a voice sample audio file for preview."""
+    if not re.match(r"^[A-Za-z0-9_-]+$", name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+
+    for vdir in [QWEN3_USER_VOICES_DIR, QWEN3_SAMPLE_VOICES_DIR]:
+        audio_file = vdir / f"{name}.wav"
+        if audio_file.exists():
+            return FileResponse(audio_file, media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail="Voice audio not found")
 
 
 @app.get("/api/qwen3/speakers")

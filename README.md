@@ -113,6 +113,7 @@ This isn't a weekend hack:
 - **Kokoro TTS**: Fast, high-quality English synthesis with British/American voices
 - **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads are stored in `backend/data/user_voices/qwen3` (not synced to git)
 - **User Voices in UI**: Uploaded voices appear under **Voice Clone → Your Voices** after restart/refresh
+- **Voice Previews**: Tap the play icon to audition default or user voices before generating
 - **Emma IPA**: British phonetic transcription with multi-LLM support (Claude, OpenAI, Ollama)
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
