@@ -16,6 +16,7 @@ import soundfile as sf
 from database import init_db, seed_db, get_connection
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
+from tts.chatterbox_engine import get_chatterbox_engine, ChatterboxParams
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
@@ -51,6 +52,19 @@ class Qwen3Request(BaseModel):
 class Qwen3UploadRequest(BaseModel):
     name: str
     transcript: str
+
+class ChatterboxRequest(BaseModel):
+    text: str
+    voice_name: str
+    language: str = "en"
+    speed: float = 1.0
+    temperature: float = 0.8
+    cfg_weight: float = 1.0
+    exaggeration: float = 0.5
+    seed: int = -1
+    max_chars: int = 300
+    crossfade_ms: int = 0
+    unload_after: bool = False
 
 class LLMConfigRequest(BaseModel):
     provider: str
@@ -103,24 +117,31 @@ QWEN3_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "qwen3_vo
 QWEN3_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "qwen3"
 DEFAULT_QWEN3_VOICES = {"Natasha", "Suzan"}
 
+# Chatterbox voice storage locations
+CHATTERBOX_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "chatterbox_voices"
+CHATTERBOX_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "chatterbox"
+DEFAULT_CHATTERBOX_VOICES = {"Natasha", "Suzan"}
+
 
 def _migrate_legacy_voice_samples() -> None:
     """Move legacy or user voices into the non-synced user voices folder."""
     legacy_dir = Path(__file__).parent / "data" / "samples" / "voices"
     QWEN3_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    CHATTERBOX_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
-    def move_voice(src_dir: Path, name: str) -> None:
+    def move_voice(src_dir: Path, name: str, dest_dir: Path) -> None:
         src_wav = src_dir / f"{name}.wav"
         src_txt = src_dir / f"{name}.txt"
         if src_wav.exists():
-            dest_wav = QWEN3_USER_VOICES_DIR / src_wav.name
+            dest_wav = dest_dir / src_wav.name
             if dest_wav.exists():
                 src_wav.unlink()
             else:
                 shutil.move(str(src_wav), str(dest_wav))
         if src_txt.exists():
-            dest_txt = QWEN3_USER_VOICES_DIR / src_txt.name
+            dest_txt = dest_dir / src_txt.name
             if dest_txt.exists():
                 src_txt.unlink()
             else:
@@ -139,12 +160,32 @@ def _migrate_legacy_voice_samples() -> None:
                 if src_txt.exists() and not dest_txt.exists():
                     shutil.copy2(src_txt, dest_txt)
             else:
-                move_voice(legacy_dir, name)
+                move_voice(legacy_dir, name, QWEN3_USER_VOICES_DIR)
 
     # Ensure only default voices remain in the sample folder
     for wav_file in QWEN3_SAMPLE_VOICES_DIR.glob("*.wav"):
         if wav_file.stem not in DEFAULT_QWEN3_VOICES:
-            move_voice(QWEN3_SAMPLE_VOICES_DIR, wav_file.stem)
+            move_voice(QWEN3_SAMPLE_VOICES_DIR, wav_file.stem, QWEN3_USER_VOICES_DIR)
+
+    # Seed Chatterbox defaults from Qwen3 samples if missing
+    for name in DEFAULT_CHATTERBOX_VOICES:
+        src_wav = QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav"
+        dest_wav = CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav"
+        if src_wav.exists() and not dest_wav.exists():
+            shutil.copy2(src_wav, dest_wav)
+        src_txt = QWEN3_SAMPLE_VOICES_DIR / f"{name}.txt"
+        dest_txt = CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.txt"
+        if src_txt.exists() and not dest_txt.exists():
+            shutil.copy2(src_txt, dest_txt)
+
+    # Ensure only default voices remain in the chatterbox sample folder
+    for wav_file in CHATTERBOX_SAMPLE_VOICES_DIR.glob("*.wav"):
+        if wav_file.stem not in DEFAULT_CHATTERBOX_VOICES:
+            move_voice(
+                CHATTERBOX_SAMPLE_VOICES_DIR,
+                wav_file.stem,
+                CHATTERBOX_USER_VOICES_DIR,
+            )
 
 
 def _safe_tag(value: str, fallback: str = "model") -> str:
@@ -207,7 +248,7 @@ async def system_info():
     # Get model versions from each engine
     kokoro_info = {"model": "Kokoro v0.19", "voice_pack": "British English"}
     qwen3_info = {"model": "Qwen3-TTS-12Hz-0.6B-Base", "features": "3-sec voice clone"}
-    # Additional engines can be added here if needed.
+    chatterbox_info = {"model": "Chatterbox Multilingual TTS", "features": "voice clone"}
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -218,6 +259,7 @@ async def system_info():
         "models": {
             "kokoro": kokoro_info,
             "qwen3": qwen3_info,
+            "chatterbox": chatterbox_info,
         }
     }
 
@@ -302,6 +344,24 @@ async def list_all_custom_voices():
                 })
     except ImportError:
         pass  # Qwen3 not installed
+
+    # Get Chatterbox voices
+    try:
+        engine = get_chatterbox_engine()
+        chatterbox_voices = engine.get_saved_voices()
+        for voice in chatterbox_voices:
+            if not any(v["name"] == voice["name"] and v["source"] == "chatterbox" for v in voices):
+                audio_path = Path(voice.get("audio_path", ""))
+                audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
+                voices.append({
+                    "name": voice["name"],
+                    "source": "chatterbox",
+                    "transcript": voice.get("transcript"),
+                    "has_audio": True,
+                    "audio_url": audio_url,
+                })
+    except ImportError:
+        pass  # Chatterbox not installed
 
     return {"voices": voices, "total": len(voices)}
 
@@ -743,6 +803,206 @@ async def qwen3_clear_cache():
         return {"message": f"Error clearing cache: {e}"}
 
 
+# ============== Chatterbox Endpoints (Voice Clone) ==============
+
+@app.post("/api/chatterbox/generate")
+async def chatterbox_generate(request: ChatterboxRequest):
+    """Generate speech using Chatterbox voice cloning."""
+    try:
+        engine = get_chatterbox_engine()
+        voices = engine.get_saved_voices()
+        voice = next((v for v in voices if v["name"] == request.voice_name), None)
+        if voice is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Voice '{request.voice_name}' not found. Upload a voice first.",
+            )
+
+        params = ChatterboxParams(
+            temperature=request.temperature,
+            cfg_weight=request.cfg_weight,
+            exaggeration=request.exaggeration,
+            seed=request.seed,
+        )
+
+        output_path = engine.generate_voice_clone(
+            text=request.text,
+            voice_name=request.voice_name,
+            ref_audio_path=voice["audio_path"],
+            language=request.language,
+            speed=request.speed,
+            params=params,
+            max_chars=request.max_chars,
+            crossfade_ms=request.crossfade_ms,
+        )
+
+        if request.unload_after:
+            engine.unload()
+
+        return {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "mode": "clone",
+            "voice": request.voice_name,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Chatterbox not installed. Run: pip install chatterbox-tts. Error: {e}",
+        )
+
+
+@app.get("/api/chatterbox/voices")
+async def chatterbox_list_voices():
+    """List saved voice samples for Chatterbox cloning."""
+    try:
+        engine = get_chatterbox_engine()
+        voices = engine.get_saved_voices()
+        for voice in voices:
+            name = voice.get("name")
+            if name:
+                voice["audio_url"] = f"/api/chatterbox/voices/{name}/audio"
+        return {"voices": voices}
+    except ImportError:
+        return {"voices": [], "error": "Chatterbox not installed"}
+
+
+@app.get("/api/chatterbox/voices/{name}/audio")
+async def chatterbox_voice_audio(name: str):
+    """Serve a Chatterbox voice sample audio file for preview."""
+    if not name or "/" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+
+    for directory in (CHATTERBOX_USER_VOICES_DIR, CHATTERBOX_SAMPLE_VOICES_DIR):
+        audio_path = directory / f"{name}.wav"
+        if audio_path.exists():
+            return FileResponse(audio_path)
+
+    raise HTTPException(status_code=404, detail="Voice sample not found")
+
+
+@app.post("/api/chatterbox/voices")
+async def chatterbox_upload_voice(
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    transcript: Optional[str] = Form(""),
+):
+    """Upload a new voice sample for Chatterbox cloning."""
+    if not name or len(name.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Voice name is required")
+
+    if name in DEFAULT_CHATTERBOX_VOICES:
+        raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+
+    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+    if transcript is not None:
+        transcript_path.write_text(transcript.strip())
+
+    try:
+        engine = get_chatterbox_engine()
+        return {
+            "message": "Voice uploaded successfully",
+            "voice": engine.get_saved_voices(),
+        }
+    except ImportError:
+        return {"message": "Voice uploaded (engine not installed)", "name": name}
+
+
+@app.delete("/api/chatterbox/voices/{name}")
+async def chatterbox_delete_voice(name: str):
+    """Delete a Chatterbox voice sample."""
+    if (CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+
+    audio_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+    transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+    audio_path.unlink()
+    transcript_path.unlink(missing_ok=True)
+
+    return {"message": f"Voice '{name}' deleted"}
+
+
+@app.put("/api/chatterbox/voices/{name}")
+async def chatterbox_update_voice(
+    name: str,
+    new_name: Optional[str] = Form(None),
+    transcript: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+):
+    """Update a Chatterbox voice sample (rename, update transcript, or replace audio)."""
+    if (CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+
+    old_audio = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+    old_transcript = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+    if not old_audio.exists():
+        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+    final_name = new_name or name
+    if final_name in DEFAULT_CHATTERBOX_VOICES:
+        raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+
+    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    new_audio = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.wav"
+    new_transcript = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.txt"
+
+    if file:
+        with open(new_audio, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        if old_audio.exists() and old_audio != new_audio:
+            old_audio.unlink()
+    elif old_audio != new_audio:
+        old_audio.rename(new_audio)
+
+    if transcript is not None:
+        new_transcript.write_text(transcript.strip())
+    elif old_transcript.exists() and old_transcript != new_transcript:
+        old_transcript.rename(new_transcript)
+
+    if old_transcript.exists() and old_transcript != new_transcript:
+        old_transcript.unlink(missing_ok=True)
+
+    return {
+        "message": "Voice updated successfully",
+        "name": final_name,
+        "transcript": transcript or (new_transcript.read_text() if new_transcript.exists() else ""),
+    }
+
+
+@app.get("/api/chatterbox/languages")
+async def chatterbox_list_languages():
+    """List supported languages for Chatterbox."""
+    try:
+        engine = get_chatterbox_engine()
+        return {"languages": engine.get_languages()}
+    except ImportError:
+        return {"languages": ["en"]}
+
+
+@app.get("/api/chatterbox/info")
+async def chatterbox_info():
+    """Get Chatterbox model information."""
+    try:
+        engine = get_chatterbox_engine()
+        return engine.get_model_info()
+    except ImportError:
+        return {
+            "name": "Chatterbox Multilingual TTS",
+            "installed": False,
+            "error": "Run: pip install chatterbox-tts",
+        }
+
+
 # ============== Audiobook Generation Endpoints ==============
 # Enhanced with features inspired by audiblez, pdf-narrator, and abogen
 
@@ -1171,12 +1431,13 @@ async def kokoro_audio_delete(filename: str):
 
 @app.get("/api/voice-clone/audio/list")
 async def voice_clone_audio_list():
-    """List all generated Qwen3 voice clone audio files."""
+    """List all generated voice clone audio files."""
     from datetime import datetime
 
     audio_files = []
     patterns = [
         ("qwen3", "qwen3-*.wav"),
+        ("chatterbox", "chatterbox-*.wav"),
     ]
 
     for engine, pattern in patterns:
@@ -1186,10 +1447,12 @@ async def voice_clone_audio_list():
             parts = stem.split("-")
 
             mode = "clone"
-            if engine == "qwen3" and len(parts) > 1:
-                mode = parts[1]
+            voice = parts[1] if len(parts) > 2 else None
 
-            label = f"Qwen3 {mode.capitalize()}"
+            if engine == "qwen3":
+                label = f"Qwen3 {voice}" if voice else "Qwen3 Clone"
+            else:
+                label = f"Chatterbox {voice}" if voice else "Chatterbox Clone"
 
             # Get audio duration using soundfile
             try:
@@ -1203,6 +1466,7 @@ async def voice_clone_audio_list():
                 "id": stem,
                 "filename": file.name,
                 "engine": engine,
+                "voice": voice,
                 "mode": mode,
                 "label": label,
                 "audio_url": f"/audio/{file.name}",
@@ -1220,8 +1484,9 @@ async def voice_clone_audio_list():
 @app.delete("/api/voice-clone/audio/{filename}")
 async def voice_clone_audio_delete(filename: str):
     """Delete a voice clone audio file."""
-    # Security: ensure filename starts with qwen3- and ends with .wav
-    if not (filename.endswith(".wav") and filename.startswith("qwen3-")):
+    # Security: ensure filename starts with allowed prefixes and ends with .wav
+    valid_prefixes = ("qwen3-", "chatterbox-")
+    if not (filename.endswith(".wav") and filename.startswith(valid_prefixes)):
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     file_path = outputs_dir / filename

@@ -255,6 +255,119 @@ class ApiService {
     throw Exception('Failed to load Qwen3 info');
   }
 
+  // ============== Chatterbox (Voice Clone) ==============
+
+  Future<Map<String, dynamic>> getChatterboxVoices() async {
+    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/voices'));
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to load Chatterbox voices');
+  }
+
+  Future<String> generateChatterbox({
+    required String text,
+    required String voiceName,
+    String language = 'en',
+    double speed = 1.0,
+    double temperature = 0.8,
+    double cfgWeight = 1.0,
+    double exaggeration = 0.5,
+    int seed = -1,
+    int maxChars = 300,
+    int crossfadeMs = 0,
+    bool unloadAfter = false,
+  }) async {
+    final body = <String, dynamic>{
+      'text': text,
+      'voice_name': voiceName,
+      'language': language,
+      'speed': speed,
+      'temperature': temperature,
+      'cfg_weight': cfgWeight,
+      'exaggeration': exaggeration,
+      'seed': seed,
+      'max_chars': maxChars,
+      'crossfade_ms': crossfadeMs,
+      'unload_after': unloadAfter,
+    };
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/chatterbox/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(body),
+    );
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return '$baseUrl${data['audio_url']}';
+    }
+    throw Exception('Failed to generate Chatterbox audio: ${response.body}');
+  }
+
+  Future<void> uploadChatterboxVoice(String name, File file, String transcript) async {
+    var request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/chatterbox/voices'),
+    );
+    request.fields['name'] = name;
+    request.fields['transcript'] = transcript;
+    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+
+    final response = await request.send();
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw Exception('Failed to upload Chatterbox voice: $body');
+    }
+  }
+
+  Future<void> deleteChatterboxVoice(String name) async {
+    final response =
+        await http.delete(Uri.parse('$baseUrl/api/chatterbox/voices/$name'));
+    if (response.statusCode != 200) {
+      throw Exception('Failed to delete voice: ${response.body}');
+    }
+  }
+
+  Future<void> updateChatterboxVoice(
+    String name, {
+    String? newName,
+    String? transcript,
+    File? file,
+  }) async {
+    var request = http.MultipartRequest(
+      'PUT',
+      Uri.parse('$baseUrl/api/chatterbox/voices/$name'),
+    );
+    if (newName != null) request.fields['new_name'] = newName;
+    if (transcript != null) request.fields['transcript'] = transcript;
+    if (file != null) {
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    }
+
+    final response = await request.send();
+    if (response.statusCode != 200) {
+      final body = await response.stream.bytesToString();
+      throw Exception('Failed to update voice: $body');
+    }
+  }
+
+  Future<List<String>> getChatterboxLanguages() async {
+    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/languages'));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<String>.from(data['languages']);
+    }
+    throw Exception('Failed to load Chatterbox languages');
+  }
+
+  Future<Map<String, dynamic>> getChatterboxInfo() async {
+    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/info'));
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to load Chatterbox info');
+  }
+
   // ============== LLM Configuration ==============
 
   Future<Map<String, dynamic>> getLlmConfig() async {

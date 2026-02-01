@@ -108,6 +108,18 @@ PY
         pip install -r "$BACKEND_DIR/requirements.txt"
     fi
 
+    if ! python3 - <<'PY'
+import sys
+try:
+    import chatterbox
+except Exception:
+    sys.exit(1)
+sys.exit(0)
+PY
+    then
+        pip install --no-deps chatterbox-tts==0.1.6
+    fi
+
     # Start FastAPI
     cd "$BACKEND_DIR"
     nohup python main.py > "$LOG_DIR/backend.log" 2>&1 &

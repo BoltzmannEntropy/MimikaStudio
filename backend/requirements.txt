@@ -13,6 +13,9 @@ soundfile>=0.12.1
 numpy>=1.24.0,<2.0.0
 pydub>=0.25.1                     # MP3 conversion for audiobooks
 scipy>=1.10.0                     # Audio resampling for speed adjustment
+librosa>=0.10.0                   # Chatterbox audio utilities
+resampy>=0.4.3                    # Chatterbox audio resampling
+s3tokenizer>=0.3.0                # Chatterbox tokenizer
 
 # PyTorch (CPU for macOS) - keep torch/torchaudio on matching minor versions
 torch>=2.1.0

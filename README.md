@@ -54,6 +54,8 @@ Kokoro also includes **Emma IPA** - a British phonetic transcription tool powere
 
 Clone any voice from remarkably short audio samples. Our **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** integration requires just **3 seconds** of reference audio to capture a speaker's characteristics - their tone, rhythm, accent, and personality. Compare this to older systems that required 30+ seconds of clean recordings. Upload a voice memo, a podcast clip, or any audio snippet, and MimikaStudio will synthesize new speech in that voice.
 
+For multilingual cloning, **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** adds a second voice clone engine with its own voice library and controls.
+
 ### Premium Preset Speakers
 
 Don't have reference audio? No problem. MimikaStudio includes **9 premium preset speakers** across 4 languages (English, Chinese, Japanese, Korean), each with distinct personalities - from the dynamic rhythm of Ryan to the warm emotional tones of Sohee. These CustomVoice speakers require no audio samples at all - just type your text and generate.
@@ -67,6 +69,7 @@ We've integrated the most capable open-source TTS models available:
 | **[Kokoro-82M](https://github.com/hexgrad/kokoro)** | Fast TTS | Sub-200ms latency, British RP & American accents |
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B Base** | Voice Cloning | 3-second cloning, 10 languages |
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B CustomVoice** | Preset Speakers | 9 premium voices, style control |
+| **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
 
 ### Beyond Simple TTS
 
@@ -80,7 +83,7 @@ MimikaStudio isn't just a TTS engine wrapper:
 
 ![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
 
-- **Voice Library**: Manage your Qwen3 voice samples in a unified list for cloning.
+- **Voice Library**: Manage your Qwen3 + Chatterbox voice samples in a unified list for cloning.
 
 - **Advanced Generation Controls**: Fine-tune every aspect of synthesis with temperature, top_p, top_k, repetition penalty, and reproducible generation with seeds.
 
@@ -109,12 +112,13 @@ This isn't a weekend hack:
 
 - **Qwen3-TTS Voice Clone**: Clone any voice from just 3+ seconds of audio
 - **Qwen3-TTS Custom Voice**: 9 preset premium speakers (Ryan, Aiden, Vivian, Serena, Uncle Fu, Dylan, Eric, Ono Anna, Sohee)
+- **Chatterbox Voice Clone**: Multilingual voice cloning with prompt audio
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
 - **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
 - **Kokoro TTS**: Fast, high-quality English synthesis with British/American voices
-- **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads are stored in `backend/data/user_voices/qwen3` (not synced to git)
+- **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads are stored in `backend/data/user_voices/qwen3` and `backend/data/user_voices/chatterbox` (not synced to git)
 - **User Voices in UI**: Uploaded voices appear under **Voice Clone → Your Voices** after restart/refresh
-- **Voice Previews**: Tap the play icon to audition default or user voices before generating
+- **Voice Previews**: Tap play/pause/stop to audition default or user voices before generating
 - **Emma IPA**: British phonetic transcription with multi-LLM support (Claude, OpenAI, Ollama)
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
@@ -459,6 +463,22 @@ Use 9 premium preset speakers without any reference audio.
 
 ---
 
+## [Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)
+
+Chatterbox adds multilingual voice cloning from a reference audio prompt. It uses the same voice library flow as Qwen3 (default samples + your uploads) with dedicated controls in the Voice Clone tab.
+
+**Languages**: en, zh, ja, ko, de, fr, ru, pt, es, it
+
+**Parameters**:
+- Temperature (randomness)
+- CFG weight (conditioning strength)
+- Exaggeration (style intensity)
+- Seed (reproducibility)
+
+**Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations. Expect slower generation compared to Kokoro/Qwen3.
+
+---
+
 ## Other Engines
 
 ### Kokoro TTS + Emma IPA
@@ -493,7 +513,7 @@ The IPA transcription highlights stress patterns and provides British RP pronunc
 | `/api/health` | GET | Health check |
 | `/api/system/info` | GET | System information |
 | `/api/system/stats` | GET | CPU/RAM/GPU stats |
-| `/api/voices/custom` | GET | Unified list of all custom voices (Qwen3) |
+| `/api/voices/custom` | GET | Unified list of all custom voices (Qwen3 + Chatterbox) |
 | **Qwen3** |||
 | `/api/qwen3/generate` | POST | Generate audio (clone or custom mode) |
 | `/api/qwen3/generate/stream` | POST | Streaming audio generation |
@@ -502,11 +522,24 @@ The IPA transcription highlights stress patterns and provides British RP pronunc
 | `/api/qwen3/speakers` | GET | List preset speakers |
 | `/api/qwen3/models` | GET | List available models |
 | `/api/qwen3/languages` | GET | List supported languages |
+| `/api/qwen3/info` | GET | Model info |
+| **Chatterbox** |||
+| `/api/chatterbox/generate` | POST | Generate audio (voice clone) |
+| `/api/chatterbox/voices` | GET | List saved voice samples |
+| `/api/chatterbox/voices` | POST | Upload new voice sample |
+| `/api/chatterbox/voices/{name}/audio` | GET | Preview voice sample audio |
+| `/api/chatterbox/voices/{name}` | PUT | Update voice sample |
+| `/api/chatterbox/voices/{name}` | DELETE | Delete voice sample |
+| `/api/chatterbox/languages` | GET | List supported languages |
+| `/api/chatterbox/info` | GET | Model info |
 | **Kokoro** |||
 | `/api/kokoro/generate` | POST | Generate TTS audio |
 | `/api/kokoro/voices` | GET | List available voices |
 | `/api/kokoro/audio/list` | GET | List generated audio files |
 | `/api/kokoro/audio/{filename}` | DELETE | Delete audio file |
+| **Voice Clone Audio Library** |||
+| `/api/voice-clone/audio/list` | GET | List generated Qwen3 + Chatterbox clone files |
+| `/api/voice-clone/audio/{filename}` | DELETE | Delete voice clone file |
 | **Audiobook Creator** |||
 | `/api/audiobook/generate` | POST | Start audiobook generation from text |
 | `/api/audiobook/generate-from-file` | POST | Start generation from uploaded file (PDF/EPUB/TXT/DOCX) |
@@ -647,7 +680,7 @@ MimikaStudio/
 │   │   ├── main.dart          # App entry, tab navigation
 │   │   ├── screens/
 │   │   │   ├── quick_tts_screen.dart      # Kokoro TTS + Emma IPA
-│   │   │   ├── voice_clone_screen.dart    # Qwen3 voice clone + CustomVoice
+│   │   │   ├── voice_clone_screen.dart    # Qwen3 + Chatterbox voice clone
 │   │   │   └── pdf_reader_screen.dart     # PDF reader with TTS
 │   │   └── services/
 │   │       └── api_service.dart           # Backend API client
@@ -657,7 +690,8 @@ MimikaStudio/
 │   ├── main.py               # API endpoints
 │   ├── tts/                  # TTS engine wrappers
 │   │   ├── kokoro_engine.py
-│   │   └── qwen3_engine.py   # Clone + CustomVoice
+│   │   ├── qwen3_engine.py   # Clone + CustomVoice
+│   │   └── chatterbox_engine.py # Multilingual voice clone
 │   ├── language/             # Language processing
 │   │   └── ipa_generator.py  # British IPA transcription
 │   ├── llm/                  # LLM provider integration
@@ -668,9 +702,11 @@ MimikaStudio/
 │   └── data/
 │       ├── samples/          # Voice samples
 │       │   ├── qwen3_voices/ # Shipped Qwen3 voice samples (Natasha, Suzan)
+│       │   ├── chatterbox_voices/ # Shipped Chatterbox samples (Natasha, Suzan)
 │       │   └── kokoro/       # Pre-generated Kokoro samples
 │       ├── user_voices/      # User uploads (git-ignored)
-│       │   └── qwen3/         # Qwen3 user voice samples
+│       │   ├── qwen3/         # Qwen3 user voice samples
+│       │   └── chatterbox/    # Chatterbox user voice samples
 │       └── outputs/          # Generated audio files
 │
 └── docs/
@@ -749,13 +785,19 @@ pip install -r requirements.txt
 # Install Qwen3-TTS for voice cloning
 pip install -U qwen-tts soundfile
 
+# Install Chatterbox Multilingual TTS (no-deps to avoid transformers pin conflicts)
+pip install --no-deps chatterbox-tts==0.1.6
+
 # Install spaCy for robust sentence tokenization (optional but recommended)
 pip install spacy
 
 # Verify installation
 python -c "import kokoro; print('Kokoro OK')"
 python -c "from qwen_tts import QwenTTS; print('Qwen3-TTS OK')"
+python -c "from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('Chatterbox OK')"
 ```
+
+> Note: `mimikactl up` will auto-install Chatterbox if missing using the no-deps pin shown above to avoid transformers conflicts.
 
 ### Step 4: Set Up Flutter Frontend
 
@@ -815,6 +857,7 @@ brew install espeak-ng ffmpeg python@3.11 && \
 cd MimikaStudio/backend && \
 python3 -m venv venv && source venv/bin/activate && \
 pip install -r requirements.txt qwen-tts soundfile spacy && \
+pip install --no-deps chatterbox-tts==0.1.6 && \
 cd .. && ./bin/mimikactl db seed && ./bin/mimikactl up
 ```
 
@@ -881,7 +924,7 @@ kill -9 <PID>
 
 ### Performance Tips
 
-- **Apple Silicon**: Qwen3-TTS runs on CPU but Kokoro uses MPS when available
+- **Apple Silicon**: Qwen3-TTS runs on CPU; Kokoro uses MPS when available; Chatterbox runs on CPU
 - **Audiobook generation**: Expect ~60 chars/sec on M2 MacBook Pro (matching audiblez benchmark)
 - **Memory**: Close other apps when generating long audiobooks with 1.7B model
 
