@@ -1,0 +1,63 @@
+# =============================================================================
+# MimikaStudio - Python Dependencies
+# =============================================================================
+# Install with: pip install -r requirements.txt
+# Then install chatterbox separately (see install.sh)
+# =============================================================================
+
+# --- FastAPI backend ---
+fastapi>=0.104.0
+uvicorn>=0.24.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+
+# --- TTS Engines ---
+kokoro>=0.9.4                     # Kokoro TTS (British/American voices)
+qwen-tts>=0.0.5                   # Qwen3-TTS (voice cloning & custom voices)
+transformers==4.57.3              # Required by qwen-tts (pinned)
+accelerate>=1.12.0                # Required by qwen-tts
+
+# --- Audio processing ---
+soundfile>=0.12.1
+numpy>=1.24.0,<2.0.0
+pydub>=0.25.1                     # MP3 conversion for audiobooks
+scipy>=1.10.0                     # Audio resampling for speed adjustment
+librosa>=0.10.0                   # Audio utilities
+resampy>=0.4.3                    # Audio resampling
+s3tokenizer>=0.3.0                # Tokenizer
+
+# --- PyTorch (CPU for macOS) ---
+torch>=2.1.0
+torchaudio>=2.1.0
+
+# --- Chatterbox TTS dependencies ---
+# chatterbox-tts itself is installed with --no-deps to avoid version conflicts.
+# These are its runtime dependencies that must be present:
+omegaconf>=2.3.0
+resemble-perth>=1.0.0             # Perth voice processing
+conformer>=0.3.2
+diffusers>=0.29.0
+pyloudnorm>=0.2.0
+pykakasi>=2.3.0
+spacy-pkuseg>=1.0.0
+
+# --- Database ---
+aiosqlite>=0.19.0
+
+# --- HTTP / Testing ---
+requests>=2.31.0
+httpx>=0.25.0
+
+# --- CLI file format support ---
+PyPDF2>=3.0.0                     # PDF text extraction
+pymupdf>=1.24.0                   # Better PDF extraction (skip headers/footers)
+python-docx>=1.0.0                # DOCX support
+docx2txt>=0.8                     # Legacy DOC support
+ebooklib>=0.18                    # EPUB support
+beautifulsoup4>=4.12.0            # HTML parsing for EPUB
+
+# --- Text processing ---
+spacy>=3.7.0                      # Robust sentence tokenization
+
+# --- System monitoring ---
+psutil>=5.9.0

@@ -3,144 +3,134 @@
   <br>
 </div>
 
-# MimikaStudio - Voice Cloning, TTS & Audiobook Creator - Platforms (macOS + Web)
+# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web)
 
-> **Custom Voice Cloning** • **Text-to-Speech** • **PDF Read Aloud** • **Audiobook Creator**
+> **MimikaStudio is the most comprehensive desktop application for voice cloning and text-to-speech synthesis.**
 
-A local-first (Platforms macOS + Web) desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+> **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-> *I ported my old Gradio app into this beautiful native Flutter desktop application, specifically optimized for Apple Silicon users who want a polished, responsive UI with proper macOS integration.*
+A local-first desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio, generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+
+### Supported Models
+
+| Model | Parameters | Type | Languages |
+|-------|-----------|------|-----------|
+| [Kokoro-82M](https://github.com/hexgrad/kokoro) | 82M | Fast TTS | English (British RP + American) |
+| [Qwen3-TTS 0.6B Base](https://github.com/QwenLM/Qwen3-TTS) | 600M | Voice Cloning | 10 languages |
+| [Qwen3-TTS 1.7B Base](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Voice Cloning | 10 languages |
+| [Qwen3-TTS 0.6B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 600M | Preset Speakers | 4 languages (en, zh, ja, ko) |
+| [Qwen3-TTS 1.7B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers | 4 languages (en, zh, ja, ko) |
+| [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 
 ![MimikaStudio](assets/00-mimikastudio-hero.png)
 
-**MimikaStudio is the most comprehensive desktop application for voice cloning and text-to-speech synthesis.** Whether you want to clone your own voice from just 3 seconds of audio, use one of 9 premium preset speakers, or leverage fast high-quality TTS engines for narration and content creation - MimikaStudio has you covered.
+---
 
-![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
+## Installation
 
-## Platforms (macOS + Web)
+### System Requirements
 
-MimikaStudio ships two UIs backed by the same local FastAPI server:
+| Component | Requirement |
+|-----------|-------------|
+| **OS** | macOS 12+ (Monterey or later) |
+| **CPU** | Apple Silicon (M1/M2/M3/M4) or Intel |
+| **RAM** | 8GB minimum, 16GB+ recommended |
+| **Storage** | 10GB for models and dependencies |
+| **Python** | 3.10 or later |
+| **Flutter** | 3.x with macOS desktop support (optional, for GUI) |
 
-### macOS Desktop App (default)
+### Automated Install (Recommended)
+
+A single `install.sh` in the project root handles everything: prerequisites,
+virtual environment, all Python dependencies (including Qwen3-TTS, Chatterbox,
+OmegaConf, Perth, etc.), database setup, and Flutter.
 
 ```bash
+git clone https://github.com/BoltzmannEntropy/MimikaStudio.git
+cd MimikaStudio
+./install.sh
+```
+
+The script will:
+1. Check / install Homebrew, Python 3, espeak-ng, and ffmpeg
+2. Create a Python venv in the project root (`./venv`)
+3. Install **all** Python dependencies from the root `requirements.txt`
+4. Install `chatterbox-tts` with `--no-deps` (its runtime deps are already in `requirements.txt`)
+5. Verify that every critical import works
+6. Initialize the SQLite database
+7. Set up Flutter (if installed)
+
+After installation, start MimikaStudio:
+
+```bash
+source venv/bin/activate
+./bin/mimikactl up          # Backend + MCP + Flutter desktop
+./bin/mimikactl up --web    # Backend + MCP + Flutter web UI
+```
+
+### Manual Install
+
+```bash
+git clone https://github.com/BoltzmannEntropy/MimikaStudio.git
+cd MimikaStudio
+
+# System dependencies (macOS)
+brew install espeak-ng ffmpeg python@3.11
+
+# Python venv
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+
+# All Python dependencies (from project root)
+pip install -r requirements.txt
+
+# Chatterbox TTS (--no-deps to avoid version conflicts with its strict pins)
+pip install --no-deps chatterbox-tts==0.1.6
+
+# Initialize database
+cd backend && python3 database.py && cd ..
+
+# Flutter (optional, for desktop/web UI)
+cd flutter_app && flutter pub get && cd ..
+
+# Start
 ./bin/mimikactl up
 ```
 
-### Web UI (Flutter Web)
+### Download Models (Optional)
+
+Models auto-download on first use (~3 GB total). To pre-download:
 
 ```bash
-./bin/mimikactl up --web
+./bin/mimikactl models download kokoro   # ~300 MB
+./bin/mimikactl models download qwen3    # ~4 GB for 1.7B
 ```
 
-Then open: **http://127.0.0.1:5173**
+### Verify Installation
 
-> The web UI uses the same backend and voice library as the desktop app. `mimikactl up --web` builds the web bundle and serves it locally.
-> In web mode, use **Open Document** to upload PDFs from your machine (the browser cannot scan the local `pdf/` folder).
-
-## Why MimikaStudio?
-
-MimikaStudio brings together the latest advances in neural text-to-speech into a beautiful, unified desktop experience:
-
-### Lightning-Fast British TTS with Kokoro
-
-Need instant, high-quality speech? **[Kokoro TTS](https://github.com/hexgrad/kokoro)** delivers sub-200ms latency with crystal-clear British and American accents. The 82M parameter model runs effortlessly on any machine, generating natural-sounding speech with Emma, George, Lily, and other premium voices. Perfect for real-time applications, PDF narration, and quick prototyping.
-
-Kokoro also includes **Emma IPA** - a British phonetic transcription tool powered by your choice of LLM (Claude, OpenAI, Ollama). Generate IPA transcriptions to understand exactly how words should be pronounced in Received Pronunciation.
-
-![Kokoro TTS with Emma IPA](assets/01-kokoro-tts-emma-ipa.png)
-
-### Voice Cloning Without Limits
-
-Clone any voice from remarkably short audio samples. Our **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** integration requires just **3 seconds** of reference audio to capture a speaker's characteristics - their tone, rhythm, accent, and personality. Compare this to older systems that required 30+ seconds of clean recordings. Upload a voice memo, a podcast clip, or any audio snippet, and MimikaStudio will synthesize new speech in that voice.
-
-For multilingual cloning, **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** adds a second voice clone engine with its own voice library and controls.
-
-### Premium Preset Speakers
-
-Don't have reference audio? No problem. MimikaStudio includes **9 premium preset speakers** across 4 languages (English, Chinese, Japanese, Korean), each with distinct personalities - from the dynamic rhythm of Ryan to the warm emotional tones of Sohee. These CustomVoice speakers require no audio samples at all - just type your text and generate.
-
-### Multiple State-of-the-Art Models
-
-We've integrated the most capable open-source TTS models available:
-
-| Model | Type | Strength |
-|-------|------|----------|
-| **[Kokoro-82M](https://github.com/hexgrad/kokoro)** | Fast TTS | Sub-200ms latency, British RP & American accents |
-| **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B Base** | Voice Cloning | 3-second cloning, 10 languages |
-| **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B CustomVoice** | Preset Speakers | 9 premium voices, style control |
-| **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
-
-### Beyond Simple TTS
-
-MimikaStudio isn't just a TTS engine wrapper:
-
-- **Emma IPA Transcription**: Generate British IPA-like phonetic transcriptions using LLM providers (Claude, OpenAI, Ollama). Perfect for language learning and pronunciation guides.
-
-- **PDF Reader with Voice**: Load any PDF from the `./pdf` directory and have it read aloud with sentence-by-sentence highlighting. Choose your preferred Kokoro voice, adjust speed, and let MimikaStudio narrate your documents.
-
-- **Audiobook Creator**: Convert entire documents (PDF, EPUB, TXT, MD, DOCX) into audiobook files with a single click. The system uses **spaCy-based sentence tokenization** (like [audiblez](https://github.com/santinic/audiblez)) for intelligent text chunking, extracts chapters from PDF TOC or EPUB structure, and **skips headers/footers/page numbers** (like [pdf-narrator](https://github.com/mateogon/pdf-narrator)). **Supports WAV, MP3, and M4B (audiobook format with chapter markers) output.** Kokoro narration includes **smart chunking + seamless audio merging with configurable crossfade**. Track progress in real-time with **character-based progress** (~60 chars/sec on M2 CPU), ETA estimation, and manage your audiobook library with full playback controls.
-
-![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
-
-- **Voice Library**: Manage your Qwen3 + Chatterbox voice samples in a unified list for cloning.
-
-- **Advanced Generation Controls**: Fine-tune every aspect of synthesis with temperature, top_p, top_k, repetition penalty, and reproducible generation with seeds.
-
-- **Style Instructions**: Tell the CustomVoice speakers *how* to speak - "whisper softly", "speak with excitement", "sound contemplative", or "Optimized for engaging, professional audiobook narration" - and watch the AI adapt.
-
-- **Real-time System Monitoring**: CPU, RAM, and GPU usage displayed in the app header so you always know what resources your generations are consuming.
-
-- **Multi-LLM Support**: Connect to Claude, OpenAI, Ollama (local), or Claude Code CLI for IPA generation and other AI features.
-
-### Built for macOS, Ready for More
-
-MimikaStudio has been **extensively tested on macOS** (both Intel and Apple Silicon). It's our primary platform, with careful attention to MPS acceleration where supported and graceful CPU fallback where needed. The architecture cleanly separates the **Flutter-based UI** from the **Python FastAPI backend**, making adaptation to Linux or Windows with CUDA straightforward.
-
-### Production-Quality Codebase
-
-This isn't a weekend hack:
-
-- **Comprehensive test suite** with 10 test files covering health checks, API generation, voice management, model registry, streaming endpoints, and end-to-end workflows
-- **MCP server integration** for programmatic access via Codex CLI
-- **Clean CLI tool** (`mimikactl`) for service management, logs, and maintenance
-- **Modular engine architecture** making it easy to add new TTS backends
+```bash
+source venv/bin/activate
+python -c "import kokoro; print('Kokoro OK')"
+python -c "from qwen_tts import QwenTTS; print('Qwen3-TTS OK')"
+python -c "from chatterbox import ChatterboxTTS; print('Chatterbox OK')"
+python -c "import omegaconf; print('OmegaConf OK')"
+python -c "import perth; print('Perth OK')"
+```
 
 ---
-
-## Features
-
-- **Qwen3-TTS Voice Clone**: Clone any voice from just 3+ seconds of audio
-- **Qwen3-TTS Custom Voice**: 9 preset premium speakers (Ryan, Aiden, Vivian, Serena, Uncle Fu, Dylan, Eric, Ono Anna, Sohee)
-- **Chatterbox Voice Clone**: Multilingual voice cloning with prompt audio
-- **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
-- **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
-- **Kokoro TTS**: Fast, high-quality English synthesis with British/American voices
-- **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads are stored in `backend/data/user_voices/qwen3` and `backend/data/user_voices/chatterbox` (not synced to git)
-- **User Voices in UI**: Uploaded voices appear under **Voice Clone → Your Voices** after restart/refresh
-- **Voice Previews**: Tap play/pause/stop to audition default or user voices before generating
-- **Emma IPA**: British phonetic transcription with multi-LLM support (Claude, OpenAI, Ollama)
-- **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
-- **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
-- **CLI Tool**: Full command-line interface for Kokoro and Qwen3
-- **MCP Server**: Codex CLI integration for programmatic access
 
 ## Quick Start
 
 ```bash
-# First time setup
-cd /path/to/MimikaStudio
-./bin/mimikactl db seed          # Initialize database
-./bin/mimikactl models download  # Pre-download ML models (optional)
-
 # Start all services (Backend + MCP + Flutter UI)
 ./bin/mimikactl up
 
-# Start backend + MCP + Flutter Web UI
+# Or: Backend + MCP + Flutter Web UI
 ./bin/mimikactl up --web
 # Then open http://127.0.0.1:5173
 
-# Or backend + MCP only (no Flutter)
+# Or: Backend + MCP only (no Flutter)
 ./bin/mimikactl up --no-flutter
 
 # Check status
@@ -160,7 +150,89 @@ MCP Server started on port 8010
 Starting Flutter UI (dev mode)...
 ```
 
-For web, re-run `./bin/mimikactl up --web` after UI changes to rebuild the bundle.
+---
+
+## Platforms
+
+MimikaStudio ships two UIs backed by the same local FastAPI server:
+
+**macOS Desktop App** (default): `./bin/mimikactl up`
+
+**Web UI** (Flutter Web): `./bin/mimikactl up --web` then open http://127.0.0.1:5173
+
+> The web UI uses the same backend and voice library as the desktop app.
+> In web mode, use **Open Document** to upload PDFs from your machine.
+
+---
+
+## Why MimikaStudio?
+
+MimikaStudio brings together the latest advances in neural text-to-speech into a unified desktop experience.
+
+### Lightning-Fast British TTS with Kokoro
+
+**[Kokoro TTS](https://github.com/hexgrad/kokoro)** delivers sub-200ms latency with crystal-clear British and American accents. The 82M parameter model runs effortlessly on any machine, generating natural-sounding speech with Emma, George, Lily, and other premium voices.
+
+Kokoro also includes **Emma IPA** - a British phonetic transcription tool powered by your choice of LLM (Claude, OpenAI, Ollama).
+
+![Kokoro TTS with Emma IPA](assets/01-kokoro-tts-emma-ipa.png)
+
+### Voice Cloning Without Limits
+
+Clone any voice from remarkably short audio samples. **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** requires just **3 seconds** of reference audio to capture a speaker's characteristics. Upload a voice memo, a podcast clip, or any audio snippet, and MimikaStudio will synthesize new speech in that voice.
+
+For multilingual cloning, **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** adds a second voice clone engine with its own voice library and controls.
+
+### Premium Preset Speakers
+
+MimikaStudio includes **9 premium preset speakers** across 4 languages (English, Chinese, Japanese, Korean), each with distinct personalities. These CustomVoice speakers require no audio samples at all.
+
+### Multiple State-of-the-Art Models
+
+| Model | Type | Strength |
+|-------|------|----------|
+| **[Kokoro-82M](https://github.com/hexgrad/kokoro)** | Fast TTS | Sub-200ms latency, British RP & American accents |
+| **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B Base** | Voice Cloning | 3-second cloning, 10 languages |
+| **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B CustomVoice** | Preset Speakers | 9 premium voices, style control |
+| **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
+
+![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
+
+### Beyond Simple TTS
+
+- **Emma IPA Transcription**: British IPA-like phonetic transcriptions using LLM providers (Claude, OpenAI, Ollama)
+- **PDF Reader with Voice**: Read PDFs aloud with sentence-by-sentence highlighting
+- **Audiobook Creator**: Convert documents (PDF, EPUB, TXT, MD, DOCX) into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers
+- **Voice Library**: Manage Qwen3 + Chatterbox voice samples in a unified list
+- **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
+- **Style Instructions**: Tell speakers *how* to speak - "whisper softly", "speak with excitement", etc.
+- **Real-time System Monitoring**: CPU, RAM, and GPU usage in the app header
+- **Multi-LLM Support**: Claude, OpenAI, Ollama (local), or Claude Code CLI
+
+![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
+
+---
+
+## Features
+
+- **Qwen3-TTS Voice Clone**: Clone any voice from just 3+ seconds of audio
+- **Qwen3-TTS Custom Voice**: 9 preset premium speakers (Ryan, Aiden, Vivian, Serena, Uncle Fu, Dylan, Eric, Ono Anna, Sohee)
+- **Chatterbox Voice Clone**: Multilingual voice cloning with prompt audio
+- **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
+- **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
+- **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices
+- **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads stored in `backend/data/user_voices/`
+- **User Voices in UI**: Uploaded voices appear under **Voice Clone -> Your Voices** after restart/refresh
+- **Voice Previews**: Tap play/pause/stop to audition voices before generating
+- **Emma IPA**: British phonetic transcription with multi-LLM support (Claude, OpenAI, Ollama)
+- **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
+- **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
+- **CLI Tool**: Full command-line interface for Kokoro and Qwen3
+- **MCP & API Dashboard**: Built-in tab showing all MCP tools and REST endpoints with live server status
+- **MCP Server**: Full MCP integration for programmatic access to all API endpoints
+- **55 REST API endpoints** with FastAPI (auto-documented at `/docs`)
+
+---
 
 ## Control Script (mimikactl)
 
@@ -196,6 +268,8 @@ For web, re-run `./bin/mimikactl up --web` after UI changes to rebuild the bundl
 ./bin/mimikactl version               # Show version info
 ```
 
+---
+
 ## CLI Tool (mimika)
 
 Full command-line interface for voice cloning and TTS generation.
@@ -226,11 +300,7 @@ Full command-line interface for voice cloning and TTS generation.
 |----------|---------|-------------|
 | `MIMIKA_API_URL` | `http://localhost:8000` | Backend API URL |
 
-### Command Reference
-
-#### `mimika kokoro` - Fast British/American TTS
-
-Generate high-quality speech using Kokoro TTS (82M parameters, sub-200ms latency).
+### `mimika kokoro` - Fast British/American TTS
 
 ```bash
 ./bin/mimika kokoro <input> [options]
@@ -269,24 +339,7 @@ Generate high-quality speech using Kokoro TTS (82M parameters, sub-200ms latency
 | `am_puck` | Puck | Male | American |
 | `am_santa` | Santa | Male | American |
 
-**Examples:**
-
-```bash
-# Simple text-to-speech
-./bin/mimika kokoro "Welcome to MimikaStudio!" --voice bf_emma
-
-# Convert PDF to audiobook at 1.2x speed
-./bin/mimika kokoro document.pdf --voice bm_george --speed 1.2 --output audiobook.wav
-
-# Convert EPUB with American voice
-./bin/mimika kokoro novel.epub --voice af_heart --output novel.wav
-```
-
----
-
-#### `mimika qwen3` - Voice Clone & Custom Voice
-
-Generate speech using Qwen3-TTS with voice cloning or preset speakers.
+### `mimika qwen3` - Voice Clone & Custom Voice
 
 ```bash
 ./bin/mimika qwen3 <input> [options]
@@ -335,82 +388,44 @@ Default style: `"Optimized for engaging, professional audiobook narration"`
 | `--reference` | `-r` | *required* | Reference audio file (WAV, 3+ seconds) |
 | `--reference-text` | | *optional* | Transcript of reference audio (improves quality) |
 
-**Examples:**
+### `mimika voices` - List Available Voices
 
 ```bash
-# Custom Voice with preset speaker
-./bin/mimika qwen3 "Hello, world!" --speaker Ryan --style "whisper softly"
-
-# Professional audiobook narration
-./bin/mimika qwen3 book.pdf --speaker Sohee --model 1.7B --output audiobook.wav
-
-# Voice cloning from reference audio
-./bin/mimika qwen3 "Hello!" --clone --reference Alina.wav
-
-# Voice cloning with transcript (higher quality)
-./bin/mimika qwen3 book.pdf --clone --reference speaker.wav \
-    --reference-text "This is the transcript of my voice sample." \
-    --output cloned_audiobook.wav
-
-# Adjust generation parameters
-./bin/mimika qwen3 "Testing parameters" --speaker Ryan \
-    --temperature 0.7 --top-p 0.8 --top-k 40
+./bin/mimika voices [--engine kokoro|qwen3]
 ```
-
----
-
-#### `mimika voices` - List Available Voices
-
-List all available voices for a specific engine or all engines.
-
-```bash
-./bin/mimika voices [options]
-```
-
-| Parameter | Short | Default | Description |
-|-----------|-------|---------|-------------|
-| `--engine` | `-e` | *all* | Filter by engine: `kokoro`, `qwen3` |
-
-**Examples:**
-
-```bash
-# List all voices across all engines
-./bin/mimika voices
-
-# List only Kokoro voices
-./bin/mimika voices --engine kokoro
-
-# List Qwen3 preset speakers
-./bin/mimika voices --engine qwen3
-
-```
-
----
 
 ### Supported File Formats
-
-The CLI automatically extracts text from various document formats:
 
 | Format | Extension | Requirements |
 |--------|-----------|--------------|
 | Plain Text | `.txt` | Built-in |
-| PDF | `.pdf` | `PyPDF2` |
+| PDF | `.pdf` | `PyPDF2`, `pymupdf` |
 | EPUB | `.epub` | `ebooklib`, `beautifulsoup4` |
 | Word Document | `.docx` | `python-docx` |
 | Legacy Word | `.doc` | `docx2txt` |
 | Markdown | `.md` | Built-in |
 
-Install optional dependencies:
-
-```bash
-pip install PyPDF2 ebooklib beautifulsoup4 python-docx docx2txt
-```
+All format dependencies are included in `requirements.txt`.
 
 ---
 
-## [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)
+## TTS Engines
 
-### Voice Clone Mode (Base)
+### Kokoro TTS + Emma IPA
+
+Fast, high-quality British English synthesis (82M parameters, 24kHz) with integrated IPA transcription.
+
+**Emma IPA** generates British phonetic transcriptions using your choice of LLM provider:
+- **Claude** (Anthropic) - claude-sonnet-4, claude-opus-4, claude-haiku-3
+- **OpenAI** - gpt-4, gpt-4-turbo, gpt-3.5-turbo
+- **Ollama** (Local) - Any locally installed model
+- **Claude Code CLI** - Use your local Claude CLI
+
+![Emma IPA Phonetic Transcription](assets/02-emma-ipa-transcription.png)
+
+### Qwen3-TTS
+
+#### Voice Clone Mode (Base)
 
 Clone any voice from just 3+ seconds of reference audio.
 
@@ -427,7 +442,7 @@ Clone any voice from just 3+ seconds of reference audio.
 4. Adjust generation parameters if needed
 5. Generate!
 
-### Custom Voice Mode (Preset Speakers)
+#### Custom Voice Mode (Preset Speakers)
 
 Use 9 premium preset speakers without any reference audio.
 
@@ -435,21 +450,9 @@ Use 9 premium preset speakers without any reference audio.
 - `Qwen3-TTS-12Hz-0.6B-CustomVoice`
 - `Qwen3-TTS-12Hz-1.7B-CustomVoice`
 
-| Speaker | Language | Character |
-|---------|----------|-----------|
-| Ryan | English | Dynamic male, strong rhythm |
-| Aiden | English | Sunny American male |
-| Vivian | Chinese | Bright young female |
-| Serena | Chinese | Warm gentle female |
-| Uncle_Fu | Chinese | Seasoned male, mellow timbre |
-| Dylan | Chinese | Beijing youthful male |
-| Eric | Chinese | Sichuan lively male |
-| Ono_Anna | Japanese | Playful female |
-| Sohee | Korean | Warm emotional female |
+**Style Instructions**: Control tone with prompts like "Speak slowly", "Very happy", "Whisper", or use "Optimized for engaging, professional audiobook narration" for long-form content.
 
-**Style Instructions**: Control tone with prompts like "Speak slowly", "Very happy", "Whisper", or use "Optimized for engaging, professional audiobook narration" for long-form content. See [Qwen3-Audiobook-Converter](https://github.com/WhiskeyCoder/Qwen3-Audiobook-Converter) for inspiration.
-
-### Advanced Parameters
+#### Advanced Parameters
 
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
@@ -461,13 +464,22 @@ Use 9 premium preset speakers without any reference audio.
 
 ![Qwen3-TTS with Advanced Parameters](assets/05-qwen3-advanced.png)
 
----
+### Chatterbox Multilingual TTS
 
-## [Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)
+Chatterbox adds multilingual voice cloning from a reference audio prompt. It uses the same voice library flow as Qwen3 (default samples + your uploads).
 
-Chatterbox adds multilingual voice cloning from a reference audio prompt. It uses the same voice library flow as Qwen3 (default samples + your uploads) with dedicated controls in the Voice Clone tab.
+**23 Supported Languages**:
 
-**Languages**: en, zh, ja, ko, de, fr, ru, pt, es, it
+| Code | Language | Code | Language | Code | Language |
+|------|----------|------|----------|------|----------|
+| ar | Arabic | he | Hebrew | no | Norwegian |
+| da | Danish | hi | Hindi | pl | Polish |
+| de | German | it | Italian | pt | Portuguese |
+| el | Greek | ja | Japanese | ru | Russian |
+| en | English | ko | Korean | sv | Swedish |
+| es | Spanish | ms | Malay | sw | Swahili |
+| fi | Finnish | nl | Dutch | tr | Turkish |
+| fr | French | | | zh | Chinese |
 
 **Parameters**:
 - Temperature (randomness)
@@ -475,193 +487,184 @@ Chatterbox adds multilingual voice cloning from a reference audio prompt. It use
 - Exaggeration (style intensity)
 - Seed (reproducibility)
 
-**Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations. Expect slower generation compared to Kokoro/Qwen3.
+**Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations.
+
+![Chatterbox Voice Clone](assets/07-chatterbox-voice-clone.png)
 
 ---
 
-## Other Engines
+## API Reference
 
-### Kokoro TTS + Emma IPA
+The backend exposes 55 REST endpoints via FastAPI. Full interactive docs at **http://localhost:8000/docs**.
 
-Fast, high-quality British English synthesis (82M parameters, 24kHz) with integrated IPA transcription.
-
-**Emma IPA** generates British phonetic transcriptions using your choice of LLM provider:
-- **Claude** (Anthropic) - claude-sonnet-4, claude-opus-4, claude-haiku-3
-- **OpenAI** - gpt-4, gpt-4-turbo, gpt-3.5-turbo
-- **Ollama** (Local) - Any locally installed model
-- **Claude Code CLI** - Use your local Claude CLI
-
-The IPA transcription highlights stress patterns and provides British RP pronunciation guides.
-
-![Emma IPA Phonetic Transcription](assets/02-emma-ipa-transcription.png)
-
-**Kokoro TTS** - Fast, high-quality English synthesis (82M parameters, 24kHz).
-
-| Voice | Code | Gender | Accent |
-|-------|------|--------|--------|
-| Emma | bf_emma | Female | British RP |
-| Heart | af_heart | Female | American |
-| Michael | am_michael | Male | American |
-| George | bm_george | Male | British |
-
----
-
-## API Endpoints
+### System
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/health` | GET | Health check |
-| `/api/system/info` | GET | System information |
-| `/api/system/stats` | GET | CPU/RAM/GPU stats |
-| `/api/voices/custom` | GET | Unified list of all custom voices (Qwen3 + Chatterbox) |
-| **Qwen3** |||
+| `/api/system/info` | GET | System information (Python, device, models, OS) |
+| `/api/system/stats` | GET | Real-time CPU/RAM/GPU usage |
+
+### Kokoro TTS
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/kokoro/generate` | POST | Generate speech with Kokoro |
+| `/api/kokoro/voices` | GET | List available voices |
+| `/api/kokoro/audio/list` | GET | List generated audio files |
+| `/api/kokoro/audio/{filename}` | DELETE | Delete audio file |
+
+### Qwen3-TTS
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/qwen3/generate` | POST | Generate audio (clone or custom mode) |
 | `/api/qwen3/generate/stream` | POST | Streaming audio generation |
 | `/api/qwen3/voices` | GET | List saved voice samples |
 | `/api/qwen3/voices` | POST | Upload new voice sample |
-| `/api/qwen3/speakers` | GET | List preset speakers |
+| `/api/qwen3/voices/{name}` | PUT | Update voice sample |
+| `/api/qwen3/voices/{name}` | DELETE | Delete voice sample |
+| `/api/qwen3/voices/{name}/audio` | GET | Preview voice sample audio |
+| `/api/qwen3/speakers` | GET | List 9 preset speakers |
 | `/api/qwen3/models` | GET | List available models |
 | `/api/qwen3/languages` | GET | List supported languages |
-| `/api/qwen3/info` | GET | Model info |
-| **Chatterbox** |||
-| `/api/chatterbox/generate` | POST | Generate audio (voice clone) |
+| `/api/qwen3/info` | GET | Model info and status |
+| `/api/qwen3/clear-cache` | POST | Clear voice prompt cache |
+
+### Chatterbox TTS
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chatterbox/generate` | POST | Generate speech (voice clone) |
 | `/api/chatterbox/voices` | GET | List saved voice samples |
 | `/api/chatterbox/voices` | POST | Upload new voice sample |
-| `/api/chatterbox/voices/{name}/audio` | GET | Preview voice sample audio |
 | `/api/chatterbox/voices/{name}` | PUT | Update voice sample |
 | `/api/chatterbox/voices/{name}` | DELETE | Delete voice sample |
+| `/api/chatterbox/voices/{name}/audio` | GET | Preview voice sample audio |
 | `/api/chatterbox/languages` | GET | List supported languages |
 | `/api/chatterbox/info` | GET | Model info |
-| **Kokoro** |||
-| `/api/kokoro/generate` | POST | Generate TTS audio |
-| `/api/kokoro/voices` | GET | List available voices |
-| `/api/kokoro/audio/list` | GET | List generated audio files |
-| `/api/kokoro/audio/{filename}` | DELETE | Delete audio file |
-| **Voice Clone Audio Library** |||
-| `/api/voice-clone/audio/list` | GET | List generated Qwen3 + Chatterbox clone files |
-| `/api/voice-clone/audio/{filename}` | DELETE | Delete voice clone file |
-| **Audiobook Creator** |||
+
+### Unified Voices
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/voices/custom` | GET | All custom voices across all engines |
+
+### Audiobook Creator
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
 | `/api/audiobook/generate` | POST | Start audiobook generation from text |
-| `/api/audiobook/generate-from-file` | POST | Start generation from uploaded file (PDF/EPUB/TXT/DOCX) |
-| `/api/audiobook/status/{job_id}` | GET | Get job progress (chars/sec, ETA, chapters) |
+| `/api/audiobook/generate-from-file` | POST | Generate from uploaded file (PDF/EPUB/TXT/DOCX) |
+| `/api/audiobook/status/{job_id}` | GET | Job progress (chars/sec, ETA, chapters) |
 | `/api/audiobook/cancel/{job_id}` | POST | Cancel in-progress job |
-| `/api/audiobook/list` | GET | List all generated audiobooks (WAV/MP3/M4B) |
+| `/api/audiobook/list` | GET | List generated audiobooks |
 | `/api/audiobook/{job_id}` | DELETE | Delete audiobook file |
-| **Emma IPA** |||
-| `/api/ipa/samples` | GET | List IPA sample texts |
+
+**Performance**: ~60 chars/sec on M2 MacBook Pro CPU.
+
+**Output Formats**: WAV (lossless), MP3 (compressed), M4B (audiobook with chapter markers).
+
+**Subtitle Formats**: SRT (VLC-compatible), VTT (web-compatible).
+
+### Audio Library
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/tts/audio/list` | GET | List Kokoro-generated audio |
+| `/api/tts/audio/{filename}` | DELETE | Delete TTS audio file |
+| `/api/voice-clone/audio/list` | GET | List Qwen3/Chatterbox clone audio |
+| `/api/voice-clone/audio/{filename}` | DELETE | Delete clone audio file |
+
+### Emma IPA
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/ipa/sample` | GET | Default sample text |
+| `/api/ipa/samples` | GET | All saved IPA samples |
 | `/api/ipa/generate` | POST | Generate British IPA transcription |
-| `/api/ipa/pregenerated` | GET | Get pregenerated IPA with audio |
-| **LLM Configuration** |||
-| `/api/llm/config` | GET/POST | Get or update LLM provider settings |
-| `/api/llm/ollama/models` | GET | List locally available Ollama models |
+| `/api/ipa/pregenerated` | GET | Pregenerated IPA with audio |
+| `/api/ipa/save-output` | POST | Save IPA output to history |
 
-### Audiobook Generation API
+### LLM Configuration
 
-Generate audiobooks from documents using background job processing with progress tracking.
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/llm/config` | GET | Current LLM config |
+| `/api/llm/config` | POST | Update LLM provider settings |
+| `/api/llm/ollama/models` | GET | List local Ollama models |
 
-**Performance**: ~60 chars/sec on M2 MacBook Pro CPU (matching [audiblez](https://github.com/santinic/audiblez) benchmark).
+### Samples & Pregenerated Content
 
-**Start Generation (from text):**
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/samples/{engine}` | GET | Sample texts for engine |
+| `/api/pregenerated` | GET | Pregenerated audio samples |
+| `/api/voice-samples` | GET | Voice sample sentences with audio |
+
+### Audiobook Generation Example
 
 ```bash
+# Start generation
 curl -X POST http://localhost:8000/api/audiobook/generate \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "Your long document text here...",
-    "title": "My Audiobook",
-    "voice": "bf_emma",
-    "speed": 1.0,
-    "output_format": "m4b"
-  }'
-```
+  -d '{"text": "Your document text...", "title": "My Audiobook", "voice": "bf_emma", "output_format": "m4b"}'
 
-**Start Generation (from file upload):**
-
-```bash
+# From file
 curl -X POST http://localhost:8000/api/audiobook/generate-from-file \
-  -F "file=@mybook.pdf" \
-  -F "title=My Audiobook" \
-  -F "voice=bf_emma" \
-  -F "output_format=m4b"
+  -F "file=@mybook.pdf" -F "title=My Audiobook" -F "voice=bf_emma" -F "output_format=m4b"
+
+# Poll progress
+curl http://localhost:8000/api/audiobook/status/{job_id}
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `text` / `file` | string/file | *required* | Document text or uploaded file |
-| `title` | string | `"Untitled"` | Audiobook title |
-| `voice` | string | `"bf_emma"` | Kokoro voice ID |
-| `speed` | float | `1.0` | Playback speed (0.5-2.0) |
-| `output_format` | string | `"wav"` | Output format: `"wav"`, `"mp3"`, or `"m4b"` |
-| `subtitle_format` | string | `"none"` | Subtitle format: `"none"`, `"srt"`, or `"vtt"` |
+---
 
-**Supported File Formats**: PDF (with TOC/chapter extraction), EPUB, TXT, MD, DOCX
+## MCP Server
 
-**Subtitle Formats**:
-- **SRT**: SubRip format - widely compatible with video players (VLC, media players)
-- **VTT**: WebVTT format - web-friendly, works in browsers with `<video>` tags
+MimikaStudio includes a full MCP (Model Context Protocol) server that exposes every API endpoint as MCP tools for programmatic access via Claude Code CLI, Codex, or any MCP-compatible client.
 
-Response:
-```json
-{
-  "job_id": "abc123",
-  "status": "started",
-  "total_chunks": 20,
-  "total_chars": 45000,
-  "chapters": 5,
-  "output_format": "m4b",
-  "subtitle_format": "srt"
-}
-```
+**Start:** `./bin/mimikactl mcp start` (port 8010)
 
-**Poll Progress (with ETA):**
+The MCP server provides 47 tools for:
+- TTS generation (Kokoro, Qwen3, Chatterbox)
+- Voice management (list, upload, delete, update, preview)
+- Audiobook generation and management
+- System info and monitoring
+- LLM configuration
+- IPA transcription
+- Audio library management
+
+### MCP & API Dashboard (In-App)
+
+The **MCP & API** tab in the Flutter app provides a live dashboard showing:
+
+- **Server status** — Backend API (port 8000), MCP Server (port 8010), and API Docs availability with green/red indicators
+- **All 47 MCP tools** grouped by category (System, Kokoro, Qwen3, Chatterbox, Audiobook, Voice Management, Samples, LLM, IPA) with expandable parameter details
+- **All 55 REST API endpoints** grouped by category with HTTP method badges (GET/POST/PUT/DELETE)
+- **Search** — Filter tools and endpoints by name, path, or description
+
+The dashboard fetches MCP tools live from the MCP server via JSON-RPC, so it always reflects the current tool set.
+
+![MCP & API Dashboard](assets/06-mcp-api-dashboard.png)
+
+---
+
+## Running Tests
 
 ```bash
-curl http://localhost:8000/api/audiobook/status/abc123
+source venv/bin/activate
+cd backend
+
+# Run all tests (fast, no model loading required)
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_all_endpoints.py -v
+
+# Run with actual model tests (slow, requires models downloaded)
+RUN_MODEL_TESTS=1 pytest tests/
 ```
-
-Response:
-```json
-{
-  "job_id": "abc123",
-  "status": "processing",
-  "current_chunk": 5,
-  "total_chunks": 20,
-  "percent": 25.0,
-  "total_chars": 45000,
-  "processed_chars": 11250,
-  "chars_per_sec": 58.3,
-  "eta_seconds": 578.5,
-  "eta_formatted": "9m 38s",
-  "current_chapter": 2,
-  "total_chapters": 5,
-  "output_format": "m4b"
-}
-```
-
-**Completed Response (with subtitles):**
-```json
-{
-  "job_id": "abc123",
-  "status": "completed",
-  "audio_url": "/audio/audiobook-abc123.m4b",
-  "subtitle_url": "/audio/audiobook-abc123.srt",
-  "subtitle_format": "srt",
-  "duration_seconds": 3600.5,
-  "file_size_mb": 45.2,
-  "final_chars_per_sec": 62.1
-}
-```
-
-**Output Formats:**
-- **WAV**: Lossless, larger file size (~10MB/minute)
-- **MP3**: Compressed, smaller file size (~1.5MB/minute at 192kbps)
-- **M4B**: Audiobook format with chapter markers (requires ffmpeg)
-
-**Subtitle Formats:**
-- **SRT**: Standard subtitle format, compatible with VLC, media players
-- **VTT**: WebVTT format for web video players and HTML5 `<track>` element
-
-Full API documentation: http://localhost:8000/docs
 
 ---
 
@@ -669,216 +672,63 @@ Full API documentation: http://localhost:8000/docs
 
 ```
 MimikaStudio/
+├── install.sh                # Single install script (run this first)
+├── requirements.txt          # All Python dependencies
+├── venv/                     # Python virtual environment (created by install.sh)
+│
 ├── bin/
-│   ├── mimikactl              # Control script
-│   └── tts_mcp_server.py      # MCP server for Codex CLI
+│   ├── mimikactl             # Service control script
+│   ├── mimika                # CLI tool for TTS/voice cloning
+│   └── tts_mcp_server.py    # MCP server for programmatic access
 │
-├── pdf/                       # Place PDFs here for the PDF Reader
+├── pdf/                      # Place PDFs here for the PDF Reader
 │
-├── flutter_app/               # macOS Flutter desktop application
+├── flutter_app/              # macOS Flutter desktop application
 │   ├── lib/
-│   │   ├── main.dart          # App entry, tab navigation
+│   │   ├── main.dart         # App entry, 4-tab navigation + MimikaStudio branding
 │   │   ├── screens/
 │   │   │   ├── quick_tts_screen.dart      # Kokoro TTS + Emma IPA
 │   │   │   ├── voice_clone_screen.dart    # Qwen3 + Chatterbox voice clone
-│   │   │   └── pdf_reader_screen.dart     # PDF reader with TTS
+│   │   │   ├── pdf_reader_screen.dart     # PDF reader with TTS
+│   │   │   └── mcp_endpoints_screen.dart  # MCP & API dashboard
 │   │   └── services/
 │   │       └── api_service.dart           # Backend API client
 │   └── macos/                             # macOS configuration
 │
-├── backend/                   # FastAPI Python backend
-│   ├── main.py               # API endpoints
-│   ├── tts/                  # TTS engine wrappers
+├── backend/                  # FastAPI Python backend (55 endpoints)
+│   ├── main.py              # API endpoints
+│   ├── database.py          # SQLite initialization and seeding
+│   ├── requirements.txt     # (legacy, use root requirements.txt)
+│   ├── tts/                 # TTS engine wrappers
 │   │   ├── kokoro_engine.py
-│   │   ├── qwen3_engine.py   # Clone + CustomVoice
-│   │   └── chatterbox_engine.py # Multilingual voice clone
-│   ├── language/             # Language processing
-│   │   └── ipa_generator.py  # British IPA transcription
-│   ├── llm/                  # LLM provider integration
-│   │   └── factory.py        # Claude, OpenAI, Ollama support
+│   │   ├── qwen3_engine.py  # Clone + CustomVoice
+│   │   ├── chatterbox_engine.py # Multilingual voice clone
+│   │   ├── text_chunking.py # Smart text chunking for audiobooks
+│   │   ├── audio_utils.py   # Audio processing utilities
+│   │   └── audiobook.py     # Audiobook generation logic
+│   ├── language/
+│   │   └── ipa_generator.py # British IPA transcription
+│   ├── llm/                 # LLM provider integration
+│   │   ├── factory.py       # Claude, OpenAI, Ollama support
+│   │   ├── claude_provider.py
+│   │   ├── openai_provider.py
+│   │   └── codex_provider.py
 │   ├── models/
-│   │   └── registry.py       # Model registry
-│   ├── tests/                # Test suite
+│   │   └── registry.py      # Model registry
+│   ├── tests/               # Comprehensive test suite
 │   └── data/
-│       ├── samples/          # Voice samples
-│       │   ├── qwen3_voices/ # Shipped Qwen3 voice samples (Natasha, Suzan)
-│       │   ├── chatterbox_voices/ # Shipped Chatterbox samples (Natasha, Suzan)
-│       │   └── kokoro/       # Pre-generated Kokoro samples
-│       ├── user_voices/      # User uploads (git-ignored)
-│       │   ├── qwen3/         # Qwen3 user voice samples
-│       │   └── chatterbox/    # Chatterbox user voice samples
-│       └── outputs/          # Generated audio files
+│       ├── samples/         # Shipped voice samples
+│       │   ├── qwen3_voices/      # Natasha, Suzan
+│       │   ├── chatterbox_voices/ # Natasha, Suzan
+│       │   └── kokoro/            # Pre-generated Kokoro samples
+│       ├── user_voices/     # User uploads (git-ignored)
+│       │   ├── qwen3/
+│       │   └── chatterbox/
+│       └── outputs/         # Generated audio files
 │
-└── docs/
-    └── plans/                # Integration plans
-```
-
----
-
-## System Requirements
-
-### Minimum Requirements
-
-| Component | Requirement |
-|-----------|-------------|
-| **OS** | macOS 12+ (Monterey or later) |
-| **CPU** | Apple Silicon (M1/M2/M3/M4) or Intel |
-| **RAM** | 8GB minimum, 16GB+ recommended |
-| **Storage** | 10GB for models and dependencies |
-| **Python** | 3.10 or later |
-| **Flutter** | 3.x with macOS desktop support |
-
-### Required System Dependencies
-
-Install via Homebrew:
-
-```bash
-# Required for Kokoro TTS phonemization
-brew install espeak-ng
-
-# Required for MP3/M4B audiobook export
-brew install ffmpeg
-```
-
-### Optional
-
-- **CUDA GPU** (NVIDIA) - for faster inference on Linux/Windows
-- **Apple Silicon** (M1/M2/M3/M4) - uses MPS acceleration where supported
-
----
-
-## Installation
-
-### Step 1: Clone the Repository
-
-```bash
-git clone https://github.com/BoltzmannEntropy/MimikaStudio.git
-cd MimikaStudio
-```
-
-### Step 2: Install System Dependencies (macOS)
-
-```bash
-# Install Homebrew if not present
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-# Install required dependencies
-brew install espeak-ng ffmpeg python@3.11
-
-# Optional: Install spaCy model for robust sentence tokenization
-# (The app will fall back to regex if not installed)
-```
-
-### Step 3: Set Up Python Backend
-
-```bash
-cd backend
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install Python dependencies
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# Install Qwen3-TTS for voice cloning
-pip install -U qwen-tts soundfile
-
-# Install Chatterbox Multilingual TTS (no-deps to avoid transformers pin conflicts)
-pip install --no-deps chatterbox-tts==0.1.6
-
-# Install spaCy for robust sentence tokenization (optional but recommended)
-pip install spacy
-
-# Verify installation
-python -c "import kokoro; print('Kokoro OK')"
-python -c "from qwen_tts import QwenTTS; print('Qwen3-TTS OK')"
-python -c "from chatterbox.mtl_tts import ChatterboxMultilingualTTS; print('Chatterbox OK')"
-```
-
-> Note: `mimikactl up` will auto-install Chatterbox if missing using the no-deps pin shown above to avoid transformers conflicts.
-
-### Step 4: Set Up Flutter Frontend
-
-```bash
-cd ../flutter_app
-
-# Get Flutter dependencies
-flutter pub get
-
-# Verify Flutter setup
-flutter doctor
-
-# Build macOS app (optional - mimikactl will do this automatically)
-flutter build macos --release
-```
-
-### Step 5: Initialize Database
-
-```bash
-cd ..
-./bin/mimikactl db seed
-```
-
-### Step 6: Download Models (Optional - Auto-downloads on First Use)
-
-```bash
-# Pre-download Kokoro model (~300MB)
-./bin/mimikactl models download kokoro
-
-# Pre-download Qwen3-TTS models (~4GB for 1.7B)
-./bin/mimikactl models download qwen3
-```
-
-### Step 7: Start MimikaStudio
-
-```bash
-# Start all services (Backend + MCP + Flutter UI)
-./bin/mimikactl up
-
-# Or start backend + MCP + Flutter Web UI
-./bin/mimikactl up --web
-
-# Or start backend only (for API usage)
-./bin/mimikactl up --no-flutter
-```
-
-The macOS app will open automatically. Access the API at `http://localhost:8000`.
-For web, open `http://127.0.0.1:5173`.
-
----
-
-## Quick Start (TL;DR)
-
-```bash
-# One-liner for macOS with Homebrew
-brew install espeak-ng ffmpeg python@3.11 && \
-cd MimikaStudio/backend && \
-python3 -m venv venv && source venv/bin/activate && \
-pip install -r requirements.txt qwen-tts soundfile spacy && \
-pip install --no-deps chatterbox-tts==0.1.6 && \
-cd .. && ./bin/mimikactl db seed && ./bin/mimikactl up
-```
-
-Use `./bin/mimikactl up --web` to launch the Flutter web UI instead of the macOS app.
-
----
-
-## Running Tests
-
-```bash
-cd backend
-source venv/bin/activate
-
-# Run all tests (fast, mocks models)
-pytest tests/
-
-# Run with actual model tests (slow, requires models downloaded)
-RUN_MODEL_TESTS=1 pytest tests/
-
-# Run specific test file
-pytest tests/test_audiobook.py -v
+└── scripts/                 # Additional scripts
+    ├── install_macos.sh     # (legacy, use root install.sh)
+    └── setup.sh             # (legacy, use root install.sh)
 ```
 
 ---
@@ -890,12 +740,20 @@ pytest tests/test_audiobook.py -v
 **"espeak-ng not found"**
 ```bash
 brew install espeak-ng
-# Or on Linux: sudo apt install espeak-ng
 ```
 
 **"ffmpeg not found" (for MP3/M4B export)**
 ```bash
 brew install ffmpeg
+```
+
+**"No module named 'perth'" or "No module named 'omegaconf'"**
+
+These are Chatterbox runtime dependencies. Run `./install.sh` or manually:
+```bash
+source venv/bin/activate
+pip install resemble-perth omegaconf conformer diffusers pyloudnorm pykakasi spacy-pkuseg
+pip install --no-deps chatterbox-tts==0.1.6
 ```
 
 **"spaCy not available" (warning, not error)**
@@ -910,14 +768,11 @@ pip install spacy
 
 **Flutter build fails**
 ```bash
-flutter clean
-flutter pub get
-flutter build macos --release
+flutter clean && flutter pub get && flutter build macos --release
 ```
 
 **Port 8000 already in use**
 ```bash
-# Find and kill the process
 lsof -i :8000
 kill -9 <PID>
 ```
@@ -934,14 +789,12 @@ kill -9 <PID>
 
 | | |
 |---|---|
-| 👨‍💻 **Author** | Shlomo Kashani |
-| 🏫 **Affiliation** | Johns Hopkins University, Maryland, U.S.A. |
+| **Author** | Shlomo Kashani |
+| **Affiliation** | Johns Hopkins University, Maryland, U.S.A. |
 
 ---
 
 ## Citation
-
-If you use MimikaStudio in your research or projects, please cite this work:
 
 ```bibtex
 @software{kashani2025mimikastudio,
@@ -966,23 +819,19 @@ S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop 
 
 ## Similar Projects
 
-MimikaStudio was inspired by and builds upon ideas from these excellent projects:
-
 | Project | Description | Key Features |
 |---------|-------------|--------------|
-| [**audiblez**](https://github.com/santinic/audiblez) | EPUB to audiobook converter using Kokoro TTS | spaCy sentence tokenization, M4B output with chapters, ~60 chars/sec on M2 CPU |
-| [**pdf-narrator**](https://github.com/mateogon/pdf-narrator) | PDF to audiobook with smart text extraction | Skips headers/footers/page numbers, TOC-based chapter splitting, pause/resume |
-| [**abogen**](https://github.com/denizsafak/abogen) | Full-featured audiobook generator GUI | Voice mixer, subtitle generation, batch processing, chapter markers |
+| [**audiblez**](https://github.com/santinic/audiblez) | EPUB to audiobook converter using Kokoro TTS | spaCy sentence tokenization, M4B output with chapters |
+| [**pdf-narrator**](https://github.com/mateogon/pdf-narrator) | PDF to audiobook with smart text extraction | Skips headers/footers/page numbers, TOC-based chapter splitting |
+| [**abogen**](https://github.com/denizsafak/abogen) | Full-featured audiobook generator GUI | Voice mixer, subtitle generation, batch processing |
 | [**Qwen3-Audiobook-Converter**](https://github.com/WhiskeyCoder/Qwen3-Audiobook-Converter) | Qwen3-TTS audiobook tool | Style instructions for professional narration |
 
 ### What MimikaStudio Adds
 
-MimikaStudio combines the best features from all these projects into a unified desktop experience:
-
-- **From audiblez**: spaCy-based sentence tokenization, character-based progress tracking (~60 chars/sec benchmark), M4B output with chapter markers
-- **From pdf-narrator**: Smart PDF extraction that skips headers/footers/page numbers, TOC-based chapter detection
-- **From abogen**: Multiple output formats (WAV/MP3/M4B), real-time progress with ETA, chapter-aware processing
-- **Unique to MimikaStudio**: Native macOS Flutter UI, 3-second voice cloning, Qwen3 voice library management, Emma IPA transcription, MCP server integration
+- **From audiblez**: spaCy-based sentence tokenization, character-based progress tracking, M4B with chapters
+- **From pdf-narrator**: Smart PDF extraction that skips headers/footers/page numbers, TOC-based chapters
+- **From abogen**: Multiple output formats (WAV/MP3/M4B), real-time progress with ETA
+- **Unique to MimikaStudio**: Native macOS Flutter UI, 3-second voice cloning, voice library management, Emma IPA transcription, full MCP server integration, 55 REST API endpoints, in-app MCP & API dashboard
 
 ---
 
@@ -994,6 +843,7 @@ MIT License
 
 - [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) - 3-second voice cloning with CustomVoice
 - [Kokoro TTS](https://github.com/hexgrad/kokoro) - Fast, high-quality English TTS
+- [Chatterbox](https://github.com/resemble-ai/chatterbox) - Multilingual voice cloning
 - [Flutter](https://flutter.dev) - Cross-platform UI framework
 - [FastAPI](https://fastapi.tiangolo.com) - Python API framework
 - [spaCy](https://spacy.io) - Industrial-strength NLP for sentence tokenization

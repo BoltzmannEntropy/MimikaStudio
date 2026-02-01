@@ -1570,6 +1570,26 @@ samples_dir = Path(__file__).parent / "data" / "samples"
 samples_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/samples", StaticFiles(directory=str(samples_dir)), name="samples")
 
+# Mount PDF directory for serving documents
+pdf_dir = Path(__file__).parent / "data" / "pdf"
+pdf_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/pdf", StaticFiles(directory=str(pdf_dir)), name="pdf")
+
+
+@app.get("/api/pdf/list")
+async def list_pdfs():
+    """List available PDF/TXT/MD documents in the documents directory."""
+    docs = []
+    for ext in ("*.pdf", "*.txt", "*.md"):
+        for f in pdf_dir.glob(ext):
+            docs.append({
+                "name": f.name,
+                "url": f"/pdf/{f.name}",
+                "size_bytes": f.stat().st_size,
+            })
+    docs.sort(key=lambda d: d["name"])
+    return {"documents": docs}
+
 # ============== Voice Sample Sentences Endpoints ==============
 
 @app.get("/api/voice-samples")

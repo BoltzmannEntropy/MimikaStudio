@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/voice_clone_screen.dart';
 import 'screens/quick_tts_screen.dart';
 import 'screens/pdf_reader_screen.dart';
+import 'screens/mcp_endpoints_screen.dart';
 import 'services/api_service.dart';
 
 void main() {
@@ -201,18 +202,40 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
           title: _buildSystemStatsBar(),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.graphic_eq, size: 18, color: Theme.of(context).colorScheme.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'MimikaStudio',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Theme.of(context).colorScheme.primary,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           bottom: const TabBar(
             labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             unselectedLabelStyle: TextStyle(fontSize: 14),
             tabs: [
-              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'Kokoro TTS'),
-              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Voice Clone'),
+              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'TTS (Kokoro)'),
+              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Voice Clone (Qwen, ChatterBox)'),
               Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
+              Tab(icon: Icon(Icons.hub, size: 28), text: 'MCP & API'),
             ],
           ),
         ),
@@ -221,6 +244,7 @@ class _MainScreenState extends State<MainScreen> {
             QuickTtsScreen(),
             VoiceCloneScreen(),
             PdfReaderScreen(),
+            McpEndpointsScreen(),
           ],
         ),
       ),

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class ApiService {
@@ -605,6 +606,101 @@ class ApiService {
     );
     if (response.statusCode != 200) {
       throw Exception('Failed to delete audio file: ${response.body}');
+    }
+  }
+
+  // ============== PDF Documents ==============
+
+  /// List available PDF/TXT/MD documents from the backend.
+  Future<List<Map<String, dynamic>>> listPdfDocuments() async {
+    final response = await http.get(Uri.parse('$baseUrl/api/pdf/list'));
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      return List<Map<String, dynamic>>.from(data['documents']);
+    }
+    throw Exception('Failed to list documents');
+  }
+
+  /// Get the full URL for a PDF document served by the backend.
+  String getPdfUrl(String pdfPath) {
+    return '$baseUrl$pdfPath';
+  }
+
+  /// Fetch PDF bytes from the backend by URL path.
+  Future<Uint8List> fetchPdfBytes(String urlPath) async {
+    final response = await http.get(Uri.parse('$baseUrl$urlPath'));
+    if (response.statusCode == 200) {
+      return response.bodyBytes;
+    }
+    throw Exception('Failed to fetch document');
+  }
+
+  // ============== MCP Server ==============
+
+  /// Fetch available MCP tools from the MCP server via JSON-RPC.
+  /// The MCP server runs on port 8010 by default.
+  Future<List<Map<String, dynamic>>> getMcpTools({int mcpPort = 8010}) async {
+    try {
+      // First initialize the MCP session
+      final initResponse = await http.post(
+        Uri.parse('http://localhost:$mcpPort/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'jsonrpc': '2.0',
+          'id': 1,
+          'method': 'initialize',
+          'params': {
+            'protocolVersion': '2024-11-05',
+            'capabilities': {},
+            'clientInfo': {'name': 'mimikastudio-flutter', 'version': '1.0.0'},
+          },
+        }),
+      );
+      if (initResponse.statusCode != 200) return [];
+
+      // Then list tools
+      final response = await http.post(
+        Uri.parse('http://localhost:$mcpPort/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'jsonrpc': '2.0',
+          'id': 2,
+          'method': 'tools/list',
+          'params': {},
+        }),
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['result'] != null && data['result']['tools'] != null) {
+          return List<Map<String, dynamic>>.from(data['result']['tools']);
+        }
+      }
+      return [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Check if the MCP server is reachable.
+  Future<bool> checkMcpHealth({int mcpPort = 8010}) async {
+    try {
+      final response = await http.post(
+        Uri.parse('http://localhost:$mcpPort/'),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          'jsonrpc': '2.0',
+          'id': 1,
+          'method': 'initialize',
+          'params': {
+            'protocolVersion': '2024-11-05',
+            'capabilities': {},
+            'clientInfo': {'name': 'mimikastudio-flutter', 'version': '1.0.0'},
+          },
+        }),
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
     }
   }
 

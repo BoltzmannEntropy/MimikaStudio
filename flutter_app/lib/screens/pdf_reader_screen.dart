@@ -128,26 +128,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   Future<void> _loadSamplePdfs() async {
     if (kIsWeb) {
-      setState(() {
-        _pdfLibrary = [];
-        _isInitialized = true;
-      });
+      // On web, fetch document list from the backend API
+      await _loadSamplePdfsFromApi();
       return;
     }
 
-    // Collect documents first
+    // Desktop: scan local pdf directory relative to backend
     final foundDocs = <Map<String, dynamic>>[];
+    final backendPdfDir = _resolveBackendPdfDir();
 
-    // Default PDF for read aloud
-    const defaultPdfPath =
-        '/Volumes/SSD4tb/Dropbox/DSS/artifacts/code/TSSUi/backend/data/pdf/jusadbellum.pdf';
-    final pdfDirs = <String>{p.dirname(defaultPdfPath)};
-
-    try {
-      for (final pdfDir in pdfDirs) {
-        final dir = Directory(pdfDir);
+    if (backendPdfDir != null) {
+      try {
+        final dir = Directory(backendPdfDir);
         if (await dir.exists()) {
-          debugPrint('PDF directory exists: $pdfDir');
+          debugPrint('PDF directory exists: $backendPdfDir');
           await for (final entity in dir.list()) {
             if (entity is File) {
               final lowerPath = entity.path.toLowerCase();
@@ -161,52 +155,128 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             }
           }
         } else {
-          debugPrint('PDF directory does not exist: $pdfDir');
+          debugPrint('PDF directory does not exist: $backendPdfDir');
         }
+      } catch (e) {
+        debugPrint('Error loading PDFs: $e');
       }
-    } catch (e) {
-      debugPrint('Error loading PDFs: $e');
     }
 
-    // Ensure default PDF is included if present
-    try {
-      final defaultFile = File(defaultPdfPath);
-      if (await defaultFile.exists() &&
-          !foundDocs.any((doc) => doc['path'] == defaultPdfPath)) {
-        foundDocs.add({'path': defaultPdfPath, 'name': p.basename(defaultPdfPath)});
-      }
-    } catch (e) {
-      debugPrint('Error checking default PDF: $e');
-    }
-
-    // Update state with all documents at once
     debugPrint('Loading complete. Found ${foundDocs.length} documents. mounted=$mounted');
     if (mounted) {
       setState(() {
         _pdfLibrary = foundDocs;
         _isInitialized = true;
-        debugPrint('setState called. _pdfLibrary.length=${_pdfLibrary.length}');
       });
 
-      // Auto-select default PDF if present, else first document
+      // Auto-select first document
       if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
-        Map<String, dynamic>? defaultDoc;
+        _selectPdf(
+          _pdfLibrary.first['path'] as String,
+          _pdfLibrary.first['name'] as String,
+        );
+      }
+    }
+  }
+
+  /// Resolve the backend/data/pdf directory relative to the project.
+  String? _resolveBackendPdfDir() {
+    // Try common locations relative to the running app
+    final candidates = [
+      // When running from flutter_app/ or project root
+      '../backend/data/pdf',
+      'backend/data/pdf',
+      // Absolute fallback for typical dev layout
+      '${p.dirname(p.dirname(p.current))}/backend/data/pdf',
+    ];
+    for (final candidate in candidates) {
+      final dir = Directory(candidate);
+      if (dir.existsSync()) return dir.path;
+    }
+    return null;
+  }
+
+  /// Load document list from backend API (used on web).
+  Future<void> _loadSamplePdfsFromApi() async {
+    try {
+      final docs = await _api.listPdfDocuments();
+      final List<Map<String, dynamic>> library = docs.map((doc) =>
+        <String, dynamic>{
+          'path': doc['url'] as String,
+          'name': doc['name'] as String,
+          'url': doc['url'] as String,
+        }
+      ).toList();
+
+      if (mounted) {
+        setState(() {
+          _pdfLibrary = library;
+          _isInitialized = true;
+        });
+
+        // Auto-select first document and load its bytes
+        if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
+          final first = _pdfLibrary.first;
+          await _selectPdfFromUrl(
+            first['url'] as String,
+            first['name'] as String,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Error loading PDFs from API: $e');
+      if (mounted) {
+        setState(() {
+          _pdfLibrary = [];
+          _isInitialized = true;
+        });
+      }
+    }
+  }
+
+  bool _isLoadingPdfBytes = false;
+  String? _selectedPdfNetworkUrl; // Full URL for SfPdfViewer.network on web
+
+  /// Select a PDF by fetching its bytes from the backend (for web).
+  Future<void> _selectPdfFromUrl(String urlPath, String name) async {
+    final fullUrl = _api.getPdfUrl(urlPath);
+
+    // Set path and network URL immediately so UI can render
+    setState(() {
+      _selectedPdfPath = urlPath;
+      _selectedPdfName = name;
+      _selectedPdfBytes = null;
+      _selectedPdfNetworkUrl = fullUrl;
+      _isLoadingPdfBytes = true;
+      _textFileContent = null;
+      _pdfExtractedText = null;
+    });
+
+    // Also fetch bytes for text extraction (read-aloud)
+    try {
+      final bytes = await _api.fetchPdfBytes(urlPath);
+      if (mounted) {
         for (final doc in _pdfLibrary) {
-          if (doc['path'] == defaultPdfPath) {
-            defaultDoc = doc;
+          if (doc['path'] == urlPath || doc['url'] == urlPath) {
+            doc['bytes'] = bytes;
             break;
           }
         }
-        if (defaultDoc != null) {
-          debugPrint('Auto-selecting default document: ${defaultDoc['name']}');
-          _selectPdf(defaultDoc['path'] as String, defaultDoc['name'] as String);
-        } else {
-          debugPrint('Auto-selecting first document: ${_pdfLibrary.first['name']}');
-          _selectPdf(
-            _pdfLibrary.first['path'] as String,
-            _pdfLibrary.first['name'] as String,
-          );
+        setState(() {
+          _selectedPdfBytes = bytes;
+          _isLoadingPdfBytes = false;
+        });
+        final lowerPath = urlPath.toLowerCase();
+        if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
+          _loadTextFromBytes(bytes);
+        } else if (lowerPath.endsWith('.pdf')) {
+          _extractPdfTextFromBytes(bytes);
         }
+      }
+    } catch (e) {
+      debugPrint('Error fetching PDF bytes: $e');
+      if (mounted) {
+        setState(() => _isLoadingPdfBytes = false);
       }
     }
   }
@@ -225,13 +295,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['pdf', 'txt', 'md'],
-      withData: kIsWeb,
+      withData: true, // Always request bytes for cross-platform compatibility
     );
 
     if (result != null && result.files.isNotEmpty) {
       final file = result.files.single;
       final path = file.path ??
-          'memory://${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+          'uploaded://${DateTime.now().millisecondsSinceEpoch}_${file.name}';
       final name = file.path != null ? p.basename(path) : file.name;
       final bytes = file.bytes;
 
@@ -251,6 +321,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _selectedPdfPath = path;
       _selectedPdfName = name;
       _selectedPdfBytes = bytes;
+      _selectedPdfNetworkUrl = null; // Clear network URL when selecting directly
+      _isLoadingPdfBytes = false;
       _currentPage = 1;
       _totalPages = 0;
       _textFileContent = null;
@@ -261,7 +333,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
     // Load text content for .txt and .md files
     final lowerPath = path.toLowerCase();
-    if (bytes != null && kIsWeb) {
+
+    // If we have bytes, always prefer the bytes-based path (works on all platforms)
+    if (bytes != null) {
       if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
         _loadTextFromBytes(bytes);
       } else if (lowerPath.endsWith('.pdf')) {
@@ -270,10 +344,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       return;
     }
 
-    if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
-      _loadTextFile(path);
-    } else if (lowerPath.endsWith('.pdf')) {
-      _extractPdfText(path);
+    // Fallback to file-based loading (desktop only)
+    if (!kIsWeb) {
+      if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
+        _loadTextFile(path);
+      } else if (lowerPath.endsWith('.pdf')) {
+        _extractPdfText(path);
+      }
     }
   }
 
@@ -1004,7 +1081,16 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                           onPressed: () => _removePdf(path),
                           visualDensity: VisualDensity.compact,
                         ),
-                        onTap: () => _selectPdf(path, name, bytes: pdf['bytes'] as Uint8List?),
+                        onTap: () {
+                          final bytes = pdf['bytes'] as Uint8List?;
+                          if (bytes != null) {
+                            _selectPdf(path, name, bytes: bytes);
+                          } else if (kIsWeb && pdf['url'] != null) {
+                            _selectPdfFromUrl(pdf['url'] as String, name);
+                          } else {
+                            _selectPdf(path, name);
+                          }
+                        },
                       );
                     },
                   ),
@@ -1519,6 +1605,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       return _buildTextViewer();
     }
 
+    // If we have bytes in memory, use the memory viewer (works everywhere)
     if (_selectedPdfBytes != null) {
       return Column(
         children: [
@@ -1551,6 +1638,70 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       );
     }
 
+    // On web: use network viewer if we have a URL, or show loading/error state
+    if (kIsWeb) {
+      if (_selectedPdfNetworkUrl != null) {
+        return Column(
+          children: [
+            _buildToolbar(),
+            if (_isReading) _buildReadingIndicator(),
+            Expanded(
+              child: SfPdfViewer.network(
+                _selectedPdfNetworkUrl!,
+                key: _pdfViewerKey,
+                controller: _pdfController,
+                onDocumentLoaded: (details) {
+                  setState(() {
+                    _totalPages = details.document.pages.count;
+                  });
+                },
+                onPageChanged: (details) {
+                  setState(() {
+                    _currentPage = details.newPageNumber;
+                  });
+                },
+                onTextSelectionChanged: (details) {
+                  setState(() {
+                    _selectedText = details.selectedText;
+                  });
+                },
+              ),
+            ),
+            _buildPageIndicator(),
+          ],
+        );
+      }
+      if (_isLoadingPdfBytes) {
+        return const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Loading document...'),
+            ],
+          ),
+        );
+      }
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.orange),
+            const SizedBox(height: 16),
+            const Text('Could not load document', textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _openPdf,
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Upload PDF'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Desktop: use file-based viewer
     final file = File(_selectedPdfPath!);
     if (!file.existsSync()) {
       return Center(
@@ -1567,11 +1718,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
     return Column(
       children: [
-        // Toolbar
         _buildToolbar(),
-        // Reading indicator (shown when reading)
         if (_isReading) _buildReadingIndicator(),
-        // PDF Viewer (full width, highlighting via searchText)
         Expanded(
           child: SfPdfViewer.file(
             file,
@@ -1594,7 +1742,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             },
           ),
         ),
-        // Page indicator
         _buildPageIndicator(),
       ],
     );
