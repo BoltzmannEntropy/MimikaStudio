@@ -163,6 +163,8 @@ MimikaStudio ships two UIs backed by the same local FastAPI server:
 > The web UI uses the same backend and voice library as the desktop app.
 > In web mode, use **Open Document** to upload PDFs from your machine.
 
+![MimikaStudio App Running](assets/08-running-app.png)
+
 ---
 
 ## Why MimikaStudio?
