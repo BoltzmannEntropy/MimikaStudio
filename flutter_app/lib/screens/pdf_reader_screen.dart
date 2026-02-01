@@ -127,54 +127,53 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   Future<void> _loadSamplePdfs() async {
-    if (kIsWeb) {
-      // On web, fetch document list from the backend API
-      await _loadSamplePdfsFromApi();
-      return;
-    }
+    // Prefer backend API for both web and desktop (more reliable than local path guessing).
+    await _loadSamplePdfsFromApi();
 
-    // Desktop: scan local pdf directory relative to backend
-    final foundDocs = <Map<String, dynamic>>[];
-    final backendPdfDir = _resolveBackendPdfDir();
+    // Desktop fallback: scan local pdf directory relative to backend
+    if (!kIsWeb && _pdfLibrary.isEmpty) {
+      final foundDocs = <Map<String, dynamic>>[];
+      final backendPdfDir = _resolveBackendPdfDir();
 
-    if (backendPdfDir != null) {
-      try {
-        final dir = Directory(backendPdfDir);
-        if (await dir.exists()) {
-          debugPrint('PDF directory exists: $backendPdfDir');
-          await for (final entity in dir.list()) {
-            if (entity is File) {
-              final lowerPath = entity.path.toLowerCase();
-              if (lowerPath.endsWith('.pdf') ||
-                  lowerPath.endsWith('.txt') ||
-                  lowerPath.endsWith('.md')) {
-                final name = p.basename(entity.path);
-                foundDocs.add({'path': entity.path, 'name': name});
-                debugPrint('Found document: $name');
+      if (backendPdfDir != null) {
+        try {
+          final dir = Directory(backendPdfDir);
+          if (await dir.exists()) {
+            debugPrint('PDF directory exists: $backendPdfDir');
+            await for (final entity in dir.list()) {
+              if (entity is File) {
+                final lowerPath = entity.path.toLowerCase();
+                if (lowerPath.endsWith('.pdf') ||
+                    lowerPath.endsWith('.txt') ||
+                    lowerPath.endsWith('.md')) {
+                  final name = p.basename(entity.path);
+                  foundDocs.add({'path': entity.path, 'name': name});
+                  debugPrint('Found document: $name');
+                }
               }
             }
+          } else {
+            debugPrint('PDF directory does not exist: $backendPdfDir');
           }
-        } else {
-          debugPrint('PDF directory does not exist: $backendPdfDir');
+        } catch (e) {
+          debugPrint('Error loading PDFs: $e');
         }
-      } catch (e) {
-        debugPrint('Error loading PDFs: $e');
       }
-    }
 
-    debugPrint('Loading complete. Found ${foundDocs.length} documents. mounted=$mounted');
-    if (mounted) {
-      setState(() {
-        _pdfLibrary = foundDocs;
-        _isInitialized = true;
-      });
+      debugPrint('Loading complete. Found ${foundDocs.length} documents. mounted=$mounted');
+      if (mounted) {
+        setState(() {
+          _pdfLibrary = foundDocs;
+          _isInitialized = true;
+        });
 
-      // Auto-select first document
-      if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
-        _selectPdf(
-          _pdfLibrary.first['path'] as String,
-          _pdfLibrary.first['name'] as String,
-        );
+        // Auto-select first document
+        if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
+          _selectPdf(
+            _pdfLibrary.first['path'] as String,
+            _pdfLibrary.first['name'] as String,
+          );
+        }
       }
     }
   }

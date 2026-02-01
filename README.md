@@ -60,6 +60,8 @@ The script will:
 6. Initialize the SQLite database
 7. Set up Flutter (if installed)
 
+Note: `./install.sh` creates the Python virtual environment and installs large dependencies, so the first run can take a few minutes.
+
 After installation, start MimikaStudio:
 
 ```bash
@@ -149,6 +151,8 @@ Starting MCP Server...
 MCP Server started on port 8010
 Starting Flutter UI (dev mode)...
 ```
+
+![MimikaStudio Running](assets/09-app-up.png)
 
 ---
 
