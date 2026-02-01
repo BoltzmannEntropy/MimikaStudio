@@ -12,6 +12,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FLUTTER_DIR="$ROOT_DIR/flutter_app"
 VENV_DIR="$ROOT_DIR/venv"
+DICTA_MODEL_DIR="$BACKEND_DIR/models/dicta-onnx"
+DICTA_MODEL_PATH="$DICTA_MODEL_DIR/dicta-1.0.onnx"
+DICTA_MODEL_URL="https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx"
 
 # --- Colors ---
 RED='\033[0;31m'
@@ -97,6 +100,21 @@ info "Installing chatterbox-tts (with --no-deps to avoid version conflicts)..."
 pip install --no-deps chatterbox-tts==0.1.6
 ok "chatterbox-tts installed"
 
+# Optional: Dicta Hebrew diacritizer model for Chatterbox (large download).
+echo ""
+if [ "${SKIP_DICTA:-0}" = "1" ]; then
+    warn "Skipping Dicta model download (SKIP_DICTA=1)"
+else
+    if [ ! -f "$DICTA_MODEL_PATH" ]; then
+        info "Downloading Dicta Hebrew diacritizer model (~1.1GB)..."
+        mkdir -p "$DICTA_MODEL_DIR"
+        curl -L -o "$DICTA_MODEL_PATH" "$DICTA_MODEL_URL"
+        ok "Dicta model downloaded"
+    else
+        ok "Dicta model already present"
+    fi
+fi
+
 # =============================================================================
 # 4. Verify Key Imports
 # =============================================================================
@@ -106,7 +124,7 @@ python3 -c "
 import sys, importlib
 modules = [
     'fastapi', 'uvicorn', 'kokoro', 'qwen_tts', 'chatterbox',
-    'torch', 'torchaudio', 'transformers', 'omegaconf', 'perth',
+    'torch', 'torchaudio', 'transformers', 'omegaconf', 'perth', 'dicta_onnx',
     'soundfile', 'librosa', 'spacy', 'PyPDF2', 'fitz',
 ]
 failed = []

@@ -40,6 +40,7 @@ diffusers>=0.29.0
 pyloudnorm>=0.2.0
 pykakasi>=2.3.0
 spacy-pkuseg>=1.0.0
+dicta_onnx>=1.0.9                 # Hebrew diacritization for Chatterbox (needs model file)
 
 # --- Database ---
 aiosqlite>=0.19.0

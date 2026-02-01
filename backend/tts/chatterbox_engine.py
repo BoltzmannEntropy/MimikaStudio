@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -60,6 +61,7 @@ class ChatterboxEngine:
                 "chatterbox-tts not installed. Install with: pip install chatterbox-tts"
             ) from exc
 
+        self._configure_hebrew_diacritizer()
         self.device = self._get_device()
         # Chatterbox checkpoints are saved on CUDA; force map to current device.
         original_torch_load = torch.load
@@ -95,6 +97,32 @@ class ChatterboxEngine:
             torch.mps.empty_cache()
         elif self.device and self.device.startswith("cuda"):
             torch.cuda.empty_cache()
+
+    def _configure_hebrew_diacritizer(self) -> None:
+        """Load Dicta ONNX model for Hebrew diacritization if available."""
+        try:
+            import chatterbox.models.tokenizers.tokenizer as tok
+            from dicta_onnx import Dicta
+        except Exception:
+            return
+
+        if getattr(tok, "_dicta", None) is not None:
+            return
+
+        model_path = os.environ.get("DICTA_ONNX_MODEL_PATH")
+        if not model_path:
+            model_path = str(
+                Path(__file__).parent.parent / "models" / "dicta-onnx" / "dicta-1.0.onnx"
+            )
+
+        if not Path(model_path).exists():
+            return
+
+        try:
+            tok._dicta = Dicta(model_path)
+            print(f"[Chatterbox] Hebrew diacritizer loaded: {model_path}")
+        except Exception as exc:
+            print(f"[Chatterbox] Hebrew diacritizer init failed: {exc}")
 
     def _seed(self, seed: int) -> None:
         if seed >= 0:
