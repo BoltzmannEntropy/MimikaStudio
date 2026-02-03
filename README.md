@@ -3,7 +3,7 @@
   <br>
 </div>
 
-# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web): the most comprehensive desktop application for voice cloning and text-to-speech synthesis.
+# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web): A comprehensive, OSX first application for voice cloning and text-to-speech synthesis.
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
