@@ -3,11 +3,13 @@
   <br>
 </div>
 
-# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web): A comprehensive, OSX first application for voice cloning and text-to-speech synthesis.
+# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web)
+
+> **Optimized for Apple Silicon (M1/M2/M3/M4) with MPS acceleration** | **Runs locally, no cloud required**
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first desktop application with four core capabilities: **clone any voice** from just 3 seconds of audio using four voice cloning engines (Qwen3-TTS, Chatterbox, IndexTTS-2), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+A local-first desktop application optimized for **Apple Silicon and MPS (Metal Performance Shaders)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using four voice cloning engines (Qwen3-TTS, Chatterbox, IndexTTS-2), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
 
 ### Supported Models
 
@@ -937,9 +939,14 @@ lsof -i :8000
 kill -9 <PID>
 ```
 
-### Performance Tips
+### Performance Tips (Apple Silicon + MPS)
 
-- **Apple Silicon**: Qwen3-TTS runs on CPU; Kokoro uses MPS when available; Chatterbox runs on CPU
+MimikaStudio is optimized for Apple Silicon Macs with MPS (Metal Performance Shaders) acceleration where supported:
+
+- **Kokoro TTS**: Uses MPS for GPU-accelerated inference — sub-200ms latency
+- **Qwen3-TTS**: Runs on CPU (MPS support planned); still fast on M-series chips
+- **Chatterbox**: Runs on CPU due to MPS resampling limitations
+- **IndexTTS-2**: Benefits from CUDA on Linux/Windows; runs on CPU on macOS
 - **Audiobook generation**: Expect ~60 chars/sec on M2 MacBook Pro (matching audiblez benchmark)
 - **Memory**: Close other apps when generating long audiobooks with 1.7B model
 
