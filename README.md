@@ -23,6 +23,8 @@ A local-first desktop application with four core capabilities: **clone any voice
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 | [IndexTTS-2](https://github.com/IndexTeam/IndexTTS) | — (~24GB) | Voice Cloning | Multilingual |
 
+![Model Manager](assets/10-model-manager.png)
+
 ![MimikaStudio](assets/00-mimikastudio-hero.png)
 
 ---
@@ -268,8 +270,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Style Instructions**: Tell speakers *how* to speak - "whisper softly", "speak with excitement", etc.
 - **Real-time System Monitoring**: CPU, RAM, and GPU usage in the app header
 - **Multi-LLM Support**: Claude, OpenAI, Ollama (local), or Claude Code CLI
-
-![Model Manager](assets/10-model-manager.png)
 
 ![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
 
