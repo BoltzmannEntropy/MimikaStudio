@@ -17,6 +17,7 @@ from database import init_db, seed_db, get_connection
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
 from tts.chatterbox_engine import get_chatterbox_engine, ChatterboxParams
+from tts.indextts2_engine import get_indextts2_engine
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
@@ -65,6 +66,15 @@ class ChatterboxRequest(BaseModel):
     max_chars: int = 300
     crossfade_ms: int = 0
     unload_after: bool = False
+
+class IndexTTS2Request(BaseModel):
+    text: str
+    voice_name: str
+    speed: float = 1.0
+    max_chars: int = 300
+    crossfade_ms: int = 0
+    unload_after: bool = False
+
 
 class LLMConfigRequest(BaseModel):
     provider: str
@@ -122,6 +132,55 @@ CHATTERBOX_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "cha
 CHATTERBOX_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "chatterbox"
 DEFAULT_CHATTERBOX_VOICES = {"Natasha", "Suzan"}
 
+# IndexTTS-2 voice storage locations
+INDEXTTS2_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "indextts2_voices"
+INDEXTTS2_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "indextts2"
+
+
+def _get_all_voices() -> list:
+    """List all voice samples across all engines (shared pool)."""
+    all_dirs = [
+        ("qwen3", QWEN3_SAMPLE_VOICES_DIR, "default"),
+        ("qwen3", QWEN3_USER_VOICES_DIR, "user"),
+        ("chatterbox", CHATTERBOX_SAMPLE_VOICES_DIR, "default"),
+        ("chatterbox", CHATTERBOX_USER_VOICES_DIR, "user"),
+        ("indextts2", INDEXTTS2_SAMPLE_VOICES_DIR, "default"),
+        ("indextts2", INDEXTTS2_USER_VOICES_DIR, "user"),
+    ]
+    voices: dict[str, dict] = {}
+    for origin_engine, vdir, source in all_dirs:
+        if not vdir.exists():
+            continue
+        for wav in vdir.glob("*.wav"):
+            name = wav.stem
+            if name not in voices:
+                transcript = ""
+                txt_file = wav.with_suffix(".txt")
+                if txt_file.exists():
+                    transcript = txt_file.read_text().strip()
+                voices[name] = {
+                    "name": name,
+                    "source": source,
+                    "origin_engine": origin_engine,
+                    "transcript": transcript,
+                    "audio_path": str(wav),
+                }
+    return list(voices.values())
+
+
+def _find_voice_audio(name: str) -> Optional[Path]:
+    """Search all voice directories for a voice file by name."""
+    all_dirs = [
+        QWEN3_USER_VOICES_DIR, QWEN3_SAMPLE_VOICES_DIR,
+        CHATTERBOX_USER_VOICES_DIR, CHATTERBOX_SAMPLE_VOICES_DIR,
+        INDEXTTS2_USER_VOICES_DIR, INDEXTTS2_SAMPLE_VOICES_DIR,
+    ]
+    for vdir in all_dirs:
+        audio_file = vdir / f"{name}.wav"
+        if audio_file.exists():
+            return audio_file
+    return None
+
 
 def _migrate_legacy_voice_samples() -> None:
     """Move legacy or user voices into the non-synced user voices folder."""
@@ -130,6 +189,8 @@ def _migrate_legacy_voice_samples() -> None:
     QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     CHATTERBOX_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    INDEXTTS2_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
     def move_voice(src_dir: Path, name: str, dest_dir: Path) -> None:
         src_wav = src_dir / f"{name}.wav"
@@ -249,6 +310,7 @@ async def system_info():
     kokoro_info = {"model": "Kokoro v0.19", "voice_pack": "British English"}
     qwen3_info = {"model": "Qwen3-TTS-12Hz-0.6B-Base", "features": "3-sec voice clone"}
     chatterbox_info = {"model": "Chatterbox Multilingual TTS", "features": "voice clone"}
+    indextts2_info = {"model": "IndexTTS-2", "features": "voice clone"}
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -260,6 +322,7 @@ async def system_info():
             "kokoro": kokoro_info,
             "qwen3": qwen3_info,
             "chatterbox": chatterbox_info,
+            "indextts2": indextts2_info,
         }
     }
 
@@ -447,13 +510,20 @@ async def qwen3_generate(request: Qwen3Request):
             )
             voices = engine.get_saved_voices()
 
-            # Find the voice
+            # Find the voice (search own engine first, then all engines)
             voice = next((v for v in voices if v["name"] == request.voice_name), None)
             if voice is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Voice '{request.voice_name}' not found. Upload a voice first."
-                )
+                audio_file = _find_voice_audio(request.voice_name)
+                if audio_file is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Voice '{request.voice_name}' not found. Upload a voice first."
+                    )
+                transcript = ""
+                txt_file = audio_file.with_suffix(".txt")
+                if txt_file.exists():
+                    transcript = txt_file.read_text().strip()
+                voice = {"name": request.voice_name, "audio_path": str(audio_file), "transcript": transcript}
 
             output_path = engine.generate_voice_clone(
                 text=request.text,
@@ -555,29 +625,24 @@ async def qwen3_generate_stream(request: Qwen3Request):
 
 @app.get("/api/qwen3/voices")
 async def qwen3_list_voices():
-    """List saved voice samples for Qwen3 cloning."""
-    try:
-        engine = get_qwen3_engine()
-        voices = engine.get_saved_voices()
-        for voice in voices:
-            name = voice.get("name")
-            if name:
-                voice["audio_url"] = f"/api/qwen3/voices/{name}/audio"
-        return {"voices": voices}
-    except ImportError:
-        return {"voices": [], "error": "Qwen3-TTS not installed"}
+    """List all voice samples available for Qwen3 cloning (shared across engines)."""
+    voices = _get_all_voices()
+    for voice in voices:
+        name = voice.get("name")
+        if name:
+            voice["audio_url"] = f"/api/qwen3/voices/{name}/audio"
+    return {"voices": voices}
 
 
 @app.get("/api/qwen3/voices/{name}/audio")
 async def qwen3_voice_audio(name: str):
-    """Serve a voice sample audio file for preview."""
+    """Serve a voice sample audio file for preview (searches all engines)."""
     if not re.match(r"^[A-Za-z0-9_-]+$", name):
         raise HTTPException(status_code=400, detail="Invalid voice name")
 
-    for vdir in [QWEN3_USER_VOICES_DIR, QWEN3_SAMPLE_VOICES_DIR]:
-        audio_file = vdir / f"{name}.wav"
-        if audio_file.exists():
-            return FileResponse(audio_file, media_type="audio/wav")
+    audio_file = _find_voice_audio(name)
+    if audio_file:
+        return FileResponse(audio_file, media_type="audio/wav")
 
     raise HTTPException(status_code=404, detail="Voice audio not found")
 
@@ -813,10 +878,14 @@ async def chatterbox_generate(request: ChatterboxRequest):
         voices = engine.get_saved_voices()
         voice = next((v for v in voices if v["name"] == request.voice_name), None)
         if voice is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Voice '{request.voice_name}' not found. Upload a voice first.",
-            )
+            # Search across all engine voice directories
+            audio_file = _find_voice_audio(request.voice_name)
+            if audio_file is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Voice '{request.voice_name}' not found. Upload a voice first.",
+                )
+            voice = {"name": request.voice_name, "audio_path": str(audio_file)}
 
         params = ChatterboxParams(
             temperature=request.temperature,
@@ -854,29 +923,24 @@ async def chatterbox_generate(request: ChatterboxRequest):
 
 @app.get("/api/chatterbox/voices")
 async def chatterbox_list_voices():
-    """List saved voice samples for Chatterbox cloning."""
-    try:
-        engine = get_chatterbox_engine()
-        voices = engine.get_saved_voices()
-        for voice in voices:
-            name = voice.get("name")
-            if name:
-                voice["audio_url"] = f"/api/chatterbox/voices/{name}/audio"
-        return {"voices": voices}
-    except ImportError:
-        return {"voices": [], "error": "Chatterbox not installed"}
+    """List all voice samples available for Chatterbox cloning (shared across engines)."""
+    voices = _get_all_voices()
+    for voice in voices:
+        name = voice.get("name")
+        if name:
+            voice["audio_url"] = f"/api/chatterbox/voices/{name}/audio"
+    return {"voices": voices}
 
 
 @app.get("/api/chatterbox/voices/{name}/audio")
 async def chatterbox_voice_audio(name: str):
-    """Serve a Chatterbox voice sample audio file for preview."""
+    """Serve a voice sample audio file for preview (searches all engines)."""
     if not name or "/" in name or ".." in name:
         raise HTTPException(status_code=400, detail="Invalid voice name")
 
-    for directory in (CHATTERBOX_USER_VOICES_DIR, CHATTERBOX_SAMPLE_VOICES_DIR):
-        audio_path = directory / f"{name}.wav"
-        if audio_path.exists():
-            return FileResponse(audio_path)
+    audio_file = _find_voice_audio(name)
+    if audio_file:
+        return FileResponse(audio_file, media_type="audio/wav")
 
     raise HTTPException(status_code=404, detail="Voice sample not found")
 
@@ -1001,6 +1065,255 @@ async def chatterbox_info():
             "installed": False,
             "error": "Run: pip install chatterbox-tts",
         }
+
+
+# ============== IndexTTS-2 Endpoints (Voice Clone) ==============
+
+@app.post("/api/indextts2/generate")
+async def indextts2_generate(request: IndexTTS2Request):
+    """Generate speech using IndexTTS-2 voice cloning."""
+    try:
+        engine = get_indextts2_engine()
+        voices = engine.get_saved_voices()
+        voice = next((v for v in voices if v["name"] == request.voice_name), None)
+        if voice is None:
+            # Search across all engine voice directories
+            audio_file = _find_voice_audio(request.voice_name)
+            if audio_file is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Voice '{request.voice_name}' not found. Upload a voice first.",
+                )
+            voice = {"name": request.voice_name, "audio_path": str(audio_file)}
+
+        output_path = engine.generate(
+            text=request.text,
+            voice_name=request.voice_name,
+            ref_audio_path=voice["audio_path"],
+            speed=request.speed,
+            max_chars=request.max_chars,
+            crossfade_ms=request.crossfade_ms,
+        )
+
+        if request.unload_after:
+            engine.unload()
+
+        return {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "mode": "clone",
+            "voice": request.voice_name,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"IndexTTS not installed. Run: pip install indextts>=0.2.0. Error: {e}",
+        )
+
+
+@app.get("/api/indextts2/voices")
+async def indextts2_list_voices():
+    """List all voice samples available for IndexTTS-2 cloning (shared across engines)."""
+    voices = _get_all_voices()
+    for voice in voices:
+        name = voice.get("name")
+        if name:
+            voice["audio_url"] = f"/api/indextts2/voices/{name}/audio"
+    return {"voices": voices}
+
+
+@app.get("/api/indextts2/voices/{name}/audio")
+async def indextts2_voice_audio(name: str):
+    """Serve a voice sample audio file for preview (searches all engines)."""
+    if not name or "/" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+
+    audio_file = _find_voice_audio(name)
+    if audio_file:
+        return FileResponse(audio_file, media_type="audio/wav")
+
+    raise HTTPException(status_code=404, detail="Voice sample not found")
+
+
+@app.post("/api/indextts2/voices")
+async def indextts2_upload_voice(
+    name: str = Form(...),
+    file: UploadFile = File(...),
+    transcript: Optional[str] = Form(""),
+):
+    """Upload a new voice sample for IndexTTS-2 cloning."""
+    if not name or len(name.strip()) == 0:
+        raise HTTPException(status_code=400, detail="Voice name is required")
+
+    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+    if transcript is not None:
+        transcript_path.write_text(transcript.strip())
+
+    try:
+        engine = get_indextts2_engine()
+        return {
+            "message": "Voice uploaded successfully",
+            "voice": engine.get_saved_voices(),
+        }
+    except ImportError:
+        return {"message": "Voice uploaded (engine not installed)", "name": name}
+
+
+@app.delete("/api/indextts2/voices/{name}")
+async def indextts2_delete_voice(name: str):
+    """Delete an IndexTTS-2 voice sample."""
+    if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+
+    audio_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+    transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+
+    if not audio_path.exists():
+        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+    audio_path.unlink()
+    transcript_path.unlink(missing_ok=True)
+
+    return {"message": f"Voice '{name}' deleted"}
+
+
+@app.put("/api/indextts2/voices/{name}")
+async def indextts2_update_voice(
+    name: str,
+    new_name: Optional[str] = Form(None),
+    transcript: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+):
+    """Update an IndexTTS-2 voice sample (rename, update transcript, or replace audio)."""
+    if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+
+    old_audio = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+    old_transcript = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+    if not old_audio.exists():
+        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+    final_name = new_name or name
+
+    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    new_audio = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.wav"
+    new_transcript = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.txt"
+
+    if file:
+        with open(new_audio, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        if old_audio.exists() and old_audio != new_audio:
+            old_audio.unlink()
+    elif old_audio != new_audio:
+        old_audio.rename(new_audio)
+
+    if transcript is not None:
+        new_transcript.write_text(transcript.strip())
+    elif old_transcript.exists() and old_transcript != new_transcript:
+        old_transcript.rename(new_transcript)
+
+    if old_transcript.exists() and old_transcript != new_transcript:
+        old_transcript.unlink(missing_ok=True)
+
+    return {
+        "message": "Voice updated successfully",
+        "name": final_name,
+        "transcript": transcript or (new_transcript.read_text() if new_transcript.exists() else ""),
+    }
+
+
+@app.get("/api/indextts2/info")
+async def indextts2_info():
+    """Get IndexTTS-2 model information."""
+    try:
+        engine = get_indextts2_engine()
+        return engine.get_model_info()
+    except ImportError:
+        return {
+            "name": "IndexTTS-2",
+            "installed": False,
+            "error": "Run: pip install indextts>=0.2.0",
+        }
+
+
+# ============== Model Management Endpoints ==============
+
+# Track active downloads: model_name -> {"status": "downloading"/"completed"/"failed", "error": str}
+_download_status: dict[str, dict] = {}
+
+
+@app.get("/api/models/status")
+async def models_status():
+    """Check which models are downloaded and their sizes."""
+    registry = ModelRegistry()
+    models = []
+    for m in registry.list_all_models():
+        downloaded = registry.is_model_downloaded(m)
+        status_info = _download_status.get(m.name)
+        models.append({
+            "name": m.name,
+            "engine": m.engine,
+            "hf_repo": m.hf_repo,
+            "size_gb": m.size_gb,
+            "mode": m.mode,
+            "model_type": m.model_type,
+            "description": m.description,
+            "downloaded": downloaded,
+            "download_status": status_info.get("status") if status_info else None,
+            "download_error": status_info.get("error") if status_info else None,
+        })
+    return {"models": models}
+
+
+@app.post("/api/models/{model_name}/download")
+async def model_download(model_name: str):
+    """Trigger download of a HuggingFace model."""
+    registry = ModelRegistry()
+    model = registry.get_model(model_name)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
+
+    if model.model_type == "pip":
+        raise HTTPException(
+            status_code=400,
+            detail="Pip packages must be installed via pip install, not downloaded here.",
+        )
+
+    if not model.hf_repo:
+        raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
+
+    # Check if already downloading
+    current = _download_status.get(model_name)
+    if current and current.get("status") == "downloading":
+        return {"message": "Download already in progress", "model": model_name}
+
+    _download_status[model_name] = {"status": "downloading", "error": None}
+
+    import threading
+
+    def _do_download():
+        try:
+            from huggingface_hub import snapshot_download
+            snapshot_download(model.hf_repo)
+            _download_status[model_name] = {"status": "completed", "error": None}
+        except Exception as e:
+            _download_status[model_name] = {"status": "failed", "error": str(e)}
+
+    thread = threading.Thread(target=_do_download, daemon=True)
+    thread.start()
+
+    return {
+        "message": f"Download started for {model_name}",
+        "model": model_name,
+        "hf_repo": model.hf_repo,
+        "size_gb": model.size_gb,
+    }
 
 
 # ============== Audiobook Generation Endpoints ==============
@@ -1438,6 +1751,7 @@ async def voice_clone_audio_list():
     patterns = [
         ("qwen3", "qwen3-*.wav"),
         ("chatterbox", "chatterbox-*.wav"),
+        ("indextts2", "indextts2-*.wav"),
     ]
 
     for engine, pattern in patterns:
@@ -1451,6 +1765,8 @@ async def voice_clone_audio_list():
 
             if engine == "qwen3":
                 label = f"Qwen3 {voice}" if voice else "Qwen3 Clone"
+            elif engine == "indextts2":
+                label = f"IndexTTS-2 {voice}" if voice else "IndexTTS-2 Clone"
             else:
                 label = f"Chatterbox {voice}" if voice else "Chatterbox Clone"
 
@@ -1485,7 +1801,7 @@ async def voice_clone_audio_list():
 async def voice_clone_audio_delete(filename: str):
     """Delete a voice clone audio file."""
     # Security: ensure filename starts with allowed prefixes and ends with .wav
-    valid_prefixes = ("qwen3-", "chatterbox-")
+    valid_prefixes = ("qwen3-", "chatterbox-", "indextts2-")
     if not (filename.endswith(".wav") and filename.startswith(valid_prefixes)):
         raise HTTPException(status_code=400, detail="Invalid filename")
 

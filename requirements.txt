@@ -17,6 +17,12 @@ qwen-tts>=0.0.5                   # Qwen3-TTS (voice cloning & custom voices)
 transformers==4.57.3              # Required by qwen-tts (pinned)
 accelerate>=1.12.0                # Required by qwen-tts
 
+# IndexTTS-2: NOT on PyPI. Installed from git in install.bat/install.sh:
+#   pip install --no-deps git+https://github.com/index-tts/index-tts.git
+# IndexTTS-2 runtime dependencies (installed with --no-deps, so we list them):
+sentencepiece>=0.2.0                # Required by IndexTTS-2
+matplotlib>=3.8.0                   # Required by IndexTTS-2
+
 # --- Audio processing ---
 soundfile>=0.12.1
 numpy>=1.24.0,<2.0.0

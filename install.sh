@@ -115,6 +115,19 @@ else
     fi
 fi
 
+# IndexTTS-2: not on PyPI, install from git
+echo ""
+info "Installing IndexTTS-2 from git (not on PyPI)..."
+pip install --no-deps git+https://github.com/index-tts/index-tts.git 2>/dev/null
+if [ $? -eq 0 ]; then
+    ok "IndexTTS-2 installed"
+else
+    warn "Failed to install IndexTTS-2. Voice cloning with IndexTTS-2 will be unavailable."
+    warn "Try manually: pip install --no-deps git+https://github.com/index-tts/index-tts.git"
+fi
+echo ""
+info "IndexTTS-2 model weights will be auto-downloaded on first use (~24GB)."
+
 # =============================================================================
 # 4. Verify Key Imports
 # =============================================================================
@@ -123,7 +136,7 @@ info "Verifying critical imports..."
 python3 -c "
 import sys, importlib
 modules = [
-    'fastapi', 'uvicorn', 'kokoro', 'qwen_tts', 'chatterbox',
+    'fastapi', 'uvicorn', 'kokoro', 'qwen_tts', 'chatterbox', 'indextts',
     'torch', 'torchaudio', 'transformers', 'omegaconf', 'perth', 'dicta_onnx',
     'soundfile', 'librosa', 'spacy', 'PyPDF2', 'fitz',
 ]

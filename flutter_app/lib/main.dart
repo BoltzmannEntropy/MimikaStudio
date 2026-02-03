@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
-import 'screens/voice_clone_screen.dart';
 import 'screens/quick_tts_screen.dart';
+import 'screens/qwen3_clone_screen.dart';
+import 'screens/chatterbox_clone_screen.dart';
+import 'screens/indextts2_screen.dart';
 import 'screens/pdf_reader_screen.dart';
 import 'screens/mcp_endpoints_screen.dart';
+import 'screens/models_dialog.dart';
 import 'services/api_service.dart';
 
 void main() {
@@ -202,12 +205,20 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 4,
+      length: 6,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
           title: _buildSystemStatsBar(),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.model_training, size: 22),
+              onPressed: () => showDialog(
+                context: context,
+                builder: (context) => const ModelsDialog(),
+              ),
+              tooltip: 'Models',
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Row(
@@ -229,11 +240,14 @@ class _MainScreenState extends State<MainScreen> {
             ),
           ],
           bottom: const TabBar(
+            isScrollable: true,
             labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             unselectedLabelStyle: TextStyle(fontSize: 14),
             tabs: [
               Tab(icon: Icon(Icons.volume_up, size: 28), text: 'TTS (Kokoro)'),
-              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Voice Clone (Qwen, ChatterBox)'),
+              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Qwen3 Clone'),
+              Tab(icon: Icon(Icons.mic, size: 28), text: 'Chatterbox'),
+              Tab(icon: Icon(Icons.auto_awesome, size: 28), text: 'IndexTTS-2'),
               Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
               Tab(icon: Icon(Icons.hub, size: 28), text: 'MCP & API'),
             ],
@@ -242,7 +256,9 @@ class _MainScreenState extends State<MainScreen> {
         body: const TabBarView(
           children: [
             QuickTtsScreen(),
-            VoiceCloneScreen(),
+            Qwen3CloneScreen(),
+            ChatterboxCloneScreen(),
+            IndexTTS2Screen(),
             PdfReaderScreen(),
             McpEndpointsScreen(),
           ],
