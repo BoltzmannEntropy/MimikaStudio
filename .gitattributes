@@ -1,0 +1,8 @@
+# Force LF line endings for shell scripts and Python files
+*.sh text eol=lf
+*.py text eol=lf
+bin/mimika text eol=lf
+bin/mimikactl text eol=lf
+
+# Auto-detect for everything else
+* text=auto
