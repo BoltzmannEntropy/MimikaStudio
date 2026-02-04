@@ -1,16 +1,20 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
+  <br><br>
+  <code>NEW</code>&nbsp;&nbsp;macOS · Windows · Web · CUDA · Apple MPS
+  <br><br>
+  <h1>Clone any voice <i>in seconds</i></h1>
+  <p>Local-first voice cloning, text-to-speech, PDF reader, and audiobook creator.<br>Runs on macOS (MPS), Windows (CUDA), and Web. Tested on RTX 4090 &amp; 5090.</p>
   <br>
-  <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/">Website</a>
+  <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
+  <br><br>
+  macOS (MPS) · Windows (CUDA) · Web UI · Free &amp; Open Source
+  <br><br>
 </div>
-
-# MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web)
-
-> **Optimized for Apple Silicon (M1/M2/M3/M4) with MPS acceleration** | **Runs locally, no cloud required**
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first desktop application optimized for **Apple Silicon and MPS (Metal Performance Shaders)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using four voice cloning engines (Qwen3-TTS, Chatterbox, IndexTTS-2), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+A local-first application for **macOS (MPS), Windows (CUDA), and Web**, with four core capabilities: **clone any voice** from just 3 seconds of audio using four voice cloning engines (Qwen3-TTS, Chatterbox, IndexTTS-2), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
 
 ### Supported Models
 
