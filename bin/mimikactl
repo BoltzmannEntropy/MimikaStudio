@@ -104,13 +104,13 @@ start_backend() {
     # Ensure backend deps match pinned versions (notably transformers)
     if ! python3 - <<'PY'
 import sys
-import pkg_resources as pr
+from packaging.version import parse as parse_version
 try:
     import transformers
-    v = pr.parse_version(transformers.__version__)
+    v = parse_version(transformers.__version__)
 except Exception:
     sys.exit(1)
-target = pr.parse_version("4.57.3")
+target = parse_version("4.57.3")
 sys.exit(0 if v == target else 1)
 PY
     then

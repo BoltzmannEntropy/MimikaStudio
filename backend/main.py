@@ -1,3 +1,8 @@
+# Suppress pkg_resources deprecation warning from third-party packages (perth, etc.)
+# This must be done before any imports that might trigger the warning
+import warnings
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
