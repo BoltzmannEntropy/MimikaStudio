@@ -111,9 +111,10 @@ The script will:
 2. Create a Python venv in the project root (`./venv`)
 3. Install **all** Python dependencies from the root `requirements.txt`
 4. Install `chatterbox-tts` with `--no-deps` (its runtime deps are already in `requirements.txt`)
-5. Verify that every critical import works
-6. Initialize the SQLite database
-7. Set up Flutter (if installed)
+5. Download the **Dicta ONNX** Hebrew diacritizer model (~1.1 GB) for Chatterbox Hebrew TTS (skip with `SKIP_DICTA=1`)
+6. Verify that every critical import works
+7. Initialize the SQLite database
+8. Set up Flutter (if installed)
 
 Note: `./install.sh` creates the Python virtual environment and installs large dependencies, so the first run can take a few minutes.
 
@@ -162,6 +163,14 @@ Models auto-download on first use (~3 GB total). To pre-download:
 ```bash
 ./bin/mimikactl models download kokoro   # ~300 MB
 ./bin/mimikactl models download qwen3    # ~4 GB for 1.7B
+```
+
+The **Dicta ONNX** Hebrew diacritizer (~1.1 GB) is downloaded by `install.sh` automatically. If you skipped it (`SKIP_DICTA=1`) and need Hebrew TTS later, run:
+
+```bash
+mkdir -p backend/models/dicta-onnx
+curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
+  https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx
 ```
 
 ### Verify Installation
@@ -554,6 +563,14 @@ Chatterbox adds multilingual voice cloning from a reference audio prompt. It use
 - Exaggeration (style intensity)
 - Seed (reproducibility)
 
+**Hebrew TTS**: Chatterbox Hebrew requires the **Dicta ONNX** diacritizer model (`dicta-1.0.onnx`, ~1.1 GB) which adds vowel marks (nikud) to unvocalized Hebrew text before synthesis. Without it, Hebrew output quality is severely degraded. The model is downloaded automatically by `install.sh` (skip with `SKIP_DICTA=1`) and stored at `backend/models/dicta-onnx/dicta-1.0.onnx`. To download manually:
+
+```bash
+mkdir -p backend/models/dicta-onnx
+curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
+  https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx
+```
+
 **Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations.
 
 ![Chatterbox Voice Clone](assets/07-chatterbox-voice-clone.png)
@@ -826,12 +843,13 @@ MimikaStudio/
 │   │   ├── openai_provider.py
 │   │   └── codex_provider.py
 │   ├── models/
-│   │   └── registry.py      # Model registry (all engines)
+│   │   ├── registry.py      # Model registry (all engines)
+│   │   └── dicta-onnx/      # Hebrew diacritizer (~1.1 GB, downloaded by install.sh)
 │   ├── tests/               # Comprehensive test suite
 │   └── data/
 │       ├── samples/         # Shipped voice samples (shared across engines)
 │       │   ├── qwen3_voices/      # Natasha, Suzan
-│       │   ├── chatterbox_voices/ # Natasha, Suzan
+│       │   ├── chatterbox_voices/ # Natasha, Suzan, Hebrew_Natasha
 │       │   ├── indextts2_voices/
 │       │   └── kokoro/            # Pre-generated Kokoro samples
 │       ├── user_voices/     # User uploads (git-ignored, shared across engines)
@@ -918,6 +936,16 @@ source venv/bin/activate
 pip install resemble-perth omegaconf conformer diffusers pyloudnorm pykakasi spacy-pkuseg
 pip install --no-deps chatterbox-tts==0.1.6
 ```
+
+**Hebrew TTS sounds garbled or robotic**
+
+The Dicta ONNX diacritizer model is missing. Chatterbox requires it to add vowel marks (nikud) to Hebrew text. Download it:
+```bash
+mkdir -p backend/models/dicta-onnx
+curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
+  https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx
+```
+Then restart the backend. You should see `[Chatterbox] Hebrew diacritizer loaded` in the logs.
 
 **"spaCy not available" (warning, not error)**
 ```bash
@@ -1012,6 +1040,7 @@ MIT License
 - [Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) - 3-second voice cloning with CustomVoice
 - [Kokoro TTS](https://github.com/hexgrad/kokoro) - Fast, high-quality English TTS
 - [Chatterbox](https://github.com/resemble-ai/chatterbox) - Multilingual voice cloning
+- [Dicta ONNX](https://github.com/thewh1teagle/dicta-onnx) - Hebrew diacritization for Chatterbox TTS
 - [IndexTTS-2](https://github.com/IndexTeam/IndexTTS) - High-quality voice cloning
 - [Flutter](https://flutter.dev) - Cross-platform UI framework
 - [FastAPI](https://fastapi.tiangolo.com) - Python API framework
