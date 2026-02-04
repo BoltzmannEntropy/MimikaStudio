@@ -1,6 +1,7 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br>
+  <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/">Website</a>
 </div>
 
 # MimikaStudio - Voice Cloning, TTS & Audiobook Creator (macOS + Web)
