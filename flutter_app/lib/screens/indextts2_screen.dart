@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -159,16 +159,20 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.audio,
       allowMultiple: false,
+      withData: true,
     );
 
-    if (result != null && result.files.single.path != null) {
+    if (result != null && result.files.single.bytes != null) {
+      final fileBytes = result.files.single.bytes!;
+      final fileName = result.files.single.name;
       final dialogResult = await _showUploadDialog();
       if (dialogResult != null) {
         setState(() => _isUploading = true);
         try {
           await _api.uploadIndexTTS2Voice(
             dialogResult['name']!,
-            File(result.files.single.path!),
+            fileBytes,
+            fileName,
             dialogResult['transcript'] ?? '',
           );
           await _loadData();

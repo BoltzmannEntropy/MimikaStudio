@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
@@ -198,14 +197,14 @@ class ApiService {
     throw Exception('Failed to generate Qwen3 audio: ${response.body}');
   }
 
-  Future<void> uploadQwen3Voice(String name, File file, String transcript) async {
+  Future<void> uploadQwen3Voice(String name, Uint8List fileBytes, String fileName, String transcript) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/qwen3/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
 
     final response = await request.send();
     if (response.statusCode != 200) {
@@ -221,15 +220,15 @@ class ApiService {
     }
   }
 
-  Future<void> updateQwen3Voice(String name, {String? newName, String? transcript, File? file}) async {
+  Future<void> updateQwen3Voice(String name, {String? newName, String? transcript, Uint8List? fileBytes, String? fileName}) async {
     var request = http.MultipartRequest(
       'PUT',
       Uri.parse('$baseUrl/api/qwen3/voices/$name'),
     );
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
-    if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    if (fileBytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
     }
 
     final response = await request.send();
@@ -305,14 +304,14 @@ class ApiService {
     throw Exception('Failed to generate Chatterbox audio: ${response.body}');
   }
 
-  Future<void> uploadChatterboxVoice(String name, File file, String transcript) async {
+  Future<void> uploadChatterboxVoice(String name, Uint8List fileBytes, String fileName, String transcript) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/chatterbox/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
 
     final response = await request.send();
     if (response.statusCode != 200) {
@@ -333,7 +332,8 @@ class ApiService {
     String name, {
     String? newName,
     String? transcript,
-    File? file,
+    Uint8List? fileBytes,
+    String? fileName,
   }) async {
     var request = http.MultipartRequest(
       'PUT',
@@ -341,8 +341,8 @@ class ApiService {
     );
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
-    if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    if (fileBytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
     }
 
     final response = await request.send();
@@ -408,14 +408,14 @@ class ApiService {
     throw Exception('Failed to generate IndexTTS-2 audio: ${response.body}');
   }
 
-  Future<void> uploadIndexTTS2Voice(String name, File file, String transcript) async {
+  Future<void> uploadIndexTTS2Voice(String name, Uint8List fileBytes, String fileName, String transcript) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/indextts2/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
 
     final response = await request.send();
     if (response.statusCode != 200) {
@@ -436,7 +436,8 @@ class ApiService {
     String name, {
     String? newName,
     String? transcript,
-    File? file,
+    Uint8List? fileBytes,
+    String? fileName,
   }) async {
     var request = http.MultipartRequest(
       'PUT',
@@ -444,8 +445,8 @@ class ApiService {
     );
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
-    if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+    if (fileBytes != null) {
+      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
     }
 
     final response = await request.send();
