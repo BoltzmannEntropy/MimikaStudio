@@ -295,7 +295,7 @@ section "API TESTS"
 
 # Check if backend is running
 subsection "Checking for Running Backend"
-if curl -s --connect-timeout 2 http://localhost:8000/health > /dev/null 2>&1; then
+if curl -s --connect-timeout 2 http://localhost:8000/api/health > /dev/null 2>&1; then
     log "${GREEN}Backend is already running on port 8000${NC}"
     BACKEND_WAS_RUNNING=1
 else
@@ -311,7 +311,7 @@ else
         # Wait for backend to start
         log "Waiting for backend to be ready..."
         for i in {1..30}; do
-            if curl -s --connect-timeout 1 http://localhost:8000/health > /dev/null 2>&1; then
+            if curl -s --connect-timeout 1 http://localhost:8000/api/health > /dev/null 2>&1; then
                 log "${GREEN}Backend ready after ${i}s${NC}"
                 break
             fi
@@ -324,21 +324,21 @@ fi
 
 # Run API tests
 subsection "Health Check"
-log "$ curl http://localhost:8000/health"
-health_response=$(curl -s --connect-timeout 5 http://localhost:8000/health 2>&1)
+log "$ curl http://localhost:8000/api/health"
+health_response=$(curl -s --connect-timeout 5 http://localhost:8000/api/health 2>&1)
 if [ $? -eq 0 ]; then
     log "${GREEN}Response:${NC} $health_response"
 else
     log "${RED}FAILED:${NC} $health_response"
 fi
 
-subsection "API Root"
-log "$ curl http://localhost:8000/"
-root_response=$(curl -s --connect-timeout 5 http://localhost:8000/ 2>&1)
+subsection "System Info"
+log "$ curl http://localhost:8000/api/system/info"
+sysinfo_response=$(curl -s --connect-timeout 5 http://localhost:8000/api/system/info 2>&1)
 if [ $? -eq 0 ]; then
-    log "${GREEN}Response:${NC} $root_response"
+    log "${GREEN}Response:${NC} $sysinfo_response"
 else
-    log "${RED}FAILED:${NC} $root_response"
+    log "${RED}FAILED:${NC} $sysinfo_response"
 fi
 
 subsection "OpenAPI Docs"
@@ -349,40 +349,56 @@ else
     log "${RED}OpenAPI docs NOT available${NC}"
 fi
 
-subsection "List Voices"
-log "$ curl http://localhost:8000/voices"
-voices_response=$(curl -s --connect-timeout 10 http://localhost:8000/voices 2>&1)
+subsection "Kokoro TTS Voices"
+log "$ curl http://localhost:8000/api/kokoro/voices"
+kokoro_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/kokoro/voices 2>&1)
 if [ $? -eq 0 ]; then
-    # Truncate if too long
-    if [ ${#voices_response} -gt 500 ]; then
-        log "${GREEN}Response (truncated):${NC} ${voices_response:0:500}..."
+    if [ ${#kokoro_response} -gt 500 ]; then
+        log "${GREEN}Response (truncated):${NC} ${kokoro_response:0:500}..."
     else
-        log "${GREEN}Response:${NC} $voices_response"
+        log "${GREEN}Response:${NC} $kokoro_response"
     fi
 else
-    log "${RED}FAILED:${NC} $voices_response"
+    log "${RED}FAILED:${NC} $kokoro_response"
 fi
 
-subsection "List Characters"
-log "$ curl http://localhost:8000/characters"
-chars_response=$(curl -s --connect-timeout 10 http://localhost:8000/characters 2>&1)
+subsection "Qwen3 TTS Voices"
+log "$ curl http://localhost:8000/api/qwen3/voices"
+qwen_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/qwen3/voices 2>&1)
 if [ $? -eq 0 ]; then
-    if [ ${#chars_response} -gt 500 ]; then
-        log "${GREEN}Response (truncated):${NC} ${chars_response:0:500}..."
+    if [ ${#qwen_response} -gt 500 ]; then
+        log "${GREEN}Response (truncated):${NC} ${qwen_response:0:500}..."
     else
-        log "${GREEN}Response:${NC} $chars_response"
+        log "${GREEN}Response:${NC} $qwen_response"
     fi
 else
-    log "${RED}FAILED:${NC} $chars_response"
+    log "${RED}FAILED:${NC} $qwen_response"
 fi
 
-subsection "TTS Engines Status"
-log "$ curl http://localhost:8000/tts/engines"
-engines_response=$(curl -s --connect-timeout 10 http://localhost:8000/tts/engines 2>&1)
+subsection "Chatterbox TTS Voices"
+log "$ curl http://localhost:8000/api/chatterbox/voices"
+chatterbox_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/chatterbox/voices 2>&1)
 if [ $? -eq 0 ]; then
-    log "${GREEN}Response:${NC} $engines_response"
+    if [ ${#chatterbox_response} -gt 500 ]; then
+        log "${GREEN}Response (truncated):${NC} ${chatterbox_response:0:500}..."
+    else
+        log "${GREEN}Response:${NC} $chatterbox_response"
+    fi
 else
-    log "${RED}FAILED:${NC} $engines_response"
+    log "${RED}FAILED:${NC} $chatterbox_response"
+fi
+
+subsection "Custom Voices"
+log "$ curl http://localhost:8000/api/voices/custom"
+custom_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/voices/custom 2>&1)
+if [ $? -eq 0 ]; then
+    if [ ${#custom_response} -gt 500 ]; then
+        log "${GREEN}Response (truncated):${NC} ${custom_response:0:500}..."
+    else
+        log "${GREEN}Response:${NC} $custom_response"
+    fi
+else
+    log "${RED}FAILED:${NC} $custom_response"
 fi
 
 # Stop backend if we started it
