@@ -430,7 +430,57 @@ if command -v lsof &> /dev/null; then
 fi
 
 # =============================================================================
-# 8. Environment Variables
+# 8. Runtime Logs
+# =============================================================================
+section "RUNTIME LOGS"
+
+LOG_DIR="$ROOT_DIR/.logs"
+RUNS_LOG_DIR="$ROOT_DIR/runs/logs"
+
+subsection "Flutter Log"
+FLUTTER_LOG="$LOG_DIR/flutter.log"
+if [ -f "$FLUTTER_LOG" ]; then
+    log "${GREEN}Flutter log exists${NC}: $FLUTTER_LOG"
+    log "Last 50 lines:"
+    log "----------------------------------------"
+    tail -50 "$FLUTTER_LOG" 2>/dev/null | while IFS= read -r line; do
+        log "$line"
+    done
+    log "----------------------------------------"
+else
+    log "${YELLOW}Flutter log not found${NC} (Flutter may not have been started yet)"
+fi
+
+subsection "Backend Log"
+BACKEND_LOG="$LOG_DIR/backend.log"
+if [ -f "$BACKEND_LOG" ]; then
+    log "${GREEN}Backend log exists${NC}: $BACKEND_LOG"
+    log "Last 50 lines:"
+    log "----------------------------------------"
+    tail -50 "$BACKEND_LOG" 2>/dev/null | while IFS= read -r line; do
+        log "$line"
+    done
+    log "----------------------------------------"
+else
+    log "${YELLOW}Backend log not found${NC}"
+fi
+
+subsection "MCP Server Log"
+MCP_LOG="$RUNS_LOG_DIR/mcp_server.log"
+if [ -f "$MCP_LOG" ]; then
+    log "${GREEN}MCP server log exists${NC}: $MCP_LOG"
+    log "Last 50 lines:"
+    log "----------------------------------------"
+    tail -50 "$MCP_LOG" 2>/dev/null | while IFS= read -r line; do
+        log "$line"
+    done
+    log "----------------------------------------"
+else
+    log "${YELLOW}MCP server log not found${NC}"
+fi
+
+# =============================================================================
+# 9. Environment Variables
 # =============================================================================
 section "ENVIRONMENT VARIABLES"
 
@@ -446,7 +496,7 @@ for var in PATH PYTHONPATH VIRTUAL_ENV HOMEBREW_PREFIX DYLD_LIBRARY_PATH; do
 done
 
 # =============================================================================
-# 9. Summary
+# 10. Summary
 # =============================================================================
 section "SUMMARY"
 
