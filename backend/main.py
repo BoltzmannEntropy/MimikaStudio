@@ -19,6 +19,7 @@ import uuid
 import soundfile as sf
 
 from database import init_db, seed_db, get_connection
+from version import VERSION, VERSION_NAME
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
 from tts.chatterbox_engine import get_chatterbox_engine, ChatterboxParams
@@ -109,7 +110,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MimikaStudio API",
     description="Local-first Voice Cloning with Qwen3-TTS and Kokoro",
-    version="1.0.0",
+    version=VERSION,
     lifespan=lifespan
 )
 
