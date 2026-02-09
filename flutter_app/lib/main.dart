@@ -4,9 +4,11 @@ import 'screens/qwen3_clone_screen.dart';
 import 'screens/chatterbox_clone_screen.dart';
 import 'screens/indextts2_screen.dart';
 import 'screens/pdf_reader_screen.dart';
-import 'screens/mcp_endpoints_screen.dart';
-import 'screens/models_dialog.dart';
+import 'screens/models_screen.dart';
+import 'screens/settings_screen.dart';
+import 'screens/about_screen.dart';
 import 'services/api_service.dart';
+import 'version.dart';
 
 void main() {
   runApp(const MimikaStudioApp());
@@ -205,20 +207,12 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 6,
+      length: 8,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
           title: _buildSystemStatsBar(),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.model_training, size: 22),
-              onPressed: () => showDialog(
-                context: context,
-                builder: (context) => const ModelsDialog(),
-              ),
-              tooltip: 'Models',
-            ),
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Row(
@@ -235,6 +229,21 @@ class _MainScreenState extends State<MainScreen> {
                       letterSpacing: 0.5,
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'v$appVersion',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -249,7 +258,9 @@ class _MainScreenState extends State<MainScreen> {
               Tab(icon: Icon(Icons.mic, size: 28), text: 'Chatterbox'),
               Tab(icon: Icon(Icons.auto_awesome, size: 28), text: 'IndexTTS-2'),
               Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
-              Tab(icon: Icon(Icons.hub, size: 28), text: 'MCP & API'),
+              Tab(icon: Icon(Icons.model_training, size: 28), text: 'Models'),
+              Tab(icon: Icon(Icons.settings, size: 28), text: 'Settings'),
+              Tab(icon: Icon(Icons.info_outline, size: 28), text: 'About'),
             ],
           ),
         ),
@@ -260,7 +271,9 @@ class _MainScreenState extends State<MainScreen> {
             ChatterboxCloneScreen(),
             IndexTTS2Screen(),
             PdfReaderScreen(),
-            McpEndpointsScreen(),
+            ModelsScreen(),
+            SettingsScreen(),
+            AboutScreen(),
           ],
         ),
       ),
