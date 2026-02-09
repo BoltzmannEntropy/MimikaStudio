@@ -66,6 +66,27 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (sample_id) REFERENCES emma_ipa_samples(id)
         );
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS license_info (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            license_key TEXT,
+            email TEXT,
+            activated_at TIMESTAMP,
+            last_validated TIMESTAMP,
+            is_valid INTEGER DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS trial_info (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP
+        );
     """)
     conn.commit()
     conn.close()
@@ -154,6 +175,18 @@ Fr**awm** this pur-SPEK-tiv, em-BR**AY**ST by th**ə** "NY**OO** left"—**az** 
     cursor.executemany(
         "INSERT OR IGNORE INTO emma_ipa_samples (id, title, input_text, audio_file, is_default, version1_ipa, version2_ipa) VALUES (?, ?, ?, ?, ?, ?, ?)",
         additional_samples
+    )
+
+    # Seed default settings
+    default_settings = [
+        ("output_folder", str(Path.home() / "MimikaStudio" / "outputs")),
+        ("theme", "system"),
+        ("auto_update", "true"),
+        ("update_frequency", "weekly"),
+    ]
+    cursor.executemany(
+        "INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)",
+        default_settings
     )
 
     conn.commit()
