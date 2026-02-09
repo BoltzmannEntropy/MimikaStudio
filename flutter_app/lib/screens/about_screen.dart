@@ -12,6 +12,14 @@ class AboutScreen extends StatelessWidget {
   static const String _issuesUrl =
       'https://github.com/BoltzmannEntropy/MimikaStudio/issues';
 
+  // TTS Engine URLs
+  static const Map<String, String> _engineUrls = {
+    'Kokoro TTS': 'https://github.com/hexgrad/kokoro',
+    'Qwen3-TTS': 'https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base',
+    'Chatterbox': 'https://huggingface.co/ResembleAI/chatterbox',
+    'IndexTTS-2': 'https://huggingface.co/IndexTeam/IndexTTS-v2',
+  };
+
   Future<void> _launchUrl(String url) async {
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
@@ -129,16 +137,23 @@ class AboutScreen extends StatelessWidget {
                           fontWeight: FontWeight.bold,
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Click to visit model sources',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
                       const SizedBox(height: 16),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         alignment: WrapAlignment.center,
                         children: [
-                          _buildEngineChip('Kokoro TTS', Colors.blue),
-                          _buildEngineChip('Qwen3-TTS', Colors.teal),
-                          _buildEngineChip('Chatterbox', Colors.orange),
-                          _buildEngineChip('IndexTTS-2', Colors.purple),
+                          _buildEngineChip('Kokoro TTS', Colors.blue, _engineUrls['Kokoro TTS']!),
+                          _buildEngineChip('Qwen3-TTS', Colors.teal, _engineUrls['Qwen3-TTS']!),
+                          _buildEngineChip('Chatterbox', Colors.orange, _engineUrls['Chatterbox']!),
+                          _buildEngineChip('IndexTTS-2', Colors.purple, _engineUrls['IndexTTS-2']!),
                         ],
                       ),
                     ],
@@ -170,8 +185,10 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEngineChip(String label, Color color) {
-    return Chip(
+  Widget _buildEngineChip(String label, Color color, String url) {
+    return ActionChip(
+      onPressed: () => _launchUrl(url),
+      avatar: Icon(Icons.open_in_new, size: 16, color: Colors.white.withValues(alpha: 0.9)),
       label: Text(
         label,
         style: const TextStyle(
@@ -181,6 +198,7 @@ class AboutScreen extends StatelessWidget {
       ),
       backgroundColor: color,
       side: BorderSide.none,
+      tooltip: 'Open $label website',
     );
   }
 }

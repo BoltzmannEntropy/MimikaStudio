@@ -486,6 +486,16 @@ class ApiService {
     throw Exception('Failed to start model download: ${response.body}');
   }
 
+  Future<Map<String, dynamic>> deleteModel(String modelName) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl/api/models/${Uri.encodeComponent(modelName)}'),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to delete model: ${response.body}');
+  }
+
   // ============== LLM Configuration ==============
 
   Future<Map<String, dynamic>> getLlmConfig() async {

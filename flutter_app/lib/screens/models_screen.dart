@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 
 /// Full-page Models screen for managing AI model downloads.
@@ -90,6 +91,63 @@ class _ModelsScreenState extends State<ModelsScreen> {
     }
   }
 
+  Future<void> _deleteModel(String modelName, num? sizeGb) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Model?'),
+        content: Text(
+          'Are you sure you want to delete "$modelName"?\n\n'
+          'This will free up ${sizeGb ?? 0}GB of disk space.\n'
+          'You can re-download it later.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await _api.deleteModel(modelName);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Model "$modelName" deleted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        _loadModels(); // Refresh the list
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete model: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _launchUrl(String url) async {
+    final uri = Uri.parse(url);
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri);
+    }
+  }
+
   IconData _engineIcon(String engine) {
     switch (engine) {
       case 'kokoro':
@@ -127,12 +185,14 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final downloaded = model['downloaded'] as bool? ?? false;
     final modelType = model['model_type'] as String? ?? 'huggingface';
     final description = model['description'] as String? ?? '';
+    final hfRepo = model['hf_repo'] as String? ?? '';
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
 
     final isDownloading = downloadStatus == 'downloading';
     final downloadFailed = downloadStatus == 'failed';
     final color = _engineColor(engine);
+    final hfUrl = hfRepo.isNotEmpty ? 'https://huggingface.co/$hfRepo' : '';
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 0, vertical: 6),
@@ -197,6 +257,31 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ),
                     ),
                   ],
+                  // Source URL
+                  if (hfUrl.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    InkWell(
+                      onTap: () => _launchUrl(hfUrl),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.link, size: 14, color: Colors.blue.shade600),
+                          const SizedBox(width: 4),
+                          Flexible(
+                            child: Text(
+                              hfRepo,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue.shade600,
+                                decoration: TextDecoration.underline,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   if (downloadFailed && downloadError != null) ...[
                     const SizedBox(height: 8),
                     Container(
@@ -226,8 +311,24 @@ class _ModelsScreenState extends State<ModelsScreen> {
                     ),
                   ],
                   const SizedBox(height: 12),
-                  // Status widget
-                  _buildStatusWidget(downloaded, isDownloading, downloadFailed, modelType, name),
+                  // Status and actions row
+                  Row(
+                    children: [
+                      _buildStatusWidget(downloaded, isDownloading, downloadFailed, modelType, name),
+                      if (downloaded && modelType != 'pip') ...[
+                        const SizedBox(width: 12),
+                        IconButton.outlined(
+                          onPressed: () => _deleteModel(name, sizeGb),
+                          icon: const Icon(Icons.delete_outline, size: 20),
+                          tooltip: 'Delete model',
+                          style: IconButton.styleFrom(
+                            foregroundColor: Colors.red,
+                            side: BorderSide(color: Colors.red.shade300),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
                 ],
               ),
             ),

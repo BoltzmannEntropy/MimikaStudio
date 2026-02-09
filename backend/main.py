@@ -1327,6 +1327,47 @@ async def model_download(model_name: str):
     }
 
 
+@app.delete("/api/models/{model_name}")
+async def model_delete(model_name: str):
+    """Delete a downloaded HuggingFace model to free disk space."""
+    registry = ModelRegistry()
+    model = registry.get_model(model_name)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
+
+    if model.model_type == "pip":
+        raise HTTPException(
+            status_code=400,
+            detail="Pip packages must be uninstalled via pip uninstall, not deleted here.",
+        )
+
+    if not model.hf_repo:
+        raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
+
+    # Check if downloaded
+    if not registry.is_model_downloaded(model):
+        raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not downloaded")
+
+    # Delete the model cache directory
+    cache_dir = registry.models_dir / f"models--{model.hf_repo.replace('/', '--')}"
+    if cache_dir.exists():
+        import shutil
+        try:
+            shutil.rmtree(cache_dir)
+            # Clear download status if any
+            if model_name in _download_status:
+                del _download_status[model_name]
+            return {
+                "message": f"Model '{model_name}' deleted successfully",
+                "model": model_name,
+                "freed_gb": model.size_gb,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
+    else:
+        raise HTTPException(status_code=404, detail=f"Model cache directory not found")
+
+
 # ============== Audiobook Generation Endpoints ==============
 # Enhanced with features inspired by audiblez, pdf-narrator, and abogen
 
