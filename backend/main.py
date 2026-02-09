@@ -29,6 +29,7 @@ from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
 from language.ipa_generator import generate_ipa_transcription, get_sample_text as get_ipa_sample_text
 from llm.factory import load_config as load_llm_config, save_config as save_llm_config, get_available_providers
+from settings_service import get_all_settings, get_setting, set_setting, get_output_folder, set_output_folder
 
 # Request models
 class KokoroRequest(BaseModel):
@@ -92,6 +93,10 @@ class IPAGenerateRequest(BaseModel):
     text: str
     provider: Optional[str] = None
     model: Optional[str] = None
+
+class SettingsUpdateRequest(BaseModel):
+    key: str
+    value: str
 
 
 # Lifespan context manager
@@ -2078,6 +2083,39 @@ async def save_ipa_output(
     conn.close()
 
     return {"id": output_id, "message": "Output saved successfully"}
+
+# ============== Settings ==============
+
+@app.get("/api/settings")
+async def api_get_settings():
+    """Get all application settings."""
+    return get_all_settings()
+
+@app.get("/api/settings/output-folder")
+async def api_get_output_folder():
+    """Get the output folder path."""
+    return {"path": get_output_folder()}
+
+@app.put("/api/settings/output-folder")
+async def api_set_output_folder(path: str):
+    """Set the output folder path."""
+    success = set_output_folder(path)
+    return {"success": success, "path": path}
+
+@app.get("/api/settings/{key}")
+async def api_get_setting(key: str):
+    """Get a specific setting."""
+    value = get_setting(key)
+    if value is None:
+        raise HTTPException(status_code=404, detail=f"Setting '{key}' not found")
+    return {"key": key, "value": value}
+
+@app.put("/api/settings")
+async def api_update_setting(request: SettingsUpdateRequest):
+    """Update a setting."""
+    set_setting(request.key, request.value)
+    return {"key": request.key, "value": request.value}
+
 
 if __name__ == "__main__":
     import uvicorn
