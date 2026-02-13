@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
 
 class IndexTTS2Screen extends StatefulWidget {
@@ -15,6 +15,7 @@ class IndexTTS2Screen extends StatefulWidget {
 
 class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
   final ApiService _api = ApiService();
+  final SettingsService _settingsService = SettingsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final TextEditingController _textController = TextEditingController();
 
@@ -30,6 +31,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
   bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
+  String _outputFolder = 'backend/outputs';
   String? _error;
 
   // Audio library state
@@ -47,6 +49,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     super.initState();
     _textController.text =
         'For many, the experience of Vietnam had a radicalizing effect, leading them to conclude that US military intervention was not a well-intentioned mistake by policymakers, but part of a consistent effort to preserve American political, economic, and military domination globally, largely in service of corporate profits.';
+    _loadOutputFolder();
     _loadData();
     _loadAudioFiles();
   }
@@ -63,8 +66,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     setState(() => _isLoadingAudioFiles = true);
     try {
       final files = await _api.getVoiceCloneAudioFiles();
-      final indexFiles =
-          files.where((f) => (f['engine'] as String?) == 'indextts2').toList();
+      final indexFiles = files
+          .where((f) => (f['engine'] as String?) == 'indextts2')
+          .toList();
       if (mounted) {
         setState(() {
           _audioFiles = indexFiles;
@@ -74,6 +78,16 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     } catch (e) {
       debugPrint('Failed to load audio files: $e');
       if (mounted) setState(() => _isLoadingAudioFiles = false);
+    }
+  }
+
+  Future<void> _loadOutputFolder() async {
+    try {
+      final folder = await _settingsService.getOutputFolder();
+      if (!mounted) return;
+      setState(() => _outputFolder = folder);
+    } catch (_) {
+      // Keep fallback display path if settings API is unavailable.
     }
   }
 
@@ -130,7 +144,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
       );
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      final filename = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : null;
 
       setState(() {
         _audioUrl = audioUrl;
@@ -178,14 +194,18 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           await _loadData();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Voice "${dialogResult['name']}" uploaded successfully')),
+              SnackBar(
+                content: Text(
+                  'Voice "${dialogResult['name']}" uploaded successfully',
+                ),
+              ),
             );
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to upload: $e')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
           }
         } finally {
           setState(() => _isUploading = false);
@@ -268,15 +288,15 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
         await _api.deleteIndexTTS2Voice(name);
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Voice "$name" deleted')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Voice "$name" deleted')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -301,7 +321,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             TextField(
               controller: transcriptController,
               maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Transcript (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Transcript (optional)',
+              ),
             ),
           ],
         ),
@@ -334,15 +356,15 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
         );
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Voice updated')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to update: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
         }
       }
     }
@@ -363,8 +385,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
       if (audioUrl == null || audioUrl.isEmpty) {
         throw Exception('Preview audio not available');
       }
-      final playUrl =
-          audioUrl.startsWith('http') ? audioUrl : '${ApiService.baseUrl}$audioUrl';
+      final playUrl = audioUrl.startsWith('http')
+          ? audioUrl
+          : '${ApiService.baseUrl}$audioUrl';
 
       await _playerSubscription?.cancel();
       _playerSubscription = null;
@@ -395,9 +418,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Preview failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
       }
     }
   }
@@ -462,9 +485,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           _playingAudioId = null;
           _isAudioPaused = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play: $e')));
       }
     }
   }
@@ -527,9 +550,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
         _loadAudioFiles();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -569,13 +592,20 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                     padding: const EdgeInsets.all(10),
                     child: Row(
                       children: [
-                        Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700, size: 20),
+                        Icon(
+                          Icons.warning_amber_rounded,
+                          color: Colors.orange.shade700,
+                          size: 20,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'IndexTTS and Qwen3-TTS have a transformers version conflict. '
                             'A compatibility shim is applied at runtime, but some edge cases may not work.',
-                            style: TextStyle(fontSize: 12, color: Colors.orange.shade900),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.orange.shade900,
+                            ),
                           ),
                         ),
                       ],
@@ -605,26 +635,30 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                         value: _speed,
                         min: 0.5,
                         max: 2.0,
-                        divisions: 15,
-                        label: '${_speed.toStringAsFixed(1)}x',
+                        divisions: 150,
+                        label: '${_speed.toStringAsFixed(2)}x',
                         onChanged: (value) => setState(() => _speed = value),
                       ),
                     ),
-                    Text('${_speed.toStringAsFixed(1)}x'),
+                    Text('${_speed.toStringAsFixed(2)}x'),
                   ],
                 ),
                 const SizedBox(height: 8),
                 CheckboxListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Unload model after generation',
-                      style: TextStyle(fontSize: 12)),
+                  title: const Text(
+                    'Unload model after generation',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   value: _unloadAfter,
                   onChanged: (v) => setState(() => _unloadAfter = v ?? false),
                 ),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: (_isGenerating || _selectedVoice == null ||
+                  onPressed:
+                      (_isGenerating ||
+                          _selectedVoice == null ||
                           _textController.text.isEmpty)
                       ? null
                       : _generate,
@@ -635,7 +669,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.auto_awesome),
-                  label: Text(_isGenerating ? 'Generating...' : 'Generate Speech'),
+                  label: Text(
+                    _isGenerating ? 'Generating...' : 'Generate Speech',
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (_error != null)
@@ -643,7 +679,10 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                     color: Colors.red.shade100,
                     child: Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
                     ),
                   ),
                 if (_audioUrl != null) ...[
@@ -652,11 +691,15 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
                         children: [
-                          Icon(Icons.folder_open, size: 16, color: Colors.grey.shade600),
+                          Icon(
+                            Icons.folder_open,
+                            size: 16,
+                            color: Colors.grey.shade600,
+                          ),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Output: backend/outputs/$_audioFilename',
+                              'Output: $_outputFolder/$_audioFilename',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade600,
@@ -716,8 +759,14 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                 spacing: 12,
                 runSpacing: 4,
                 children: [
-                  _buildInfoChip(Icons.memory, _systemInfo!['device'] ?? 'Unknown'),
-                  _buildInfoChip(Icons.code, 'Python ${_systemInfo!['python_version'] ?? '?'}'),
+                  _buildInfoChip(
+                    Icons.memory,
+                    _systemInfo!['device'] ?? 'Unknown',
+                  ),
+                  _buildInfoChip(
+                    Icons.code,
+                    'Python ${_systemInfo!['python_version'] ?? '?'}',
+                  ),
                   _buildInfoChip(Icons.graphic_eq, 'SR 24000'),
                 ],
               ),
@@ -729,21 +778,30 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
   }
 
   Widget _buildVoiceSection() {
-    final defaults = _voices
-        .where((voice) => (voice['source'] as String?) == 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
-    final users = _voices
-        .where((voice) => (voice['source'] as String?) != 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    final defaults =
+        _voices
+            .where((voice) => (voice['source'] as String?) == 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
+    final users =
+        _voices
+            .where((voice) => (voice['source'] as String?) != 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Text('Voice Samples:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Voice Samples:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -766,7 +824,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.upload),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Voice (WAV only)'),
+              label: Text(
+                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
+              ),
             ),
           ],
         ),
@@ -780,7 +840,10 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                 children: [
                   Icon(Icons.mic, size: 48, color: Colors.deepPurple),
                   SizedBox(height: 8),
-                  Text('No voice samples yet', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    'No voice samples yet',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   SizedBox(height: 4),
                   Text(
                     'Upload a WAV clip to clone a voice with IndexTTS-2',
@@ -793,13 +856,19 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           )
         else ...[
           if (defaults.isNotEmpty) ...[
-            const Text('Default Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Default Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(defaults, showDefaultBadge: true),
             const SizedBox(height: 12),
           ],
           if (users.isNotEmpty) ...[
-            const Text('Your Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Your Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(users, allowEdit: true),
           ] else ...[
@@ -836,7 +905,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
         final isPreviewing = _previewVoiceName == name;
 
         return Card(
-          color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
           child: ListTile(
             leading: Radio<String>(
               value: name,
@@ -849,24 +920,36 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                 if (showDefaultBadge) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade200,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text('DEFAULT',
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700)),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                   ),
                 ],
               ],
             ),
             subtitle: transcript.isNotEmpty
                 ? Text(
-                    transcript.length > 50 ? '${transcript.substring(0, 50)}...' : transcript,
+                    transcript.length > 50
+                        ? '${transcript.substring(0, 50)}...'
+                        : transcript,
                     style: const TextStyle(fontSize: 12),
                   )
-                : const Text('No transcript',
-                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                : const Text(
+                    'No transcript',
+                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -881,7 +964,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause),
-                  onPressed: (isPreviewing && !_isPreviewPaused) ? _pausePreview : null,
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreview
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 32),
@@ -919,7 +1004,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
       width: 280,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor)),
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
       ),
       child: Column(
         children: [
@@ -927,15 +1014,19 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
                 const Icon(Icons.library_music, size: 20),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('Audio Library',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'Audio Library',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
@@ -950,7 +1041,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
@@ -960,13 +1053,15 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                     value: _libraryPlaybackSpeed,
                     min: 0.5,
                     max: 2.0,
-                    divisions: 15,
-                    label: '${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
+                    divisions: 150,
+                    label: '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
                     onChanged: _setLibraryPlaybackSpeed,
                   ),
                 ),
-                Text('${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
-                    style: const TextStyle(fontSize: 10)),
+                Text(
+                  '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
               ],
             ),
           ),
@@ -974,21 +1069,24 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             child: _isLoadingAudioFiles
                 ? const Center(child: CircularProgressIndicator())
                 : _audioFiles.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text(
-                            'No IndexTTS-2 audio files yet.\nGenerate speech to see it here.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                          ),
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'No IndexTTS-2 audio files yet.\nGenerate speech to see it here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
                         ),
-                      )
-                    : ListView.builder(
-                        itemCount: _audioFiles.length,
-                        itemBuilder: (context, index) =>
-                            _buildAudioFileItem(_audioFiles[index]),
                       ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _audioFiles.length,
+                    itemBuilder: (context, index) =>
+                        _buildAudioFileItem(_audioFiles[index]),
+                  ),
           ),
         ],
       ),
@@ -1006,9 +1104,10 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     final mins = (duration / 60).floor();
     final secs = (duration % 60).round();
     final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final meta = [durationStr, '${sizeMb.toStringAsFixed(1)} MB']
-        .where((part) => part.isNotEmpty)
-        .join(' \u2022 ');
+    final meta = [
+      durationStr,
+      '${sizeMb.toStringAsFixed(1)} MB',
+    ].where((part) => part.isNotEmpty).join(' \u2022 ');
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1024,12 +1123,20 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           ListTile(
             dense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(Icons.audiotrack,
-                color: isThisPlaying ? Theme.of(context).colorScheme.primary : null, size: 20),
-            title: Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500)),
+            leading: Icon(
+              Icons.audiotrack,
+              color: isThisPlaying
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+              size: 20,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline, size: 16),
@@ -1045,7 +1152,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.play_arrow, size: 20),
-                  onPressed: (!isThisPlaying || _isAudioPaused) ? () => _playAudioFile(file) : null,
+                  onPressed: (!isThisPlaying || _isAudioPaused)
+                      ? () => _playAudioFile(file)
+                      : null,
                   tooltip: 'Play',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -1053,7 +1162,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause, size: 20),
-                  onPressed: (isThisPlaying && !_isAudioPaused) ? _pauseAudioPlayback : null,
+                  onPressed: (isThisPlaying && !_isAudioPaused)
+                      ? _pauseAudioPlayback
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,

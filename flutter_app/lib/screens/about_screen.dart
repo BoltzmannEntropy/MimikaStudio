@@ -11,6 +11,12 @@ class AboutScreen extends StatelessWidget {
       'https://github.com/BoltzmannEntropy/MimikaStudio';
   static const String _issuesUrl =
       'https://github.com/BoltzmannEntropy/MimikaStudio/issues';
+  static const String _licenseUrl =
+      'https://boltzmannentropy.github.io/mimikastudio.github.io/license.html';
+  static const String _privacyUrl =
+      'https://boltzmannentropy.github.io/mimikastudio.github.io/privacy.html';
+  static const String _termsUrl =
+      'https://boltzmannentropy.github.io/mimikastudio.github.io/terms.html';
 
   // TTS Engine URLs
   static const Map<String, String> _engineUrls = {
@@ -124,6 +130,52 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
+              // Legal section
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Legal',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Source Code: Business Source License 1.1 (BSL-1.1)\n'
+                        'Binary: Mimika Binary Distribution License',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.4,
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _launchUrl(_licenseUrl),
+                        icon: const Icon(Icons.article_outlined),
+                        label: const Text('License'),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _launchUrl(_privacyUrl),
+                        icon: const Icon(Icons.privacy_tip_outlined),
+                        label: const Text('Privacy Policy'),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.tonalIcon(
+                        onPressed: () => _launchUrl(_termsUrl),
+                        icon: const Icon(Icons.gavel_outlined),
+                        label: const Text('Terms of Service'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
               // Credits section
               Card(
                 child: Padding(
@@ -166,7 +218,7 @@ class AboutScreen extends StatelessWidget {
               const Divider(),
               const SizedBox(height: 16),
               Text(
-                'Licensed under GPL v3.0',
+                'Source: BSL-1.1 | Binary: Mimika Binary Distribution License',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),

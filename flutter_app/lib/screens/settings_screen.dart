@@ -392,7 +392,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         child: ListTile(
                           leading: const Icon(Icons.key),
                           title: const Text('License Status'),
-                          subtitle: const Text('Open Source - MIT License'),
+                          subtitle: const Text(
+                            'Source: BSL-1.1 • Binary: Distribution License',
+                          ),
                           trailing: Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 12,

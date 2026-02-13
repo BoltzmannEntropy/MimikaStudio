@@ -6,5 +6,5 @@ def test_engine_default_device():
     """Test that engine selects appropriate device."""
     engine = Qwen3TTSEngine(model_size="0.6B")
     device, dtype = engine._get_device_and_dtype()
-    # Should return either cuda:0 or cpu
-    assert device in ["cuda:0", "cpu", "mps"]
+    # MLX runtime should report either MLX or CPU fallback.
+    assert device in ["mlx", "cpu"]

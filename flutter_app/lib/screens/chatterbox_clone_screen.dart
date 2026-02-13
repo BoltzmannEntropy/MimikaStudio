@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/model_status_banner.dart';
 
 const Map<String, String> kChatterboxLanguageNames = {
   'en': 'English',
@@ -17,6 +18,7 @@ const Map<String, String> kChatterboxLanguageNames = {
   'pt': 'Portuguese',
   'es': 'Spanish',
   'it': 'Italian',
+  'he': 'Hebrew',
 };
 
 class ChatterboxCloneScreen extends StatefulWidget {
@@ -27,13 +29,20 @@ class ChatterboxCloneScreen extends StatefulWidget {
 }
 
 class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
+  static const String _defaultChatterboxText =
+      'Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? '
+      'and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? '
+      'and if thou doest not well, sin lieth at the door.';
+
   final ApiService _api = ApiService();
+  final SettingsService _settingsService = SettingsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final TextEditingController _textController = TextEditingController();
 
   // Chatterbox state
   List<Map<String, dynamic>> _chatterboxVoices = [];
   List<String> _chatterboxLanguages = [];
+  List<Map<String, dynamic>> _pregeneratedSamples = [];
   String? _selectedChatterboxVoice;
   String _selectedChatterboxLanguage = 'en';
   Map<String, dynamic>? _chatterboxInfo;
@@ -53,6 +62,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
+  String _outputFolder = 'backend/outputs';
   String? _error;
 
   // Audio library state
@@ -64,19 +74,28 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   bool _isPreviewPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  Map<String, dynamic>? _dictaStatus;
+  bool _isDictaDownloading = false;
+  Timer? _dictaPollTimer;
 
   @override
   void initState() {
     super.initState();
-    _textController.text =
-        'For many, the experience of Vietnam had a radicalizing effect, leading them to conclude that US military intervention was not a well-intentioned mistake by policymakers, but part of a consistent effort to preserve American political, economic, and military domination globally, largely in service of corporate profits.';
+    _textController.text = _defaultChatterboxText;
+    _loadOutputFolder();
     _loadData();
+    _loadDictaStatus();
+    _dictaPollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _loadDictaStatus(),
+    );
     _loadAudioFiles();
   }
 
   @override
   void dispose() {
     _playerSubscription?.cancel();
+    _dictaPollTimer?.cancel();
     _audioPlayer.dispose();
     _textController.dispose();
     super.dispose();
@@ -86,8 +105,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     setState(() => _isLoadingAudioFiles = true);
     try {
       final files = await _api.getVoiceCloneAudioFiles();
-      final chatterboxFiles =
-          files.where((f) => (f['engine'] as String?) == 'chatterbox').toList();
+      final chatterboxFiles = files
+          .where((f) => (f['engine'] as String?) == 'chatterbox')
+          .toList();
       if (mounted) {
         setState(() {
           _audioFiles = chatterboxFiles;
@@ -97,6 +117,16 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     } catch (e) {
       debugPrint('Failed to load audio files: $e');
       if (mounted) setState(() => _isLoadingAudioFiles = false);
+    }
+  }
+
+  Future<void> _loadOutputFolder() async {
+    try {
+      final folder = await _settingsService.getOutputFolder();
+      if (!mounted) return;
+      setState(() => _outputFolder = folder);
+    } catch (_) {
+      // Keep fallback display path if settings API is unavailable.
     }
   }
 
@@ -129,10 +159,21 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         debugPrint('Chatterbox voices not available: $e');
       }
 
+      List<Map<String, dynamic>> pregeneratedSamples = [];
+      try {
+        pregeneratedSamples = await _api.getPregeneratedSamples(
+          engine: 'chatterbox',
+        );
+      } catch (e) {
+        debugPrint('Chatterbox pregenerated samples not available: $e');
+      }
+
+      if (!mounted) return;
       setState(() {
         _systemInfo = systemInfo;
         _chatterboxVoices = chatterboxVoices;
         _chatterboxLanguages = chatterboxLanguages;
+        _pregeneratedSamples = pregeneratedSamples;
         _chatterboxInfo = chatterboxInfo;
         if (chatterboxVoices.isNotEmpty) {
           _selectedChatterboxVoice = chatterboxVoices[0]['name'];
@@ -144,6 +185,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -151,10 +193,55 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
   }
 
+  Future<void> _loadDictaStatus() async {
+    try {
+      final status = await _api.getChatterboxDictaStatus();
+      if (!mounted) return;
+      setState(() {
+        _dictaStatus = status;
+        _isDictaDownloading = status['download_status'] == 'downloading';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isDictaDownloading = false);
+    }
+  }
+
+  Future<void> _downloadDicta() async {
+    setState(() => _isDictaDownloading = true);
+    try {
+      final result = await _api.downloadChatterboxDictaModel();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result['message'] as String? ?? 'Dicta download started',
+            ),
+          ),
+        );
+      }
+      await _loadDictaStatus();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isDictaDownloading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to download Dicta model: $e')),
+      );
+    }
+  }
+
   Future<void> _generate() async {
     if (_textController.text.isEmpty) return;
     if (_selectedChatterboxVoice == null) {
       setState(() => _error = 'Please upload a voice sample first');
+      return;
+    }
+    if (_selectedChatterboxLanguage == 'he' &&
+        (_dictaStatus?['installed'] != true)) {
+      setState(
+        () => _error =
+            'Hebrew requires the Dicta model. Download it from the HE language chip.',
+      );
       return;
     }
 
@@ -177,8 +264,11 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       );
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      final filename = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : null;
 
+      if (!mounted) return;
       setState(() {
         _audioUrl = audioUrl;
         _audioFilename = filename;
@@ -195,6 +285,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       await _audioPlayer.play();
       _loadAudioFiles();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isGenerating = false;
@@ -225,18 +316,53 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           await _loadData();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Voice "${dialogResult['name']}" uploaded successfully')),
+              SnackBar(
+                content: Text(
+                  'Voice "${dialogResult['name']}" uploaded successfully',
+                ),
+              ),
             );
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to upload: $e')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
           }
         } finally {
-          setState(() => _isUploading = false);
+          if (mounted) {
+            setState(() => _isUploading = false);
+          }
         }
+      }
+    }
+  }
+
+  Future<void> _playPregeneratedSample(Map<String, dynamic> sample) async {
+    final audioPath = sample['audio_url'] as String?;
+    if (audioPath == null || audioPath.isEmpty) return;
+    final audioUrl = _api.getPregeneratedAudioUrl(audioPath);
+
+    try {
+      await _playerSubscription?.cancel();
+      _playerSubscription = null;
+      await _audioPlayer.stop();
+      if (!mounted) return;
+      setState(() {
+        _audioUrl = audioUrl;
+        _audioFilename = null;
+        _playingAudioId = null;
+        _isAudioPaused = false;
+        _previewVoiceName = null;
+        _isPreviewPaused = false;
+      });
+      await _audioPlayer.setUrl(audioUrl);
+      await _audioPlayer.play();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play sample: $e')));
       }
     }
   }
@@ -314,15 +440,15 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         await _api.deleteChatterboxVoice(name);
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Voice "$name" deleted')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Voice "$name" deleted')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -347,7 +473,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             TextField(
               controller: transcriptController,
               maxLines: 3,
-              decoration: const InputDecoration(labelText: 'Transcript (optional)'),
+              decoration: const InputDecoration(
+                labelText: 'Transcript (optional)',
+              ),
             ),
           ],
         ),
@@ -380,15 +508,15 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         );
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Voice updated')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to update: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
         }
       }
     }
@@ -409,8 +537,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       if (audioUrl == null || audioUrl.isEmpty) {
         throw Exception('Preview audio not available');
       }
-      final playUrl =
-          audioUrl.startsWith('http') ? audioUrl : '${ApiService.baseUrl}$audioUrl';
+      final playUrl = audioUrl.startsWith('http')
+          ? audioUrl
+          : '${ApiService.baseUrl}$audioUrl';
 
       await _playerSubscription?.cancel();
       _playerSubscription = null;
@@ -441,9 +570,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Preview failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
       }
     }
   }
@@ -508,9 +637,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           _playingAudioId = null;
           _isAudioPaused = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play: $e')));
       }
     }
   }
@@ -573,9 +702,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         _loadAudioFiles();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -603,17 +732,33 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
 
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSidebar(),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            primary: false,
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildHeader(),
                 const SizedBox(height: 4),
+                const ModelStatusBanner(
+                  requiredModels: ['Chatterbox Multilingual'],
+                  engineName: 'Chatterbox',
+                  themeColor: Colors.orange,
+                ),
+                if (_pregeneratedSamples.isNotEmpty) ...[
+                  _buildPregeneratedSamplesSection(),
+                  const SizedBox(height: 12),
+                ],
                 _buildLanguageSelector(),
+                if (_selectedChatterboxLanguage == 'he') ...[
+                  const SizedBox(height: 8),
+                  _buildDictaStatusCard(),
+                ],
                 const SizedBox(height: 16),
                 _buildVoiceSection(),
                 const SizedBox(height: 16),
@@ -637,19 +782,21 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                         value: _speed,
                         min: 0.5,
                         max: 2.0,
-                        divisions: 15,
-                        label: '${_speed.toStringAsFixed(1)}x',
+                        divisions: 150,
+                        label: '${_speed.toStringAsFixed(2)}x',
                         onChanged: (value) => setState(() => _speed = value),
                       ),
                     ),
-                    Text('${_speed.toStringAsFixed(1)}x'),
+                    Text('${_speed.toStringAsFixed(2)}x'),
                   ],
                 ),
                 const SizedBox(height: 12),
                 _buildAdvancedPanel(),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: (_isGenerating || _selectedChatterboxVoice == null ||
+                  onPressed:
+                      (_isGenerating ||
+                          _selectedChatterboxVoice == null ||
                           _textController.text.isEmpty)
                       ? null
                       : _generate,
@@ -660,7 +807,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.mic),
-                  label: Text(_isGenerating ? 'Generating...' : 'Generate Speech'),
+                  label: Text(
+                    _isGenerating ? 'Generating...' : 'Generate Speech',
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (_error != null)
@@ -668,7 +817,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                     color: Colors.red.shade100,
                     child: Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
                     ),
                   ),
                 if (_audioUrl != null) ...[
@@ -677,11 +829,15 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
                         children: [
-                          Icon(Icons.folder_open, size: 16, color: Colors.grey.shade600),
+                          Icon(
+                            Icons.folder_open,
+                            size: 16,
+                            color: Colors.grey.shade600,
+                          ),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Output: backend/outputs/$_audioFilename',
+                              'Output: $_outputFolder/$_audioFilename',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade600,
@@ -705,6 +861,111 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPregeneratedSamplesSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.record_voice_over,
+                  color: Colors.orange.shade700,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Voice Samples',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Instant Play',
+                    style: TextStyle(fontSize: 10, color: Colors.green),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ..._pregeneratedSamples.map((sample) {
+              final voice = sample['voice'] as String? ?? 'Sample';
+              final text =
+                  (sample['text'] as String?) ??
+                  (sample['description'] as String?) ??
+                  (sample['title'] as String?) ??
+                  '';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: InkWell(
+                  onTap: () => _playPregeneratedSample(sample),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outline.withValues(alpha: 0.2),
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.tertiaryContainer,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            voice,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onTertiaryContainer,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            text,
+                            style: const TextStyle(fontSize: 12),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.play_circle_outline, size: 20),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
     );
   }
 
@@ -741,10 +1002,19 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 spacing: 12,
                 runSpacing: 4,
                 children: [
-                  _buildInfoChip(Icons.memory, _systemInfo!['device'] ?? 'Unknown'),
-                  _buildInfoChip(Icons.code, 'Python ${_systemInfo!['python_version'] ?? '?'}'),
+                  _buildInfoChip(
+                    Icons.memory,
+                    _systemInfo!['device'] ?? 'Unknown',
+                  ),
+                  _buildInfoChip(
+                    Icons.code,
+                    'Python ${_systemInfo!['python_version'] ?? '?'}',
+                  ),
                   if (_chatterboxInfo != null)
-                    _buildInfoChip(Icons.graphic_eq, 'SR ${_chatterboxInfo!['sample_rate'] ?? '?'}'),
+                    _buildInfoChip(
+                      Icons.graphic_eq,
+                      'SR ${_chatterboxInfo!['sample_rate'] ?? '?'}',
+                    ),
                 ],
               ),
             ],
@@ -754,10 +1024,83 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     );
   }
 
+  Widget _buildDictaStatusCard() {
+    final installed = _dictaStatus?['installed'] == true;
+    final status = _dictaStatus?['download_status'] as String?;
+    final size = _dictaStatus?['size_mb'];
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: installed ? Colors.green.shade50 : Colors.orange.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: installed ? Colors.green.shade200 : Colors.orange.shade200,
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            installed ? Icons.check_circle : Icons.language,
+            size: 18,
+            color: installed ? Colors.green.shade700 : Colors.orange.shade700,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              installed
+                  ? 'Dicta Hebrew model ready${size is num ? ' (${size.toStringAsFixed(1)} MB)' : ''}'
+                  : 'Hebrew requires Dicta model',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: installed
+                    ? Colors.green.shade800
+                    : Colors.orange.shade900,
+              ),
+            ),
+          ),
+          if (!installed)
+            FilledButton.tonalIcon(
+              onPressed: _isDictaDownloading || status == 'downloading'
+                  ? null
+                  : _downloadDicta,
+              icon: _isDictaDownloading || status == 'downloading'
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download, size: 16),
+              label: Text(
+                (_isDictaDownloading || status == 'downloading')
+                    ? 'Downloading...'
+                    : 'Download',
+              ),
+              style: FilledButton.styleFrom(
+                textStyle: const TextStyle(fontSize: 11),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildLanguageSelector() {
     final languages = _chatterboxLanguages.isNotEmpty
-        ? _chatterboxLanguages
+        ? List<String>.from(_chatterboxLanguages)
         : kChatterboxLanguageNames.keys.toList();
+    if (!languages.contains('he')) {
+      languages.add('he');
+    }
+    final dictaInstalled = _dictaStatus?['installed'] == true;
+    final dictaDownloading =
+        _isDictaDownloading ||
+        _dictaStatus?['download_status'] == 'downloading';
 
     return Row(
       children: [
@@ -774,26 +1117,67 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
                   child: GestureDetector(
-                    onTap: () => setState(() => _selectedChatterboxLanguage = lang),
+                    onTap: () =>
+                        setState(() => _selectedChatterboxLanguage = lang),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected
                             ? Colors.orange.withValues(alpha: 0.15)
                             : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
-                          color: isSelected ? Colors.orange : Colors.grey.shade300,
+                          color: isSelected
+                              ? Colors.orange
+                              : Colors.grey.shade300,
                           width: isSelected ? 2 : 1,
                         ),
                       ),
-                      child: Text(
-                        _formatLanguage(lang),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: isSelected ? Colors.orange.shade700 : Colors.grey.shade700,
-                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _formatLanguage(lang),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isSelected
+                                  ? Colors.orange.shade700
+                                  : Colors.grey.shade700,
+                              fontWeight: isSelected
+                                  ? FontWeight.w600
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                          if (lang == 'he') ...[
+                            const SizedBox(width: 6),
+                            if (dictaInstalled)
+                              Icon(
+                                Icons.check_circle,
+                                size: 14,
+                                color: Colors.green.shade700,
+                              )
+                            else if (dictaDownloading)
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            else if (isSelected)
+                              GestureDetector(
+                                onTap: _downloadDicta,
+                                child: Icon(
+                                  Icons.download,
+                                  size: 14,
+                                  color: Colors.orange.shade700,
+                                ),
+                              ),
+                          ],
+                        ],
                       ),
                     ),
                   ),
@@ -808,21 +1192,30 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
 
   Widget _buildVoiceSection() {
     final voices = _chatterboxVoices;
-    final defaults = voices
-        .where((voice) => (voice['source'] as String?) == 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
-    final users = voices
-        .where((voice) => (voice['source'] as String?) != 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    final defaults =
+        voices
+            .where((voice) => (voice['source'] as String?) == 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
+    final users =
+        voices
+            .where((voice) => (voice['source'] as String?) != 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Text('Voice Samples:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Voice Samples:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -845,7 +1238,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.upload),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Voice (WAV only)'),
+              label: Text(
+                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
+              ),
             ),
           ],
         ),
@@ -859,7 +1254,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 children: [
                   Icon(Icons.mic, size: 48, color: Colors.orange),
                   SizedBox(height: 8),
-                  Text('No voice samples yet', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    'No voice samples yet',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   SizedBox(height: 4),
                   Text(
                     'Upload a 3+ second WAV clip to clone a voice',
@@ -872,13 +1270,19 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           )
         else ...[
           if (defaults.isNotEmpty) ...[
-            const Text('Default Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Default Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(defaults, showDefaultBadge: true),
             const SizedBox(height: 12),
           ],
           if (users.isNotEmpty) ...[
-            const Text('Your Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Your Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(users, allowEdit: true),
           ] else ...[
@@ -915,12 +1319,15 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         final isPreviewing = _previewVoiceName == name;
 
         return Card(
-          color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
           child: ListTile(
             leading: Radio<String>(
               value: name,
               groupValue: _selectedChatterboxVoice,
-              onChanged: (value) => setState(() => _selectedChatterboxVoice = value),
+              onChanged: (value) =>
+                  setState(() => _selectedChatterboxVoice = value),
             ),
             title: Row(
               children: [
@@ -928,24 +1335,36 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 if (showDefaultBadge) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade200,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text('DEFAULT',
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700)),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                   ),
                 ],
               ],
             ),
             subtitle: transcript.isNotEmpty
                 ? Text(
-                    transcript.length > 50 ? '${transcript.substring(0, 50)}...' : transcript,
+                    transcript.length > 50
+                        ? '${transcript.substring(0, 50)}...'
+                        : transcript,
                     style: const TextStyle(fontSize: 12),
                   )
-                : const Text('No transcript',
-                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                : const Text(
+                    'No transcript',
+                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -960,7 +1379,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause),
-                  onPressed: (isPreviewing && !_isPreviewPaused) ? _pausePreview : null,
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreview
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 32),
@@ -1006,26 +1427,47 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
               ),
               Text(
                 'Advanced Parameters',
-                style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
         ),
         if (_showAdvanced) ...[
           const SizedBox(height: 12),
-          _buildAdvancedSlider('Temperature', _chatterboxTemperature, 0.1, 1.5,
-              (v) => setState(() => _chatterboxTemperature = v)),
-          _buildAdvancedSlider('CFG', _chatterboxCfgWeight, 0.1, 3.0,
-              (v) => setState(() => _chatterboxCfgWeight = v)),
-          _buildAdvancedSlider('Exaggeration', _chatterboxExaggeration, 0.0, 1.5,
-              (v) => setState(() => _chatterboxExaggeration = v)),
+          _buildAdvancedSlider(
+            'Temperature',
+            _chatterboxTemperature,
+            0.1,
+            1.5,
+            (v) => setState(() => _chatterboxTemperature = v),
+          ),
+          _buildAdvancedSlider(
+            'CFG',
+            _chatterboxCfgWeight,
+            0.1,
+            3.0,
+            (v) => setState(() => _chatterboxCfgWeight = v),
+          ),
+          _buildAdvancedSlider(
+            'Exaggeration',
+            _chatterboxExaggeration,
+            0.0,
+            1.5,
+            (v) => setState(() => _chatterboxExaggeration = v),
+          ),
           Row(
             children: [
               Expanded(
                 child: CheckboxListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Unload after', style: TextStyle(fontSize: 12)),
+                  title: const Text(
+                    'Unload after',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   value: _unloadAfter,
                   onChanged: (v) => setState(() => _unloadAfter = v ?? false),
                 ),
@@ -1039,9 +1481,13 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                       width: 60,
                       child: TextField(
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(isDense: true, hintText: '-1'),
-                        onChanged: (v) =>
-                            setState(() => _chatterboxSeed = int.tryParse(v) ?? -1),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          hintText: '-1',
+                        ),
+                        onChanged: (v) => setState(
+                          () => _chatterboxSeed = int.tryParse(v) ?? -1,
+                        ),
                       ),
                     ),
                   ],
@@ -1063,7 +1509,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   ) {
     return Row(
       children: [
-        SizedBox(width: 80, child: Text(label, style: const TextStyle(fontSize: 11))),
+        SizedBox(
+          width: 80,
+          child: Text(label, style: const TextStyle(fontSize: 11)),
+        ),
         Expanded(
           child: Slider(
             value: value.clamp(min, max),
@@ -1089,7 +1538,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       width: 280,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor)),
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
       ),
       child: Column(
         children: [
@@ -1097,15 +1548,19 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
                 const Icon(Icons.library_music, size: 20),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('Audio Library',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'Audio Library',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
@@ -1120,7 +1575,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
@@ -1130,13 +1587,15 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                     value: _libraryPlaybackSpeed,
                     min: 0.5,
                     max: 2.0,
-                    divisions: 15,
-                    label: '${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
+                    divisions: 150,
+                    label: '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
                     onChanged: _setLibraryPlaybackSpeed,
                   ),
                 ),
-                Text('${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
-                    style: const TextStyle(fontSize: 10)),
+                Text(
+                  '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
               ],
             ),
           ),
@@ -1144,21 +1603,24 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             child: _isLoadingAudioFiles
                 ? const Center(child: CircularProgressIndicator())
                 : _audioFiles.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text(
-                            'No Chatterbox audio files yet.\nGenerate speech to see it here.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                          ),
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'No Chatterbox audio files yet.\nGenerate speech to see it here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
                         ),
-                      )
-                    : ListView.builder(
-                        itemCount: _audioFiles.length,
-                        itemBuilder: (context, index) =>
-                            _buildAudioFileItem(_audioFiles[index]),
                       ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _audioFiles.length,
+                    itemBuilder: (context, index) =>
+                        _buildAudioFileItem(_audioFiles[index]),
+                  ),
           ),
         ],
       ),
@@ -1176,9 +1638,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     final mins = (duration / 60).floor();
     final secs = (duration % 60).round();
     final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final meta = [durationStr, '${sizeMb.toStringAsFixed(1)} MB']
-        .where((part) => part.isNotEmpty)
-        .join(' \u2022 ');
+    final meta = [
+      durationStr,
+      '${sizeMb.toStringAsFixed(1)} MB',
+    ].where((part) => part.isNotEmpty).join(' \u2022 ');
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1194,12 +1657,20 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           ListTile(
             dense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(Icons.audiotrack,
-                color: isThisPlaying ? Theme.of(context).colorScheme.primary : null, size: 20),
-            title: Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500)),
+            leading: Icon(
+              Icons.audiotrack,
+              color: isThisPlaying
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+              size: 20,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline, size: 16),
@@ -1215,7 +1686,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.play_arrow, size: 20),
-                  onPressed: (!isThisPlaying || _isAudioPaused) ? () => _playAudioFile(file) : null,
+                  onPressed: (!isThisPlaying || _isAudioPaused)
+                      ? () => _playAudioFile(file)
+                      : null,
                   tooltip: 'Play',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -1223,7 +1696,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause, size: 20),
-                  onPressed: (isThisPlaying && !_isAudioPaused) ? _pauseAudioPlayback : null,
+                  onPressed: (isThisPlaying && !_isAudioPaused)
+                      ? _pauseAudioPlayback
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,

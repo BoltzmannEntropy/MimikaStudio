@@ -1,10 +1,11 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/model_status_banner.dart';
 
 // Speaker data with colors for CustomVoice mode
 class Speaker {
@@ -42,12 +43,22 @@ const List<LanguageOption> kLanguages = [
   LanguageOption('Auto', 'Auto Detect', '\u{1F310}', Color(0xFF607D8B)),
   LanguageOption('English', 'English', '\u{1F1FA}\u{1F1F8}', Color(0xFF2196F3)),
   LanguageOption('Chinese', 'Chinese', '\u{1F1E8}\u{1F1F3}', Color(0xFFE91E63)),
-  LanguageOption('Japanese', 'Japanese', '\u{1F1EF}\u{1F1F5}', Color(0xFF9C27B0)),
+  LanguageOption(
+    'Japanese',
+    'Japanese',
+    '\u{1F1EF}\u{1F1F5}',
+    Color(0xFF9C27B0),
+  ),
   LanguageOption('Korean', 'Korean', '\u{1F1F0}\u{1F1F7}', Color(0xFFFF5722)),
   LanguageOption('German', 'German', '\u{1F1E9}\u{1F1EA}', Color(0xFF795548)),
   LanguageOption('French', 'French', '\u{1F1EB}\u{1F1F7}', Color(0xFF3F51B5)),
   LanguageOption('Russian', 'Russian', '\u{1F1F7}\u{1F1FA}', Color(0xFF9C27B0)),
-  LanguageOption('Portuguese', 'Portuguese', '\u{1F1F5}\u{1F1F9}', Color(0xFF4CAF50)),
+  LanguageOption(
+    'Portuguese',
+    'Portuguese',
+    '\u{1F1F5}\u{1F1F9}',
+    Color(0xFF4CAF50),
+  ),
   LanguageOption('Spanish', 'Spanish', '\u{1F1EA}\u{1F1F8}', Color(0xFFF57C00)),
   LanguageOption('Italian', 'Italian', '\u{1F1EE}\u{1F1F9}', Color(0xFF009688)),
 ];
@@ -60,7 +71,13 @@ class Qwen3CloneScreen extends StatefulWidget {
 }
 
 class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
+  static const String _defaultQwen3Text =
+      'Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? '
+      'and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? '
+      'and if thou doest not well, sin lieth at the door.';
+
   final ApiService _api = ApiService();
+  final SettingsService _settingsService = SettingsService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final TextEditingController _textController = TextEditingController();
   final TextEditingController _instructController = TextEditingController();
@@ -68,11 +85,13 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   // Qwen3 mode: 'clone' or 'custom'
   String _qwen3Mode = 'custom';
   String _modelSize = '0.6B';
+  String _modelQuantization = 'bf16';
   String _selectedSpeaker = 'Ryan';
 
   // Qwen3 state
   List<Map<String, dynamic>> _qwen3Voices = [];
   List<String> _qwen3Languages = [];
+  List<Map<String, dynamic>> _pregeneratedSamples = [];
   String? _selectedQwen3Voice;
   Map<String, dynamic>? _qwen3Info;
   Map<String, dynamic>? _systemInfo;
@@ -93,6 +112,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
+  String _outputFolder = 'backend/outputs';
   String? _error;
 
   // Audio library state
@@ -108,8 +128,8 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   @override
   void initState() {
     super.initState();
-    _textController.text =
-        'For many, the experience of Vietnam had a radicalizing effect, leading them to conclude that US military intervention was not a well-intentioned mistake by policymakers, but part of a consistent effort to preserve American political, economic, and military domination globally, largely in service of corporate profits.';
+    _textController.text = _defaultQwen3Text;
+    _loadOutputFolder();
     _loadData();
     _loadAudioFiles();
   }
@@ -128,7 +148,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     try {
       final files = await _api.getVoiceCloneAudioFiles();
       // Filter to only qwen3 files
-      final qwen3Files = files.where((f) => (f['engine'] as String?) == 'qwen3').toList();
+      final qwen3Files = files
+          .where((f) => (f['engine'] as String?) == 'qwen3')
+          .toList();
       if (mounted) {
         setState(() {
           _audioFiles = qwen3Files;
@@ -138,6 +160,16 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     } catch (e) {
       debugPrint('Failed to load audio files: $e');
       if (mounted) setState(() => _isLoadingAudioFiles = false);
+    }
+  }
+
+  Future<void> _loadOutputFolder() async {
+    try {
+      final folder = await _settingsService.getOutputFolder();
+      if (!mounted) return;
+      setState(() => _outputFolder = folder);
+    } catch (_) {
+      // Keep fallback display path if settings API is unavailable.
     }
   }
 
@@ -170,10 +202,21 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         debugPrint('Qwen3 voices not available: $e');
       }
 
+      List<Map<String, dynamic>> pregeneratedSamples = [];
+      try {
+        pregeneratedSamples = await _api.getPregeneratedSamples(
+          engine: 'qwen3',
+        );
+      } catch (e) {
+        debugPrint('Qwen3 pregenerated samples not available: $e');
+      }
+
+      if (!mounted) return;
       setState(() {
         _systemInfo = systemInfo;
         _qwen3Voices = qwen3Voices;
         _qwen3Languages = qwen3Languages;
+        _pregeneratedSamples = pregeneratedSamples;
         _qwen3Info = qwen3Info;
         if (qwen3Voices.isNotEmpty) {
           _selectedQwen3Voice = qwen3Voices[0]['name'];
@@ -181,6 +224,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -210,6 +254,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           language: _selectedLanguage,
           speed: _speed,
           modelSize: _modelSize,
+          modelQuantization: _modelQuantization,
           temperature: _temperature,
           topP: _topP,
           topK: _topK,
@@ -225,6 +270,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           language: _selectedLanguage,
           speed: _speed,
           modelSize: _modelSize,
+          modelQuantization: _modelQuantization,
           instruct: _instructController.text.isNotEmpty
               ? _instructController.text
               : null,
@@ -238,8 +284,11 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       }
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      final filename = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : null;
 
+      if (!mounted) return;
       setState(() {
         _audioUrl = audioUrl;
         _audioFilename = filename;
@@ -256,6 +305,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       await _audioPlayer.play();
       _loadAudioFiles();
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isGenerating = false;
@@ -286,18 +336,53 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           await _loadData();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Voice "${dialogResult['name']}" uploaded successfully')),
+              SnackBar(
+                content: Text(
+                  'Voice "${dialogResult['name']}" uploaded successfully',
+                ),
+              ),
             );
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed to upload: $e')),
-            );
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
           }
         } finally {
-          setState(() => _isUploading = false);
+          if (mounted) {
+            setState(() => _isUploading = false);
+          }
         }
+      }
+    }
+  }
+
+  Future<void> _playPregeneratedSample(Map<String, dynamic> sample) async {
+    final audioPath = sample['audio_url'] as String?;
+    if (audioPath == null || audioPath.isEmpty) return;
+    final audioUrl = _api.getPregeneratedAudioUrl(audioPath);
+
+    try {
+      await _playerSubscription?.cancel();
+      _playerSubscription = null;
+      await _audioPlayer.stop();
+      if (!mounted) return;
+      setState(() {
+        _audioUrl = audioUrl;
+        _audioFilename = null;
+        _playingAudioId = null;
+        _isAudioPaused = false;
+        _previewVoiceName = null;
+        _isPreviewPaused = false;
+      });
+      await _audioPlayer.setUrl(audioUrl);
+      await _audioPlayer.play();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play sample: $e')));
       }
     }
   }
@@ -378,15 +463,15 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         await _api.deleteQwen3Voice(name);
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Voice "$name" deleted')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Voice "$name" deleted')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -443,15 +528,15 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         );
         await _loadData();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Voice updated')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to update: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
         }
       }
     }
@@ -472,8 +557,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       if (audioUrl == null || audioUrl.isEmpty) {
         throw Exception('Preview audio not available');
       }
-      final playUrl =
-          audioUrl.startsWith('http') ? audioUrl : '${ApiService.baseUrl}$audioUrl';
+      final playUrl = audioUrl.startsWith('http')
+          ? audioUrl
+          : '${ApiService.baseUrl}$audioUrl';
 
       await _playerSubscription?.cancel();
       _playerSubscription = null;
@@ -504,9 +590,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Preview failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
       }
     }
   }
@@ -571,9 +657,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           _playingAudioId = null;
           _isAudioPaused = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play: $e')));
       }
     }
   }
@@ -636,9 +722,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         _loadAudioFiles();
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -648,6 +734,56 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     if (_textController.text.isEmpty) return false;
     if (_qwen3Mode == 'clone') return _selectedQwen3Voice != null;
     return true;
+  }
+
+  String _requiredModelName() {
+    final suffix = _qwen3Mode == 'clone' ? 'Base' : 'CustomVoice';
+    final quantSuffix = _modelQuantization == '8bit' ? '-8bit' : '';
+    return 'Qwen3-TTS-12Hz-$_modelSize-$suffix$quantSuffix';
+  }
+
+  List<Map<String, dynamic>> _samplesForCurrentMode() {
+    const presetVoices = {'Ryan', 'Aiden'};
+    const cloneVoices = {'Natasha', 'Suzan'};
+    const presetTitles = {
+      'Genesis 4 Preview (Ryan)',
+      'Genesis 4 Preview (Aiden)',
+    };
+    const cloneTitles = {
+      'Genesis 4 Preview (Natasha)',
+      'Genesis 4 Preview (Suzan)',
+      'Hebrew Preview (Natasha)',
+    };
+    final allowedVoices = _qwen3Mode == 'custom' ? presetVoices : cloneVoices;
+    final allowedTitles = _qwen3Mode == 'custom' ? presetTitles : cloneTitles;
+
+    final filtered = _pregeneratedSamples.where((sample) {
+      final voice = (sample['voice'] as String? ?? '').trim();
+      final title = (sample['title'] as String? ?? '').trim();
+      return allowedVoices.contains(voice) && allowedTitles.contains(title);
+    }).toList();
+
+    if (filtered.isEmpty) {
+      filtered.addAll(
+        _pregeneratedSamples.where((sample) {
+          final voice = (sample['voice'] as String? ?? '').trim();
+          return allowedVoices.contains(voice);
+        }),
+      );
+    }
+
+    filtered.sort((a, b) {
+      final aVoice = (a['voice'] as String? ?? '').toLowerCase();
+      final bVoice = (b['voice'] as String? ?? '').toLowerCase();
+      final voiceCompare = aVoice.compareTo(bVoice);
+      if (voiceCompare != 0) return voiceCompare;
+
+      final aTitle = (a['title'] as String? ?? '').toLowerCase();
+      final bTitle = (b['title'] as String? ?? '').toLowerCase();
+      return aTitle.compareTo(bTitle);
+    });
+
+    return filtered;
   }
 
   Widget _buildInfoChip(IconData icon, String text) {
@@ -666,18 +802,32 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
+    final visibleSamples = _samplesForCurrentMode();
 
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildSidebar(),
         Expanded(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            primary: false,
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildHeader(),
                 const SizedBox(height: 4),
+                ModelStatusBanner(
+                  key: ValueKey('qwen3-${_requiredModelName()}'),
+                  requiredModels: [_requiredModelName()],
+                  engineName: 'Qwen3-TTS',
+                  themeColor: Colors.teal,
+                ),
+                if (visibleSamples.isNotEmpty) ...[
+                  _buildPregeneratedSamplesSection(visibleSamples),
+                  const SizedBox(height: 12),
+                ],
                 _buildModelSizeSelector(),
                 const SizedBox(height: 12),
                 _buildLanguageSelector(),
@@ -708,19 +858,21 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                         value: _speed,
                         min: 0.5,
                         max: 2.0,
-                        divisions: 15,
-                        label: '${_speed.toStringAsFixed(1)}x',
+                        divisions: 150,
+                        label: '${_speed.toStringAsFixed(2)}x',
                         onChanged: (value) => setState(() => _speed = value),
                       ),
                     ),
-                    Text('${_speed.toStringAsFixed(1)}x'),
+                    Text('${_speed.toStringAsFixed(2)}x'),
                   ],
                 ),
                 const SizedBox(height: 12),
                 _buildAdvancedPanel(),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: (_isGenerating || !_canGenerate()) ? null : _generate,
+                  onPressed: (_isGenerating || !_canGenerate())
+                      ? null
+                      : _generate,
                   icon: _isGenerating
                       ? const SizedBox(
                           width: 20,
@@ -728,7 +880,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.auto_awesome),
-                  label: Text(_isGenerating ? 'Generating...' : 'Generate Speech'),
+                  label: Text(
+                    _isGenerating ? 'Generating...' : 'Generate Speech',
+                  ),
                 ),
                 const SizedBox(height: 16),
                 if (_error != null)
@@ -736,7 +890,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                     color: Colors.red.shade100,
                     child: Padding(
                       padding: const EdgeInsets.all(12),
-                      child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                      child: Text(
+                        _error!,
+                        style: const TextStyle(color: Colors.red),
+                      ),
                     ),
                   ),
                 if (_audioUrl != null) ...[
@@ -745,11 +902,15 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                       padding: const EdgeInsets.only(bottom: 8),
                       child: Row(
                         children: [
-                          Icon(Icons.folder_open, size: 16, color: Colors.grey.shade600),
+                          Icon(
+                            Icons.folder_open,
+                            size: 16,
+                            color: Colors.grey.shade600,
+                          ),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              'Output: backend/outputs/$_audioFilename',
+                              'Output: $_outputFolder/$_audioFilename',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Colors.grey.shade600,
@@ -773,6 +934,114 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildPregeneratedSamplesSection(List<Map<String, dynamic>> samples) {
+    final sectionTitle = _qwen3Mode == 'custom'
+        ? 'Preset Voice Samples'
+        : 'Voice Clone Samples';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.record_voice_over,
+                  color: Colors.teal.shade700,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  sectionTitle,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text(
+                    'Instant Play',
+                    style: TextStyle(fontSize: 10, color: Colors.green),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...samples.map((sample) {
+              final voice = sample['voice'] as String? ?? 'Sample';
+              final text =
+                  (sample['text'] as String?) ??
+                  (sample['description'] as String?) ??
+                  (sample['title'] as String?) ??
+                  '';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: InkWell(
+                  onTap: () => _playPregeneratedSample(sample),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outline.withValues(alpha: 0.2),
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.tertiaryContainer,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            voice,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onTertiaryContainer,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            text,
+                            style: const TextStyle(fontSize: 12),
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const Icon(Icons.play_circle_outline, size: 20),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
     );
   }
 
@@ -804,7 +1073,11 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         ),
         child: Row(
           children: [
-            Icon(icon, size: 16, color: isSelected ? Colors.white : Colors.grey.shade600),
+            Icon(
+              icon,
+              size: 16,
+              color: isSelected ? Colors.white : Colors.grey.shade600,
+            ),
             const SizedBox(width: 4),
             Text(
               label,
@@ -857,12 +1130,15 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 spacing: 12,
                 runSpacing: 4,
                 children: [
-                  _buildInfoChip(Icons.memory, _systemInfo!['device'] ?? 'Unknown'),
-                  _buildInfoChip(Icons.code, 'Python ${_systemInfo!['python_version'] ?? '?'}'),
                   _buildInfoChip(
-                    Icons.library_books,
-                    'Qwen3-TTS-$_modelSize-${_qwen3Mode == 'clone' ? 'Base' : 'CustomVoice'}',
+                    Icons.memory,
+                    _systemInfo!['device'] ?? 'Unknown',
                   ),
+                  _buildInfoChip(
+                    Icons.code,
+                    'Python ${_systemInfo!['python_version'] ?? '?'}',
+                  ),
+                  _buildInfoChip(Icons.library_books, _requiredModelName()),
                 ],
               ),
             ],
@@ -873,22 +1149,50 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   }
 
   Widget _buildModelSizeSelector() {
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.memory, size: 16),
-        const SizedBox(width: 8),
-        const Text('Model:', style: TextStyle(fontWeight: FontWeight.w600)),
-        const SizedBox(width: 12),
-        ChoiceChip(
-          label: const Text('0.6B (Fast)'),
-          selected: _modelSize == '0.6B',
-          onSelected: (_) => setState(() => _modelSize = '0.6B'),
+        Row(
+          children: [
+            const Icon(Icons.memory, size: 16),
+            const SizedBox(width: 8),
+            const Text('Model:', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(width: 12),
+            ChoiceChip(
+              label: const Text('0.6B (Fast)'),
+              selected: _modelSize == '0.6B',
+              onSelected: (_) => setState(() => _modelSize = '0.6B'),
+            ),
+            const SizedBox(width: 8),
+            ChoiceChip(
+              label: const Text('1.7B (Quality)'),
+              selected: _modelSize == '1.7B',
+              onSelected: (_) => setState(() => _modelSize = '1.7B'),
+            ),
+          ],
         ),
-        const SizedBox(width: 8),
-        ChoiceChip(
-          label: const Text('1.7B (Quality)'),
-          selected: _modelSize == '1.7B',
-          onSelected: (_) => setState(() => _modelSize = '1.7B'),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            const Icon(Icons.speed, size: 16),
+            const SizedBox(width: 8),
+            const Text(
+              'Precision:',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(width: 12),
+            ChoiceChip(
+              label: const Text('bf16'),
+              selected: _modelQuantization == 'bf16',
+              onSelected: (_) => setState(() => _modelQuantization = 'bf16'),
+            ),
+            const SizedBox(width: 8),
+            ChoiceChip(
+              label: const Text('8-bit'),
+              selected: _modelQuantization == '8bit',
+              onSelected: (_) => setState(() => _modelQuantization = '8bit'),
+            ),
+          ],
         ),
       ],
     );
@@ -912,7 +1216,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                   child: GestureDetector(
                     onTap: () => setState(() => _selectedLanguage = lang.code),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
                       decoration: BoxDecoration(
                         color: isSelected
                             ? lang.color.withValues(alpha: 0.15)
@@ -933,7 +1240,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w600,
-                              color: isSelected ? lang.color : Colors.grey.shade700,
+                              color: isSelected
+                                  ? lang.color
+                                  : Colors.grey.shade700,
                             ),
                           ),
                         ],
@@ -957,7 +1266,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           children: [
             Icon(Icons.person, size: 16),
             SizedBox(width: 8),
-            Text('Select Speaker:', style: TextStyle(fontWeight: FontWeight.w600)),
+            Text(
+              'Select Speaker:',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
           ],
         ),
         const SizedBox(height: 8),
@@ -1005,7 +1317,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                               style: TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: isSelected ? speaker.color : Colors.black87,
+                                color: isSelected
+                                    ? speaker.color
+                                    : Colors.black87,
                               ),
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -1015,11 +1329,17 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                       const SizedBox(height: 4),
                       Text(
                         speaker.language,
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade600,
+                        ),
                       ),
                       Text(
                         speaker.description,
-                        style: TextStyle(fontSize: 9, color: Colors.grey.shade500),
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: Colors.grey.shade500,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1046,21 +1366,30 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
   Widget _buildVoiceSection() {
     final voices = _qwen3Voices;
-    final defaults = voices
-        .where((voice) => (voice['source'] as String?) == 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
-    final users = voices
-        .where((voice) => (voice['source'] as String?) != 'default')
-        .toList()
-      ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    final defaults =
+        voices
+            .where((voice) => (voice['source'] as String?) == 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
+    final users =
+        voices
+            .where((voice) => (voice['source'] as String?) != 'default')
+            .toList()
+          ..sort(
+            (a, b) => (a['name'] as String).compareTo(b['name'] as String),
+          );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const Text('Voice Samples:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Voice Samples:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -1083,7 +1412,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
                   : const Icon(Icons.upload),
-              label: Text(_isUploading ? 'Uploading...' : 'Upload Voice (WAV only)'),
+              label: Text(
+                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
+              ),
             ),
           ],
         ),
@@ -1097,7 +1428,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 children: [
                   Icon(Icons.mic, size: 48, color: Colors.blue),
                   SizedBox(height: 8),
-                  Text('No voice samples yet', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    'No voice samples yet',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   SizedBox(height: 4),
                   Text(
                     'Upload a 3+ second WAV clip with its transcript to clone a voice',
@@ -1110,13 +1444,19 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           )
         else ...[
           if (defaults.isNotEmpty) ...[
-            const Text('Default Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Default Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(defaults, showDefaultBadge: true),
             const SizedBox(height: 12),
           ],
           if (users.isNotEmpty) ...[
-            const Text('Your Voices:', style: TextStyle(fontWeight: FontWeight.bold)),
+            const Text(
+              'Your Voices:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
             const SizedBox(height: 8),
             _buildVoiceList(users, allowEdit: true),
           ] else ...[
@@ -1153,7 +1493,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         final isPreviewing = _previewVoiceName == name;
 
         return Card(
-          color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
+          color: isSelected
+              ? Theme.of(context).colorScheme.primaryContainer
+              : null,
           child: ListTile(
             leading: Radio<String>(
               value: name,
@@ -1166,24 +1508,36 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 if (showDefaultBadge) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade200,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: Text('DEFAULT',
-                        style: TextStyle(fontSize: 10, color: Colors.grey.shade700)),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
                   ),
                 ],
               ],
             ),
             subtitle: transcript.isNotEmpty
                 ? Text(
-                    transcript.length > 50 ? '${transcript.substring(0, 50)}...' : transcript,
+                    transcript.length > 50
+                        ? '${transcript.substring(0, 50)}...'
+                        : transcript,
                     style: const TextStyle(fontSize: 12),
                   )
-                : const Text('No transcript',
-                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic)),
+                : const Text(
+                    'No transcript',
+                    style: TextStyle(fontSize: 12, fontStyle: FontStyle.italic),
+                  ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -1198,7 +1552,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause),
-                  onPressed: (isPreviewing && !_isPreviewPaused) ? _pausePreview : null,
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreview
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints(minWidth: 32),
@@ -1244,28 +1600,54 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
               ),
               Text(
                 'Advanced Parameters',
-                style: TextStyle(color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
         ),
         if (_showAdvanced) ...[
           const SizedBox(height: 12),
-          _buildAdvancedSlider('Temperature', _temperature, 0.1, 2.0,
-              (v) => setState(() => _temperature = v)),
-          _buildAdvancedSlider('Top P', _topP, 0.1, 1.0,
-              (v) => setState(() => _topP = v)),
-          _buildAdvancedSlider('Top K', _topK.toDouble(), 1, 100,
-              (v) => setState(() => _topK = v.round())),
-          _buildAdvancedSlider('Rep. Penalty', _repetitionPenalty, 1.0, 2.0,
-              (v) => setState(() => _repetitionPenalty = v)),
+          _buildAdvancedSlider(
+            'Temperature',
+            _temperature,
+            0.1,
+            2.0,
+            (v) => setState(() => _temperature = v),
+          ),
+          _buildAdvancedSlider(
+            'Top P',
+            _topP,
+            0.1,
+            1.0,
+            (v) => setState(() => _topP = v),
+          ),
+          _buildAdvancedSlider(
+            'Top K',
+            _topK.toDouble(),
+            1,
+            100,
+            (v) => setState(() => _topK = v.round()),
+          ),
+          _buildAdvancedSlider(
+            'Rep. Penalty',
+            _repetitionPenalty,
+            1.0,
+            2.0,
+            (v) => setState(() => _repetitionPenalty = v),
+          ),
           Row(
             children: [
               Expanded(
                 child: CheckboxListTile(
                   dense: true,
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Unload after', style: TextStyle(fontSize: 12)),
+                  title: const Text(
+                    'Unload after',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   value: _unloadAfter,
                   onChanged: (v) => setState(() => _unloadAfter = v ?? false),
                 ),
@@ -1279,8 +1661,12 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                       width: 60,
                       child: TextField(
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(isDense: true, hintText: '-1'),
-                        onChanged: (v) => setState(() => _seed = int.tryParse(v) ?? -1),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          hintText: '-1',
+                        ),
+                        onChanged: (v) =>
+                            setState(() => _seed = int.tryParse(v) ?? -1),
                       ),
                     ),
                   ],
@@ -1302,7 +1688,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   ) {
     return Row(
       children: [
-        SizedBox(width: 80, child: Text(label, style: const TextStyle(fontSize: 11))),
+        SizedBox(
+          width: 80,
+          child: Text(label, style: const TextStyle(fontSize: 11)),
+        ),
         Expanded(
           child: Slider(
             value: value.clamp(min, max),
@@ -1328,7 +1717,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       width: 280,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
-        border: Border(right: BorderSide(color: Theme.of(context).dividerColor)),
+        border: Border(
+          right: BorderSide(color: Theme.of(context).dividerColor),
+        ),
       ),
       child: Column(
         children: [
@@ -1336,15 +1727,19 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
                 const Icon(Icons.library_music, size: 20),
                 const SizedBox(width: 8),
                 const Expanded(
-                  child: Text('Audio Library',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  child: Text(
+                    'Audio Library',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
                 ),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 18),
@@ -1359,7 +1754,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
+              ),
             ),
             child: Row(
               children: [
@@ -1369,13 +1766,15 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                     value: _libraryPlaybackSpeed,
                     min: 0.5,
                     max: 2.0,
-                    divisions: 15,
-                    label: '${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
+                    divisions: 150,
+                    label: '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
                     onChanged: _setLibraryPlaybackSpeed,
                   ),
                 ),
-                Text('${_libraryPlaybackSpeed.toStringAsFixed(1)}x',
-                    style: const TextStyle(fontSize: 10)),
+                Text(
+                  '${_libraryPlaybackSpeed.toStringAsFixed(2)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
               ],
             ),
           ),
@@ -1383,21 +1782,24 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
             child: _isLoadingAudioFiles
                 ? const Center(child: CircularProgressIndicator())
                 : _audioFiles.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text(
-                            'No Qwen3 audio files yet.\nGenerate speech to see it here.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                          ),
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        'No Qwen3 audio files yet.\nGenerate speech to see it here.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.grey.shade600,
+                          fontSize: 12,
                         ),
-                      )
-                    : ListView.builder(
-                        itemCount: _audioFiles.length,
-                        itemBuilder: (context, index) =>
-                            _buildAudioFileItem(_audioFiles[index]),
                       ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _audioFiles.length,
+                    itemBuilder: (context, index) =>
+                        _buildAudioFileItem(_audioFiles[index]),
+                  ),
           ),
         ],
       ),
@@ -1415,9 +1817,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final mins = (duration / 60).floor();
     final secs = (duration % 60).round();
     final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-    final meta = [durationStr, '${sizeMb.toStringAsFixed(1)} MB']
-        .where((part) => part.isNotEmpty)
-        .join(' \u2022 ');
+    final meta = [
+      durationStr,
+      '${sizeMb.toStringAsFixed(1)} MB',
+    ].where((part) => part.isNotEmpty).join(' \u2022 ');
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -1433,12 +1836,20 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           ListTile(
             dense: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(Icons.audiotrack,
-                color: isThisPlaying ? Theme.of(context).colorScheme.primary : null, size: 20),
-            title: Text(label,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500)),
+            leading: Icon(
+              Icons.audiotrack,
+              color: isThisPlaying
+                  ? Theme.of(context).colorScheme.primary
+                  : null,
+              size: 20,
+            ),
+            title: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline, size: 16),
@@ -1454,7 +1865,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.play_arrow, size: 20),
-                  onPressed: (!isThisPlaying || _isAudioPaused) ? () => _playAudioFile(file) : null,
+                  onPressed: (!isThisPlaying || _isAudioPaused)
+                      ? () => _playAudioFile(file)
+                      : null,
                   tooltip: 'Play',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -1462,7 +1875,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause, size: 20),
-                  onPressed: (isThisPlaying && !_isAudioPaused) ? _pauseAudioPlayback : null,
+                  onPressed: (isThisPlaying && !_isAudioPaused)
+                      ? _pauseAudioPlayback
+                      : null,
                   tooltip: 'Pause',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,

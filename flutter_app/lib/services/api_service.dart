@@ -4,11 +4,34 @@ import 'package:http/http.dart' as http;
 
 class ApiService {
   static const String baseUrl = 'http://localhost:8000';
+  static const Duration _requestTimeout = Duration(seconds: 120);
+
+  Future<http.Response> _get(Uri uri, {Duration timeout = _requestTimeout}) {
+    return http.get(uri).timeout(timeout);
+  }
+
+  Future<http.Response> _post(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration timeout = _requestTimeout,
+  }) {
+    return http.post(uri, headers: headers, body: body).timeout(timeout);
+  }
+
+  Future<http.Response> _delete(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Duration timeout = _requestTimeout,
+  }) {
+    return http.delete(uri, headers: headers, body: body).timeout(timeout);
+  }
 
   // Health check
   Future<bool> checkHealth() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/health'));
+      final response = await _get(Uri.parse('$baseUrl/api/health'));
       return response.statusCode == 200;
     } catch (e) {
       return false;
@@ -17,7 +40,7 @@ class ApiService {
 
   // System info
   Future<Map<String, dynamic>> getSystemInfo() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/system/info'));
+    final response = await _get(Uri.parse('$baseUrl/api/system/info'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -26,7 +49,7 @@ class ApiService {
 
   // System stats (CPU/RAM/GPU)
   Future<Map<String, dynamic>> getSystemStats() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/system/stats'));
+    final response = await _get(Uri.parse('$baseUrl/api/system/stats'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -36,7 +59,7 @@ class ApiService {
   // ============== Kokoro ==============
 
   Future<Map<String, dynamic>> getKokoroVoices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/kokoro/voices'));
+    final response = await _get(Uri.parse('$baseUrl/api/kokoro/voices'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -51,7 +74,7 @@ class ApiService {
     int maxCharsPerChunk = 1500,
     int crossfadeMs = 40,
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/kokoro/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
@@ -73,7 +96,7 @@ class ApiService {
   // ============== Samples ==============
 
   Future<List<Map<String, dynamic>>> getSamples(String engine) async {
-    final response = await http.get(Uri.parse('$baseUrl/api/samples/$engine'));
+    final response = await _get(Uri.parse('$baseUrl/api/samples/$engine'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
@@ -83,11 +106,13 @@ class ApiService {
 
   // ============== Pregenerated Samples ==============
 
-  Future<List<Map<String, dynamic>>> getPregeneratedSamples({String? engine}) async {
+  Future<List<Map<String, dynamic>>> getPregeneratedSamples({
+    String? engine,
+  }) async {
     final uri = engine != null
         ? Uri.parse('$baseUrl/api/pregenerated?engine=$engine')
         : Uri.parse('$baseUrl/api/pregenerated');
-    final response = await http.get(uri);
+    final response = await _get(uri);
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
@@ -102,7 +127,7 @@ class ApiService {
   // ============== Voice Samples ==============
 
   Future<List<Map<String, dynamic>>> getVoiceSamples() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/voice-samples'));
+    final response = await _get(Uri.parse('$baseUrl/api/voice-samples'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
@@ -117,7 +142,7 @@ class ApiService {
   // ============== Qwen3-TTS (Voice Clone + Custom Voice) ==============
 
   Future<Map<String, dynamic>> getQwen3Voices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/qwen3/voices'));
+    final response = await _get(Uri.parse('$baseUrl/api/qwen3/voices'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -125,7 +150,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getQwen3Speakers() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/qwen3/speakers'));
+    final response = await _get(Uri.parse('$baseUrl/api/qwen3/speakers'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -133,7 +158,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getQwen3Models() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/qwen3/models'));
+    final response = await _get(Uri.parse('$baseUrl/api/qwen3/models'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -153,6 +178,7 @@ class ApiService {
     String language = 'Auto',
     double speed = 1.0,
     String modelSize = '0.6B',
+    String modelQuantization = 'bf16',
     String? instruct,
     // Advanced parameters
     double temperature = 0.9,
@@ -168,6 +194,7 @@ class ApiService {
       'language': language,
       'speed': speed,
       'model_size': modelSize,
+      'model_quantization': modelQuantization,
       'temperature': temperature,
       'top_p': topP,
       'top_k': topK,
@@ -185,7 +212,7 @@ class ApiService {
       }
     }
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/qwen3/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(body),
@@ -197,16 +224,23 @@ class ApiService {
     throw Exception('Failed to generate Qwen3 audio: ${response.body}');
   }
 
-  Future<void> uploadQwen3Voice(String name, Uint8List fileBytes, String fileName, String transcript) async {
+  Future<void> uploadQwen3Voice(
+    String name,
+    Uint8List fileBytes,
+    String fileName,
+    String transcript,
+  ) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/qwen3/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
+    request.files.add(
+      http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
+    );
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to upload Qwen3 voice: $body');
@@ -214,13 +248,21 @@ class ApiService {
   }
 
   Future<void> deleteQwen3Voice(String name) async {
-    final response = await http.delete(Uri.parse('$baseUrl/api/qwen3/voices/$name'));
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/qwen3/voices/$name'),
+    );
     if (response.statusCode != 200) {
       throw Exception('Failed to delete voice: ${response.body}');
     }
   }
 
-  Future<void> updateQwen3Voice(String name, {String? newName, String? transcript, Uint8List? fileBytes, String? fileName}) async {
+  Future<void> updateQwen3Voice(
+    String name, {
+    String? newName,
+    String? transcript,
+    Uint8List? fileBytes,
+    String? fileName,
+  }) async {
     var request = http.MultipartRequest(
       'PUT',
       Uri.parse('$baseUrl/api/qwen3/voices/$name'),
@@ -228,10 +270,16 @@ class ApiService {
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
     if (fileBytes != null) {
-      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName ?? 'voice.wav',
+        ),
+      );
     }
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to update voice: $body');
@@ -239,7 +287,7 @@ class ApiService {
   }
 
   Future<List<String>> getQwen3Languages() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/qwen3/languages'));
+    final response = await _get(Uri.parse('$baseUrl/api/qwen3/languages'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<String>.from(data['languages']);
@@ -248,7 +296,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getQwen3Info() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/qwen3/info'));
+    final response = await _get(Uri.parse('$baseUrl/api/qwen3/info'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -258,7 +306,7 @@ class ApiService {
   // ============== Chatterbox (Voice Clone) ==============
 
   Future<Map<String, dynamic>> getChatterboxVoices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/voices'));
+    final response = await _get(Uri.parse('$baseUrl/api/chatterbox/voices'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -292,7 +340,7 @@ class ApiService {
       'unload_after': unloadAfter,
     };
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/chatterbox/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(body),
@@ -304,16 +352,23 @@ class ApiService {
     throw Exception('Failed to generate Chatterbox audio: ${response.body}');
   }
 
-  Future<void> uploadChatterboxVoice(String name, Uint8List fileBytes, String fileName, String transcript) async {
+  Future<void> uploadChatterboxVoice(
+    String name,
+    Uint8List fileBytes,
+    String fileName,
+    String transcript,
+  ) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/chatterbox/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
+    request.files.add(
+      http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
+    );
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to upload Chatterbox voice: $body');
@@ -321,8 +376,9 @@ class ApiService {
   }
 
   Future<void> deleteChatterboxVoice(String name) async {
-    final response =
-        await http.delete(Uri.parse('$baseUrl/api/chatterbox/voices/$name'));
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/chatterbox/voices/$name'),
+    );
     if (response.statusCode != 200) {
       throw Exception('Failed to delete voice: ${response.body}');
     }
@@ -342,10 +398,16 @@ class ApiService {
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
     if (fileBytes != null) {
-      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName ?? 'voice.wav',
+        ),
+      );
     }
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to update voice: $body');
@@ -353,7 +415,7 @@ class ApiService {
   }
 
   Future<List<String>> getChatterboxLanguages() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/languages'));
+    final response = await _get(Uri.parse('$baseUrl/api/chatterbox/languages'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<String>.from(data['languages']);
@@ -362,17 +424,38 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getChatterboxInfo() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/chatterbox/info'));
+    final response = await _get(Uri.parse('$baseUrl/api/chatterbox/info'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
     throw Exception('Failed to load Chatterbox info');
   }
 
+  Future<Map<String, dynamic>> getChatterboxDictaStatus() async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/chatterbox/dicta/status'),
+    );
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to load Dicta status');
+  }
+
+  Future<Map<String, dynamic>> downloadChatterboxDictaModel() async {
+    final response = await _post(
+      Uri.parse('$baseUrl/api/chatterbox/dicta/download'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    if (response.statusCode == 200) {
+      return json.decode(response.body);
+    }
+    throw Exception('Failed to start Dicta download: ${response.body}');
+  }
+
   // ============== IndexTTS-2 (Voice Clone) ==============
 
   Future<Map<String, dynamic>> getIndexTTS2Voices() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/indextts2/voices'));
+    final response = await _get(Uri.parse('$baseUrl/api/indextts2/voices'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -396,7 +479,7 @@ class ApiService {
       'unload_after': unloadAfter,
     };
 
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/indextts2/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(body),
@@ -408,16 +491,23 @@ class ApiService {
     throw Exception('Failed to generate IndexTTS-2 audio: ${response.body}');
   }
 
-  Future<void> uploadIndexTTS2Voice(String name, Uint8List fileBytes, String fileName, String transcript) async {
+  Future<void> uploadIndexTTS2Voice(
+    String name,
+    Uint8List fileBytes,
+    String fileName,
+    String transcript,
+  ) async {
     var request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/indextts2/voices'),
     );
     request.fields['name'] = name;
     request.fields['transcript'] = transcript;
-    request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName));
+    request.files.add(
+      http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
+    );
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to upload IndexTTS-2 voice: $body');
@@ -425,8 +515,9 @@ class ApiService {
   }
 
   Future<void> deleteIndexTTS2Voice(String name) async {
-    final response =
-        await http.delete(Uri.parse('$baseUrl/api/indextts2/voices/$name'));
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/indextts2/voices/$name'),
+    );
     if (response.statusCode != 200) {
       throw Exception('Failed to delete voice: ${response.body}');
     }
@@ -446,10 +537,16 @@ class ApiService {
     if (newName != null) request.fields['new_name'] = newName;
     if (transcript != null) request.fields['transcript'] = transcript;
     if (fileBytes != null) {
-      request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: fileName ?? 'voice.wav'));
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName ?? 'voice.wav',
+        ),
+      );
     }
 
-    final response = await request.send();
+    final response = await request.send().timeout(_requestTimeout);
     if (response.statusCode != 200) {
       final body = await response.stream.bytesToString();
       throw Exception('Failed to update voice: $body');
@@ -457,7 +554,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getIndexTTS2Info() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/indextts2/info'));
+    final response = await _get(Uri.parse('$baseUrl/api/indextts2/info'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -467,7 +564,7 @@ class ApiService {
   // ============== Model Management ==============
 
   Future<List<Map<String, dynamic>>> getModelsStatus() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/models/status'));
+    final response = await _get(Uri.parse('$baseUrl/api/models/status'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['models']);
@@ -476,8 +573,10 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> downloadModel(String modelName) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/models/${Uri.encodeComponent(modelName)}/download'),
+    final response = await _post(
+      Uri.parse(
+        '$baseUrl/api/models/${Uri.encodeComponent(modelName)}/download',
+      ),
       headers: {'Content-Type': 'application/json'},
     );
     if (response.statusCode == 200) {
@@ -487,7 +586,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> deleteModel(String modelName) async {
-    final response = await http.delete(
+    final response = await _delete(
       Uri.parse('$baseUrl/api/models/${Uri.encodeComponent(modelName)}'),
     );
     if (response.statusCode == 200) {
@@ -499,7 +598,7 @@ class ApiService {
   // ============== LLM Configuration ==============
 
   Future<Map<String, dynamic>> getLlmConfig() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/llm/config'));
+    final response = await _get(Uri.parse('$baseUrl/api/llm/config'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -508,7 +607,7 @@ class ApiService {
 
   Future<List<String>> getOllamaModels() async {
     try {
-      final response = await http.get(Uri.parse('$baseUrl/api/llm/ollama/models'));
+      final response = await _get(Uri.parse('$baseUrl/api/llm/ollama/models'));
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         if (data['available'] == true) {
@@ -522,7 +621,7 @@ class ApiService {
   }
 
   Future<void> updateLlmConfig(Map<String, dynamic> config) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/llm/config'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(config),
@@ -535,7 +634,7 @@ class ApiService {
   // ============== Emma IPA ==============
 
   Future<List<Map<String, dynamic>>> getEmmaIpaSamples() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/ipa/samples'));
+    final response = await _get(Uri.parse('$baseUrl/api/ipa/samples'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
@@ -544,7 +643,7 @@ class ApiService {
   }
 
   Future<String> getEmmaIpaSampleText() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/ipa/sample'));
+    final response = await _get(Uri.parse('$baseUrl/api/ipa/sample'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return data['text'] as String;
@@ -557,7 +656,7 @@ class ApiService {
     String? provider,
     String? model,
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/ipa/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
@@ -573,7 +672,7 @@ class ApiService {
   }
 
   Future<Map<String, dynamic>> getEmmaIpaPregenerated() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/ipa/pregenerated'));
+    final response = await _get(Uri.parse('$baseUrl/api/ipa/pregenerated'));
     if (response.statusCode == 200) {
       return json.decode(response.body);
     }
@@ -597,7 +696,7 @@ class ApiService {
     int maxCharsPerChunk = 1500,
     int crossfadeMs = 40,
   }) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/audiobook/generate'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode({
@@ -620,7 +719,7 @@ class ApiService {
 
   /// Get the status of an audiobook generation job.
   Future<Map<String, dynamic>> getAudiobookStatus(String jobId) async {
-    final response = await http.get(
+    final response = await _get(
       Uri.parse('$baseUrl/api/audiobook/status/$jobId'),
     );
     if (response.statusCode == 200) {
@@ -631,7 +730,7 @@ class ApiService {
 
   /// Cancel an in-progress audiobook generation job.
   Future<void> cancelAudiobookGeneration(String jobId) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/audiobook/cancel/$jobId'),
     );
     if (response.statusCode != 200) {
@@ -646,9 +745,7 @@ class ApiService {
 
   /// List all generated audiobooks.
   Future<List<Map<String, dynamic>>> getAudiobooks() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/audiobook/list'),
-    );
+    final response = await _get(Uri.parse('$baseUrl/api/audiobook/list'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['audiobooks']);
@@ -658,9 +755,7 @@ class ApiService {
 
   /// Delete an audiobook.
   Future<void> deleteAudiobook(String jobId) async {
-    final response = await http.delete(
-      Uri.parse('$baseUrl/api/audiobook/$jobId'),
-    );
+    final response = await _delete(Uri.parse('$baseUrl/api/audiobook/$jobId'));
     if (response.statusCode != 200) {
       throw Exception('Failed to delete audiobook: ${response.body}');
     }
@@ -670,9 +765,7 @@ class ApiService {
 
   /// List all generated TTS audio files (Kokoro).
   Future<List<Map<String, dynamic>>> getTtsAudioFiles() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/tts/audio/list'),
-    );
+    final response = await _get(Uri.parse('$baseUrl/api/tts/audio/list'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['audio_files']);
@@ -682,7 +775,7 @@ class ApiService {
 
   /// Delete a TTS audio file.
   Future<void> deleteTtsAudio(String filename) async {
-    final response = await http.delete(
+    final response = await _delete(
       Uri.parse('$baseUrl/api/tts/audio/$filename'),
     );
     if (response.statusCode != 200) {
@@ -692,9 +785,7 @@ class ApiService {
 
   /// List all generated Kokoro TTS audio files.
   Future<List<Map<String, dynamic>>> getKokoroAudioFiles() async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/kokoro/audio/list'),
-    );
+    final response = await _get(Uri.parse('$baseUrl/api/kokoro/audio/list'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['audio_files']);
@@ -704,7 +795,7 @@ class ApiService {
 
   /// Delete a Kokoro audio file.
   Future<void> deleteKokoroAudio(String filename) async {
-    final response = await http.delete(
+    final response = await _delete(
       Uri.parse('$baseUrl/api/kokoro/audio/$filename'),
     );
     if (response.statusCode != 200) {
@@ -716,7 +807,7 @@ class ApiService {
 
   /// List all generated voice clone audio files (Qwen3).
   Future<List<Map<String, dynamic>>> getVoiceCloneAudioFiles() async {
-    final response = await http.get(
+    final response = await _get(
       Uri.parse('$baseUrl/api/voice-clone/audio/list'),
     );
     if (response.statusCode == 200) {
@@ -728,7 +819,7 @@ class ApiService {
 
   /// Delete a voice clone audio file.
   Future<void> deleteVoiceCloneAudio(String filename) async {
-    final response = await http.delete(
+    final response = await _delete(
       Uri.parse('$baseUrl/api/voice-clone/audio/$filename'),
     );
     if (response.statusCode != 200) {
@@ -740,7 +831,7 @@ class ApiService {
 
   /// List available PDF/TXT/MD documents from the backend.
   Future<List<Map<String, dynamic>>> listPdfDocuments() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/pdf/list'));
+    final response = await _get(Uri.parse('$baseUrl/api/pdf/list'));
     if (response.statusCode == 200) {
       final data = json.decode(response.body);
       return List<Map<String, dynamic>>.from(data['documents']);
@@ -755,11 +846,36 @@ class ApiService {
 
   /// Fetch PDF bytes from the backend by URL path.
   Future<Uint8List> fetchPdfBytes(String urlPath) async {
-    final response = await http.get(Uri.parse('$baseUrl$urlPath'));
+    final response = await _get(Uri.parse('$baseUrl$urlPath'));
     if (response.statusCode == 200) {
       return response.bodyBytes;
     }
     throw Exception('Failed to fetch document');
+  }
+
+  /// Extract text from PDF bytes using backend extraction (PyMuPDF fallback).
+  Future<String> extractPdfText(
+    Uint8List bytes, {
+    String filename = 'document.pdf',
+  }) async {
+    final safeFilename = filename.toLowerCase().endsWith('.pdf')
+        ? filename
+        : '$filename.pdf';
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/pdf/extract-text'),
+    );
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: safeFilename),
+    );
+
+    final streamed = await request.send().timeout(_requestTimeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body) as Map<String, dynamic>;
+      return (data['text'] as String?) ?? '';
+    }
+    throw Exception('Failed to extract PDF text: ${response.body}');
   }
 
   // ============== MCP Server ==============
@@ -769,7 +885,7 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getMcpTools({int mcpPort = 8010}) async {
     try {
       // First initialize the MCP session
-      final initResponse = await http.post(
+      final initResponse = await _post(
         Uri.parse('http://localhost:$mcpPort/'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -786,7 +902,7 @@ class ApiService {
       if (initResponse.statusCode != 200) return [];
 
       // Then list tools
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('http://localhost:$mcpPort/'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -811,7 +927,7 @@ class ApiService {
   /// Check if the MCP server is reachable.
   Future<bool> checkMcpHealth({int mcpPort = 8010}) async {
     try {
-      final response = await http.post(
+      final response = await _post(
         Uri.parse('http://localhost:$mcpPort/'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
@@ -830,5 +946,4 @@ class ApiService {
       return false;
     }
   }
-
 }

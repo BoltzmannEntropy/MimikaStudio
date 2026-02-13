@@ -2,18 +2,21 @@
 from __future__ import annotations
 
 import uuid
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import soundfile as sf
-import torch
 from scipy import signal
 
 from .audio_utils import merge_audio_chunks
 from .text_chunking import smart_chunk_text
+
+try:
+    import mlx.core as mx
+except Exception:  # pragma: no cover - fallback for non-MLX systems
+    mx = None
 
 
 @dataclass
@@ -35,7 +38,7 @@ class ChatterboxEngine:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
         self.sample_voices_dir = (
-            Path(__file__).parent.parent / "data" / "samples" / "chatterbox_voices"
+            Path(__file__).parent.parent / "data" / "samples" / "voices"
         )
         self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
 
@@ -45,8 +48,8 @@ class ChatterboxEngine:
         self.user_voices_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_device(self) -> str:
-        if torch.cuda.is_available():
-            return "cuda"
+        if mx is not None and mx.metal.is_available():
+            return "mlx"
         return "cpu"
 
     def load_model(self):
@@ -55,80 +58,27 @@ class ChatterboxEngine:
             return self.model
 
         try:
-            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+            from mlx_audio.tts import load as load_tts_model
         except ImportError as exc:
             raise ImportError(
-                "chatterbox-tts not installed. Install with: pip install chatterbox-tts"
+                "mlx-audio not installed. Install with: pip install -U mlx-audio"
             ) from exc
 
-        self._configure_hebrew_diacritizer()
         self.device = self._get_device()
-        # Chatterbox checkpoints are saved on CUDA; force map to current device.
-        original_torch_load = torch.load
-
-        def _load_with_map(*args, **kwargs):
-            if "map_location" not in kwargs:
-                kwargs["map_location"] = torch.device(self.device)
-            return original_torch_load(*args, **kwargs)
-
-        torch.load = _load_with_map
-        try:
-            self.model = ChatterboxMultilingualTTS.from_pretrained(device=self.device)
-        finally:
-            torch.load = original_torch_load
-
-        # Force eager attention to avoid SDPA/output_attentions conflict.
-        try:
-            cfg = getattr(self.model.t3, "cfg", None)
-            if cfg is not None:
-                for attr in ("_attn_implementation", "_attn_implementation_internal", "attn_implementation"):
-                    try:
-                        setattr(cfg, attr, "eager")
-                    except Exception:
-                        continue
-        except Exception:
-            pass
+        self.model = load_tts_model("mlx-community/chatterbox-fp16")
         return self.model
 
     def unload(self) -> None:
         """Free memory by unloading the model."""
         self.model = None
-        if self.device == "mps":
-            torch.mps.empty_cache()
-        elif self.device and self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
-
-    def _configure_hebrew_diacritizer(self) -> None:
-        """Load Dicta ONNX model for Hebrew diacritization if available."""
-        try:
-            import chatterbox.models.tokenizers.tokenizer as tok
-            from dicta_onnx import Dicta
-        except Exception:
-            return
-
-        if getattr(tok, "_dicta", None) is not None:
-            return
-
-        model_path = os.environ.get("DICTA_ONNX_MODEL_PATH")
-        if not model_path:
-            model_path = str(
-                Path(__file__).parent.parent / "models" / "dicta-onnx" / "dicta-1.0.onnx"
-            )
-
-        if not Path(model_path).exists():
-            return
-
-        try:
-            tok._dicta = Dicta(model_path)
-            print(f"[Chatterbox] Hebrew diacritizer loaded: {model_path}")
-        except Exception as exc:
-            print(f"[Chatterbox] Hebrew diacritizer init failed: {exc}")
+        if mx is not None:
+            mx.clear_cache()
 
     def _seed(self, seed: int) -> None:
         if seed >= 0:
-            torch.manual_seed(seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed(seed)
+            np.random.seed(seed)
+            if mx is not None:
+                mx.random.seed(seed)
 
     def _adjust_speed(self, audio: np.ndarray, speed: float) -> np.ndarray:
         if speed == 1.0:
@@ -168,24 +118,39 @@ class ChatterboxEngine:
         language = (language or "en").lower()
 
         all_audio = []
+        sample_rate = 24000
         for chunk in chunks:
             self._seed(params.seed)
-            audio = self.model.generate(  # type: ignore[call-arg]
+            results = self.model.generate(  # type: ignore[call-arg]
                 text=chunk,
-                language_id=language,
-                audio_prompt_path=ref_audio_path,
+                lang_code=language,
+                ref_audio=ref_audio_path,
                 exaggeration=params.exaggeration,
                 temperature=params.temperature,
                 cfg_weight=params.cfg_weight,
+                verbose=False,
             )
-            audio = audio.squeeze().detach().cpu().numpy().astype(np.float32)
+            generated_chunks: list[np.ndarray] = []
+            for result in results:
+                sample_rate = int(getattr(result, "sample_rate", sample_rate))
+                generated_chunks.append(np.asarray(result.audio, dtype=np.float32).reshape(-1))
+            if not generated_chunks:
+                continue
+            audio = (
+                generated_chunks[0]
+                if len(generated_chunks) == 1
+                else np.concatenate(generated_chunks)
+            )
             audio = self._adjust_speed(audio, speed)
             all_audio.append(audio)
 
-        merged = merge_audio_chunks(all_audio, self.model.sr, crossfade_ms=crossfade_ms)  # type: ignore[attr-defined]
+        if not all_audio:
+            raise RuntimeError("No audio generated by Chatterbox")
+
+        merged = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=crossfade_ms)
         short_uuid = str(uuid.uuid4())[:8]
         output_path = self.outputs_dir / f"chatterbox-{voice_name}-{short_uuid}.wav"
-        sf.write(output_path, merged, self.model.sr)  # type: ignore[arg-type]
+        sf.write(output_path, merged, sample_rate)
         return output_path
 
     def save_voice_sample(self, name: str, audio_path: str, transcript: str = "") -> dict:
@@ -238,17 +203,19 @@ class ChatterboxEngine:
         return voices
 
     def get_languages(self) -> list[str]:
-        try:
-            from chatterbox.mtl_tts import ChatterboxMultilingualTTS
-            return list(ChatterboxMultilingualTTS.get_supported_languages())
-        except Exception:
-            return ["en"]
+        return [
+            "ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi",
+            "it", "ja", "ko", "ms", "nl", "no", "pl", "pt", "ru", "sv",
+            "sw", "tr", "zh",
+        ]
 
     def get_model_info(self) -> dict:
         return {
             "name": "Chatterbox Multilingual TTS",
+            "repo": "mlx-community/chatterbox-fp16",
+            "backend": "mlx-audio",
             "device": self.device or "not loaded",
-            "sample_rate": getattr(self.model, "sr", None),
+            "sample_rate": getattr(self.model, "sample_rate", None),
             "languages": self.get_languages(),
             "features": ["voice_cloning", "multilingual"],
         }

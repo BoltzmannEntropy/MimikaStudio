@@ -14,7 +14,9 @@ from typing import Optional
 import os
 import re
 import shutil
+import threading
 import tempfile
+import urllib.request
 import uuid
 import soundfile as sf
 
@@ -23,12 +25,9 @@ from version import VERSION, VERSION_NAME
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
 from tts.chatterbox_engine import get_chatterbox_engine, ChatterboxParams
-from tts.indextts2_engine import get_indextts2_engine
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
-from language.ipa_generator import generate_ipa_transcription, get_sample_text as get_ipa_sample_text
-from llm.factory import load_config as load_llm_config, save_config as save_llm_config, get_available_providers
 from settings_service import get_all_settings, get_setting, set_setting, get_output_folder, set_output_folder
 
 # Request models
@@ -48,7 +47,9 @@ class Qwen3Request(BaseModel):
     language: str = "Auto"
     speed: float = 1.0
     model_size: str = "0.6B"  # "0.6B" or "1.7B"
+    model_quantization: str = "bf16"  # "bf16" or "8bit"
     instruct: Optional[str] = None  # Style instruction for custom mode
+    streaming_interval: float = 0.75  # Seconds between streamed chunks
     # Advanced parameters
     temperature: float = 0.9
     top_p: float = 0.9
@@ -83,17 +84,6 @@ class IndexTTS2Request(BaseModel):
     unload_after: bool = False
 
 
-class LLMConfigRequest(BaseModel):
-    provider: str
-    model: str
-    api_key: Optional[str] = None
-    api_base: Optional[str] = None
-
-class IPAGenerateRequest(BaseModel):
-    text: str
-    provider: Optional[str] = None
-    model: Optional[str] = None
-
 class SettingsUpdateRequest(BaseModel):
     key: str
     value: str
@@ -106,6 +96,7 @@ async def lifespan(app: FastAPI):
     print("Initializing database...")
     init_db()
     seed_db()
+    _sync_output_folder_runtime(get_output_folder())
     _migrate_legacy_voice_samples()
     print("Database ready.")
     yield
@@ -119,11 +110,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# CORS origins are configurable for production hardening.
+_default_local_origins = [
+    "http://localhost",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:8000",
+    "http://127.0.0.1",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:8000",
+]
+_cors_origins_env = os.getenv("MIMIKA_CORS_ORIGINS", "")
+_configured_cors_origins = [origin.strip() for origin in _cors_origins_env.split(",") if origin.strip()]
+ALLOWED_CORS_ORIGINS = _configured_cors_origins or _default_local_origins
+
 # CORS for Flutter
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -133,27 +139,86 @@ outputs_dir = Path(__file__).parent / "outputs"
 outputs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
 
+
+def _sync_output_folder_runtime(path: str) -> Path:
+    """Apply output-folder setting to runtime storage and /audio static mount."""
+    global outputs_dir
+    resolved = Path(path).expanduser()
+    resolved.mkdir(parents=True, exist_ok=True)
+    outputs_dir = resolved
+
+    # Retarget the mounted /audio StaticFiles app without requiring restart.
+    for route in app.router.routes:
+        if getattr(route, "name", "") != "audio":
+            continue
+        static_app = getattr(route, "app", None)
+        if static_app is None:
+            break
+        if hasattr(static_app, "directory"):
+            static_app.directory = str(resolved)
+        if hasattr(static_app, "all_directories"):
+            static_app.all_directories = [str(resolved)]
+        if hasattr(static_app, "config_checked"):
+            static_app.config_checked = False
+        break
+
+    return resolved
+
+
+def _normalize_pdf_text_for_tts(text: str) -> str:
+    """Normalize extracted PDF text for sentence parsing and read-aloud."""
+    if not text:
+        return ""
+
+    # Fix wrapped line breaks where a sentence continues on the next line.
+    normalized = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
+    normalized = normalized.replace("\u00a0", " ")
+
+    # Split sentence punctuation from glued next words.
+    normalized = re.sub(r"([.!?;:,])(?=[A-Za-z])", r"\1 ", normalized)
+    # Split simple camel-case joins from bad extractors (earthAnd -> earth And).
+    normalized = re.sub(r"(?<=[a-z])(?=[A-Z])", " ", normalized)
+
+    # Collapse extra whitespace while preserving paragraph breaks.
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
 # Qwen3 voice storage locations
-QWEN3_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "qwen3_voices"
+SHARED_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "voices"
+QWEN3_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
 QWEN3_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "qwen3"
-DEFAULT_QWEN3_VOICES = {"Natasha", "Suzan"}
 
 # Chatterbox voice storage locations
-CHATTERBOX_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "chatterbox_voices"
+CHATTERBOX_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
 CHATTERBOX_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "chatterbox"
-DEFAULT_CHATTERBOX_VOICES = {"Natasha", "Suzan"}
 
 # IndexTTS-2 voice storage locations
-INDEXTTS2_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "indextts2_voices"
-INDEXTTS2_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "indextts2"
+INDEXTTS2_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
+INDEXTTS2_USER_VOICES_DIR = QWEN3_USER_VOICES_DIR
+DICTA_MODEL_DIR = Path(__file__).parent / "models" / "dicta-onnx"
+DICTA_MODEL_PATH = DICTA_MODEL_DIR / "dicta-1.0.onnx"
+DICTA_MODEL_URL = (
+    "https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx"
+)
+
+
+def _get_indextts2_engine():
+    """Lazy-load IndexTTS-2 to keep backend bootable without torch."""
+    try:
+        from tts.indextts2_engine import get_indextts2_engine as _factory
+    except Exception as exc:
+        raise ImportError(
+            "IndexTTS-2 runtime unavailable. This build is configured for MLX-Audio engines only."
+        ) from exc
+    return _factory()
 
 
 def _get_all_voices() -> list:
     """List all voice samples across all engines (shared pool)."""
     all_dirs = [
-        ("qwen3", QWEN3_SAMPLE_VOICES_DIR, "default"),
+        ("shared", SHARED_SAMPLE_VOICES_DIR, "default"),
         ("qwen3", QWEN3_USER_VOICES_DIR, "user"),
-        ("chatterbox", CHATTERBOX_SAMPLE_VOICES_DIR, "default"),
         ("chatterbox", CHATTERBOX_USER_VOICES_DIR, "user"),
         ("indextts2", INDEXTTS2_SAMPLE_VOICES_DIR, "default"),
         ("indextts2", INDEXTTS2_USER_VOICES_DIR, "user"),
@@ -182,8 +247,9 @@ def _get_all_voices() -> list:
 def _find_voice_audio(name: str) -> Optional[Path]:
     """Search all voice directories for a voice file by name."""
     all_dirs = [
-        QWEN3_USER_VOICES_DIR, QWEN3_SAMPLE_VOICES_DIR,
-        CHATTERBOX_USER_VOICES_DIR, CHATTERBOX_SAMPLE_VOICES_DIR,
+        SHARED_SAMPLE_VOICES_DIR,
+        QWEN3_USER_VOICES_DIR,
+        CHATTERBOX_USER_VOICES_DIR,
         INDEXTTS2_USER_VOICES_DIR, INDEXTTS2_SAMPLE_VOICES_DIR,
     ]
     for vdir in all_dirs:
@@ -193,12 +259,23 @@ def _find_voice_audio(name: str) -> Optional[Path]:
     return None
 
 
+def _is_shared_default_voice(name: str) -> bool:
+    """Default voices are determined by location, not hardcoded names."""
+    if not name:
+        return False
+    target = name.lower()
+    return any(wav.stem.lower() == target for wav in SHARED_SAMPLE_VOICES_DIR.glob("*.wav"))
+
+
 def _migrate_legacy_voice_samples() -> None:
-    """Move legacy or user voices into the non-synced user voices folder."""
-    legacy_dir = Path(__file__).parent / "data" / "samples" / "voices"
-    QWEN3_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    """Consolidate legacy sample folders into the shared defaults folder."""
+    samples_root = Path(__file__).parent / "data" / "samples"
+    shared_dir = SHARED_SAMPLE_VOICES_DIR
+    legacy_qwen3_dir = samples_root / "qwen3_voices"
+    legacy_chatterbox_dir = samples_root / "chatterbox_voices"
+
+    shared_dir.mkdir(parents=True, exist_ok=True)
     QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    CHATTERBOX_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     INDEXTTS2_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
@@ -219,45 +296,12 @@ def _migrate_legacy_voice_samples() -> None:
             else:
                 shutil.move(str(src_txt), str(dest_txt))
 
-    # Migrate any legacy voices
-    if legacy_dir.exists():
+    # Migrate deprecated engine-specific sample folders into shared defaults.
+    for legacy_dir in (legacy_qwen3_dir, legacy_chatterbox_dir):
+        if not legacy_dir.exists():
+            continue
         for wav_file in legacy_dir.glob("*.wav"):
-            name = wav_file.stem
-            if name in DEFAULT_QWEN3_VOICES:
-                dest_wav = QWEN3_SAMPLE_VOICES_DIR / wav_file.name
-                if not dest_wav.exists():
-                    shutil.copy2(wav_file, dest_wav)
-                src_txt = wav_file.with_suffix(".txt")
-                dest_txt = QWEN3_SAMPLE_VOICES_DIR / src_txt.name
-                if src_txt.exists() and not dest_txt.exists():
-                    shutil.copy2(src_txt, dest_txt)
-            else:
-                move_voice(legacy_dir, name, QWEN3_USER_VOICES_DIR)
-
-    # Ensure only default voices remain in the sample folder
-    for wav_file in QWEN3_SAMPLE_VOICES_DIR.glob("*.wav"):
-        if wav_file.stem not in DEFAULT_QWEN3_VOICES:
-            move_voice(QWEN3_SAMPLE_VOICES_DIR, wav_file.stem, QWEN3_USER_VOICES_DIR)
-
-    # Seed Chatterbox defaults from Qwen3 samples if missing
-    for name in DEFAULT_CHATTERBOX_VOICES:
-        src_wav = QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav"
-        dest_wav = CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav"
-        if src_wav.exists() and not dest_wav.exists():
-            shutil.copy2(src_wav, dest_wav)
-        src_txt = QWEN3_SAMPLE_VOICES_DIR / f"{name}.txt"
-        dest_txt = CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.txt"
-        if src_txt.exists() and not dest_txt.exists():
-            shutil.copy2(src_txt, dest_txt)
-
-    # Ensure only default voices remain in the chatterbox sample folder
-    for wav_file in CHATTERBOX_SAMPLE_VOICES_DIR.glob("*.wav"):
-        if wav_file.stem not in DEFAULT_CHATTERBOX_VOICES:
-            move_voice(
-                CHATTERBOX_SAMPLE_VOICES_DIR,
-                wav_file.stem,
-                CHATTERBOX_USER_VOICES_DIR,
-            )
+            move_voice(legacy_dir, wav_file.stem, shared_dir)
 
 
 def _safe_tag(value: str, fallback: str = "model") -> str:
@@ -307,33 +351,49 @@ async def system_info():
     """Get system information including Python version, device, and model versions."""
     import sys
     import platform
-    import torch
+    from importlib import metadata
 
-    # Detect compute device
-    if torch.backends.mps.is_available():
-        device = "MPS (Apple Silicon)"
-    elif torch.cuda.is_available():
-        device = f"CUDA ({torch.cuda.get_device_name(0)})"
-    else:
-        device = "CPU"
+    try:
+        import mlx.core as mx
+        mlx_available = bool(mx.metal.is_available())
+    except Exception:
+        mlx_available = False
+
+    device = "MLX (Apple Silicon)" if mlx_available else "CPU"
+    try:
+        mlx_audio_version = metadata.version("mlx-audio")
+    except Exception:
+        mlx_audio_version = "unknown"
 
     # Get model versions from each engine
-    kokoro_info = {"model": "Kokoro v0.19", "voice_pack": "British English"}
-    qwen3_info = {"model": "Qwen3-TTS-12Hz-0.6B-Base", "features": "3-sec voice clone"}
-    chatterbox_info = {"model": "Chatterbox Multilingual TTS", "features": "voice clone"}
-    indextts2_info = {"model": "IndexTTS-2", "features": "voice clone"}
+    kokoro_info = {
+        "model": "mlx-community/Kokoro-82M-bf16",
+        "backend": "mlx-audio",
+        "voice_pack": "British English",
+    }
+    qwen3_info = {
+        "model": "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+        "backend": "mlx-audio",
+        "features": "3-sec voice clone + custom speakers",
+    }
+    chatterbox_info = {
+        "model": "mlx-community/chatterbox-fp16",
+        "backend": "mlx-audio",
+        "features": "voice clone",
+    }
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
         "os": f"{platform.system()} {platform.release()}",
         "arch": platform.machine(),
         "device": device,
-        "torch_version": torch.__version__,
+        "runtime": "mlx-audio",
+        "mlx_audio_version": mlx_audio_version,
+        "torch_version": None,
         "models": {
             "kokoro": kokoro_info,
             "qwen3": qwen3_info,
             "chatterbox": chatterbox_info,
-            "indextts2": indextts2_info,
         }
     }
 
@@ -342,7 +402,10 @@ async def system_info():
 async def system_stats():
     """Get real-time system stats: CPU, RAM, GPU memory."""
     import psutil
-    import torch
+    try:
+        import mlx.core as mx
+    except Exception:
+        mx = None
 
     # CPU usage
     cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -361,24 +424,17 @@ async def system_stats():
         "gpu": None,
     }
 
-    # GPU memory (if available)
-    if torch.cuda.is_available():
-        gpu_mem_used = torch.cuda.memory_allocated() / (1024 ** 3)
-        gpu_mem_total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    # GPU memory (if available on MLX)
+    if mx is not None and mx.metal.is_available():
+        active_mem = mx.get_active_memory() / (1024 ** 3)
+        peak_mem = mx.get_peak_memory() / (1024 ** 3)
         result["gpu"] = {
-            "name": torch.cuda.get_device_name(0),
-            "memory_used_gb": round(gpu_mem_used, 1),
-            "memory_total_gb": round(gpu_mem_total, 1),
-            "memory_percent": round(gpu_mem_used / gpu_mem_total * 100, 1) if gpu_mem_total > 0 else 0,
-        }
-    elif torch.backends.mps.is_available():
-        # MPS doesn't have detailed memory API, but we can show it's active
-        result["gpu"] = {
-            "name": "Apple Silicon (MPS)",
-            "memory_used_gb": None,
+            "name": "Apple Silicon (MLX)",
+            "memory_used_gb": round(active_mem, 2),
             "memory_total_gb": None,
             "memory_percent": None,
-            "note": "MPS active - memory shared with system RAM",
+            "peak_memory_gb": round(peak_mem, 2),
+            "note": "MLX memory is shared with system RAM",
         }
 
     return result
@@ -398,24 +454,40 @@ async def list_all_custom_voices():
             return None
         return f"/samples/{rel_path.as_posix()}"
 
-    voices = []
+    voices_by_name: dict[str, dict] = {}
+
+    def add_voice(source_engine: str, voice: dict) -> None:
+        name = voice.get("name")
+        if not name:
+            return
+        audio_path = Path(voice.get("audio_path", ""))
+        audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
+        existing = voices_by_name.get(name)
+        if existing:
+            if source_engine not in existing["engines"]:
+                existing["engines"].append(source_engine)
+            # Prefer transcript from any source if current one is empty.
+            if not existing.get("transcript") and voice.get("transcript"):
+                existing["transcript"] = voice.get("transcript")
+            if not existing.get("audio_url") and audio_url:
+                existing["audio_url"] = audio_url
+            return
+
+        voices_by_name[name] = {
+            "name": name,
+            "source": source_engine,
+            "engines": [source_engine],
+            "transcript": voice.get("transcript"),
+            "has_audio": True,
+            "audio_url": audio_url,
+        }
 
     # Get Qwen3 voices
     try:
         engine = get_qwen3_engine()
         qwen3_voices = engine.get_saved_voices()
         for voice in qwen3_voices:
-            # Avoid duplicates by checking name
-            if not any(v["name"] == voice["name"] and v["source"] == "qwen3" for v in voices):
-                audio_path = Path(voice.get("audio_path", ""))
-                audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
-                voices.append({
-                    "name": voice["name"],
-                    "source": "qwen3",
-                    "transcript": voice.get("transcript"),
-                    "has_audio": True,
-                    "audio_url": audio_url,
-                })
+            add_voice("qwen3", voice)
     except ImportError:
         pass  # Qwen3 not installed
 
@@ -424,19 +496,12 @@ async def list_all_custom_voices():
         engine = get_chatterbox_engine()
         chatterbox_voices = engine.get_saved_voices()
         for voice in chatterbox_voices:
-            if not any(v["name"] == voice["name"] and v["source"] == "chatterbox" for v in voices):
-                audio_path = Path(voice.get("audio_path", ""))
-                audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
-                voices.append({
-                    "name": voice["name"],
-                    "source": "chatterbox",
-                    "transcript": voice.get("transcript"),
-                    "has_audio": True,
-                    "audio_url": audio_url,
-                })
+            add_voice("chatterbox", voice)
     except ImportError:
         pass  # Chatterbox not installed
 
+    voices = list(voices_by_name.values())
+    voices.sort(key=lambda v: v["name"].lower())
     return {"voices": voices, "total": len(voices)}
 
 
@@ -468,7 +533,7 @@ async def kokoro_generate(request: KokoroRequest):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Kokoro not installed. Run: pip install kokoro. Error: {e}",
+            detail=f"Kokoro backend unavailable. Run: pip install -U mlx-audio. Error: {e}",
         )
 
 @app.get("/api/kokoro/voices")
@@ -498,6 +563,12 @@ async def qwen3_generate(request: Qwen3Request):
     - custom: Preset speaker voices (requires speaker)
     """
     try:
+        if request.model_quantization not in {"bf16", "8bit"}:
+            raise HTTPException(
+                status_code=400,
+                detail="model_quantization must be 'bf16' or '8bit'",
+            )
+
         # Build generation parameters
         params = GenerationParams(
             temperature=request.temperature,
@@ -517,8 +588,11 @@ async def qwen3_generate(request: Qwen3Request):
 
             engine = get_qwen3_engine(
                 model_size=request.model_size,
+                quantization=request.model_quantization,
                 mode="clone"
             )
+            engine.outputs_dir = outputs_dir
+            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
             voices = engine.get_saved_voices()
 
             # Find the voice (search own engine first, then all engines)
@@ -568,8 +642,11 @@ async def qwen3_generate(request: Qwen3Request):
 
             engine = get_qwen3_engine(
                 model_size=request.model_size,
+                quantization=request.model_quantization,
                 mode="custom"
             )
+            engine.outputs_dir = outputs_dir
+            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
 
             output_path = engine.generate_custom_voice(
                 text=request.text,
@@ -602,7 +679,7 @@ async def qwen3_generate(request: Qwen3Request):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Qwen3-TTS not installed. Run: pip install -U qwen-tts soundfile. Error: {e}"
+            detail=f"Qwen3-TTS backend unavailable. Run: pip install -U mlx-audio. Error: {e}"
         )
     except HTTPException:
         raise
@@ -612,26 +689,131 @@ async def qwen3_generate(request: Qwen3Request):
 
 @app.post("/api/qwen3/generate/stream")
 async def qwen3_generate_stream(request: Qwen3Request):
-    """Generate speech with streaming response.
-
-    Returns audio as a streaming response for real-time playback.
-    """
+    """Generate speech and stream raw PCM chunks as they are synthesized."""
     from fastapi.responses import StreamingResponse
 
-    # First generate the audio
-    result = await qwen3_generate(request)
-    filename = result["filename"]
-    output_path = outputs_dir / filename
+    try:
+        if request.model_quantization not in {"bf16", "8bit"}:
+            raise HTTPException(
+                status_code=400,
+                detail="model_quantization must be 'bf16' or '8bit'",
+            )
 
-    def iterator():
-        with output_path.open("rb") as handle:
-            while True:
-                chunk = handle.read(1024 * 256)  # 256KB chunks
-                if not chunk:
-                    break
-                yield chunk
+        params = GenerationParams(
+            temperature=request.temperature,
+            top_p=request.top_p,
+            top_k=request.top_k,
+            repetition_penalty=request.repetition_penalty,
+            seed=request.seed,
+        )
 
-    return StreamingResponse(iterator(), media_type="audio/wav")
+        if request.mode == "clone":
+            if not request.voice_name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Clone mode requires voice_name"
+                )
+
+            engine = get_qwen3_engine(
+                model_size=request.model_size,
+                quantization=request.model_quantization,
+                mode="clone",
+            )
+            engine.outputs_dir = outputs_dir
+            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+            voices = engine.get_saved_voices()
+            voice = next((v for v in voices if v["name"] == request.voice_name), None)
+            if voice is None:
+                audio_file = _find_voice_audio(request.voice_name)
+                if audio_file is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Voice '{request.voice_name}' not found. Upload a voice first."
+                    )
+                transcript = ""
+                txt_file = audio_file.with_suffix(".txt")
+                if txt_file.exists():
+                    transcript = txt_file.read_text().strip()
+                voice = {
+                    "name": request.voice_name,
+                    "audio_path": str(audio_file),
+                    "transcript": transcript,
+                }
+
+            chunk_iter = engine.stream_voice_clone_pcm(
+                text=request.text,
+                ref_audio_path=voice["audio_path"],
+                ref_text=voice["transcript"],
+                language=request.language,
+                speed=request.speed,
+                streaming_interval=request.streaming_interval,
+                params=params,
+            )
+
+        elif request.mode == "custom":
+            if not request.speaker:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Custom mode requires speaker"
+                )
+
+            if request.speaker not in QWEN_SPEAKERS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}"
+                )
+
+            engine = get_qwen3_engine(
+                model_size=request.model_size,
+                quantization=request.model_quantization,
+                mode="custom",
+            )
+            engine.outputs_dir = outputs_dir
+            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+            chunk_iter = engine.stream_custom_voice_pcm(
+                text=request.text,
+                speaker=request.speaker,
+                language=request.language,
+                instruct=request.instruct,
+                speed=request.speed,
+                streaming_interval=request.streaming_interval,
+                params=params,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown mode: {request.mode}. Use 'clone' or 'custom'"
+            )
+
+        def iterator():
+            try:
+                for chunk in chunk_iter:
+                    if chunk:
+                        yield chunk
+            finally:
+                if request.unload_after:
+                    engine.unload()
+
+        headers = {
+            "X-Audio-Format": "pcm_s16le",
+            "X-Audio-Sample-Rate": "24000",
+            "X-Audio-Channels": "1",
+        }
+        return StreamingResponse(
+            iterator(),
+            media_type="audio/L16; rate=24000; channels=1",
+            headers=headers,
+        )
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Qwen3-TTS backend unavailable. Run: pip install -U mlx-audio. Error: {e}"
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/qwen3/voices")
@@ -688,6 +870,7 @@ async def qwen3_list_models():
                 "name": m.name,
                 "engine": m.engine,
                 "mode": m.mode,
+                "quantization": m.quantization,
                 "size_gb": m.size_gb,
                 "speakers": list(m.speakers) if m.speakers else None,
             }
@@ -713,7 +896,7 @@ async def qwen3_upload_voice(
             status_code=400,
             detail="Transcript is required for voice cloning"
         )
-    if name in DEFAULT_QWEN3_VOICES:
+    if _is_shared_default_voice(name):
         raise HTTPException(
             status_code=400,
             detail="That name is reserved for default voices"
@@ -755,7 +938,7 @@ async def qwen3_upload_voice(
 async def qwen3_delete_voice(name: str):
     """Delete a Qwen3 voice sample."""
     # Prevent deleting shipped voices
-    if (QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+    if _is_shared_default_voice(name):
         raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
     audio_file = QWEN3_USER_VOICES_DIR / f"{name}.wav"
@@ -785,7 +968,7 @@ async def qwen3_update_voice(
 ):
     """Update a Qwen3 voice sample (rename, update transcript, or replace audio)."""
     # Prevent editing shipped voices
-    if (QWEN3_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+    if _is_shared_default_voice(name):
         raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
     old_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
@@ -794,7 +977,7 @@ async def qwen3_update_voice(
         raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
     final_name = new_name or name
-    if final_name in DEFAULT_QWEN3_VOICES:
+    if _is_shared_default_voice(final_name):
         raise HTTPException(
             status_code=400,
             detail="That name is reserved for default voices"
@@ -864,7 +1047,7 @@ async def qwen3_info():
         return {
             "name": "Qwen3-TTS",
             "installed": False,
-            "error": "Run: pip install -U qwen-tts soundfile",
+            "error": "Run: pip install -U mlx-audio",
         }
 
 
@@ -886,6 +1069,8 @@ async def chatterbox_generate(request: ChatterboxRequest):
     """Generate speech using Chatterbox voice cloning."""
     try:
         engine = get_chatterbox_engine()
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
         voices = engine.get_saved_voices()
         voice = next((v for v in voices if v["name"] == request.voice_name), None)
         if voice is None:
@@ -928,7 +1113,7 @@ async def chatterbox_generate(request: ChatterboxRequest):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Chatterbox not installed. Run: pip install chatterbox-tts. Error: {e}",
+            detail=f"Chatterbox backend unavailable. Run: pip install -U mlx-audio. Error: {e}",
         )
 
 
@@ -966,7 +1151,7 @@ async def chatterbox_upload_voice(
     if not name or len(name.strip()) == 0:
         raise HTTPException(status_code=400, detail="Voice name is required")
 
-    if name in DEFAULT_CHATTERBOX_VOICES:
+    if _is_shared_default_voice(name):
         raise HTTPException(status_code=400, detail="That name is reserved for default voices")
 
     CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
@@ -992,7 +1177,7 @@ async def chatterbox_upload_voice(
 @app.delete("/api/chatterbox/voices/{name}")
 async def chatterbox_delete_voice(name: str):
     """Delete a Chatterbox voice sample."""
-    if (CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+    if _is_shared_default_voice(name):
         raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
     audio_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
@@ -1015,7 +1200,7 @@ async def chatterbox_update_voice(
     file: Optional[UploadFile] = File(None),
 ):
     """Update a Chatterbox voice sample (rename, update transcript, or replace audio)."""
-    if (CHATTERBOX_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+    if _is_shared_default_voice(name):
         raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
     old_audio = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
@@ -1024,7 +1209,7 @@ async def chatterbox_update_voice(
         raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
     final_name = new_name or name
-    if final_name in DEFAULT_CHATTERBOX_VOICES:
+    if _is_shared_default_voice(final_name):
         raise HTTPException(status_code=400, detail="That name is reserved for default voices")
 
     CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
@@ -1059,9 +1244,12 @@ async def chatterbox_list_languages():
     """List supported languages for Chatterbox."""
     try:
         engine = get_chatterbox_engine()
-        return {"languages": engine.get_languages()}
+        languages = list(engine.get_languages())
+        if "he" not in languages:
+            languages.append("he")
+        return {"languages": languages}
     except ImportError:
-        return {"languages": ["en"]}
+        return {"languages": ["en", "he"]}
 
 
 @app.get("/api/chatterbox/info")
@@ -1074,8 +1262,82 @@ async def chatterbox_info():
         return {
             "name": "Chatterbox Multilingual TTS",
             "installed": False,
-            "error": "Run: pip install chatterbox-tts",
+            "error": "Run: pip install -U mlx-audio",
         }
+
+
+_dicta_download_status: dict[str, Optional[str]] = {"status": None, "error": None}
+_dicta_status_lock = threading.Lock()
+
+
+def _dicta_status_payload() -> dict:
+    installed = DICTA_MODEL_PATH.exists()
+    size_mb = None
+    if installed:
+        size_mb = round(DICTA_MODEL_PATH.stat().st_size / (1024 * 1024), 1)
+    with _dicta_status_lock:
+        status = _dicta_download_status.get("status")
+        error = _dicta_download_status.get("error")
+    return {
+        "installed": installed,
+        "path": str(DICTA_MODEL_PATH),
+        "size_mb": size_mb,
+        "download_status": status,
+        "download_error": error,
+    }
+
+
+@app.get("/api/chatterbox/dicta/status")
+async def chatterbox_dicta_status():
+    """Get Dicta Hebrew model status for Chatterbox."""
+    return _dicta_status_payload()
+
+
+@app.post("/api/chatterbox/dicta/download")
+async def chatterbox_dicta_download():
+    """Download Dicta Hebrew ONNX model used by Chatterbox Hebrew mode."""
+    if DICTA_MODEL_PATH.exists():
+        with _dicta_status_lock:
+            _dicta_download_status["status"] = "completed"
+            _dicta_download_status["error"] = None
+        payload = _dicta_status_payload()
+        payload["message"] = "Dicta model already installed"
+        return payload
+
+    with _dicta_status_lock:
+        in_progress = _dicta_download_status.get("status") == "downloading"
+    if in_progress:
+        payload = _dicta_status_payload()
+        payload["message"] = "Dicta download already in progress"
+        return payload
+
+    with _dicta_status_lock:
+        _dicta_download_status["status"] = "downloading"
+        _dicta_download_status["error"] = None
+
+    def _do_download() -> None:
+        temp_path = DICTA_MODEL_PATH.with_suffix(".onnx.part")
+        try:
+            DICTA_MODEL_DIR.mkdir(parents=True, exist_ok=True)
+            with urllib.request.urlopen(DICTA_MODEL_URL, timeout=120) as response, temp_path.open("wb") as out:
+                shutil.copyfileobj(response, out)
+            temp_path.replace(DICTA_MODEL_PATH)
+            with _dicta_status_lock:
+                _dicta_download_status["status"] = "completed"
+                _dicta_download_status["error"] = None
+        except Exception as exc:
+            temp_path.unlink(missing_ok=True)
+            with _dicta_status_lock:
+                _dicta_download_status["status"] = "failed"
+                _dicta_download_status["error"] = str(exc)
+
+    thread = threading.Thread(target=_do_download, daemon=True)
+    thread.start()
+
+    payload = _dicta_status_payload()
+    payload["message"] = "Dicta download started"
+    payload["url"] = DICTA_MODEL_URL
+    return payload
 
 
 # ============== IndexTTS-2 Endpoints (Voice Clone) ==============
@@ -1084,7 +1346,9 @@ async def chatterbox_info():
 async def indextts2_generate(request: IndexTTS2Request):
     """Generate speech using IndexTTS-2 voice cloning."""
     try:
-        engine = get_indextts2_engine()
+        engine = _get_indextts2_engine()
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
         voices = engine.get_saved_voices()
         voice = next((v for v in voices if v["name"] == request.voice_name), None)
         if voice is None:
@@ -1167,7 +1431,7 @@ async def indextts2_upload_voice(
         transcript_path.write_text(transcript.strip())
 
     try:
-        engine = get_indextts2_engine()
+        engine = _get_indextts2_engine()
         return {
             "message": "Voice uploaded successfully",
             "voice": engine.get_saved_voices(),
@@ -1243,7 +1507,7 @@ async def indextts2_update_voice(
 async def indextts2_info():
     """Get IndexTTS-2 model information."""
     try:
-        engine = get_indextts2_engine()
+        engine = _get_indextts2_engine()
         return engine.get_model_info()
     except ImportError:
         return {
@@ -1257,6 +1521,7 @@ async def indextts2_info():
 
 # Track active downloads: model_name -> {"status": "downloading"/"completed"/"failed", "error": str}
 _download_status: dict[str, dict] = {}
+_download_status_lock = threading.Lock()
 
 
 @app.get("/api/models/status")
@@ -1266,7 +1531,8 @@ async def models_status():
     models = []
     for m in registry.list_all_models():
         downloaded = registry.is_model_downloaded(m)
-        status_info = _download_status.get(m.name)
+        with _download_status_lock:
+            status_info = _download_status.get(m.name)
         models.append({
             "name": m.name,
             "engine": m.engine,
@@ -1300,21 +1566,23 @@ async def model_download(model_name: str):
         raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
 
     # Check if already downloading
-    current = _download_status.get(model_name)
+    with _download_status_lock:
+        current = _download_status.get(model_name)
     if current and current.get("status") == "downloading":
         return {"message": "Download already in progress", "model": model_name}
 
-    _download_status[model_name] = {"status": "downloading", "error": None}
-
-    import threading
+    with _download_status_lock:
+        _download_status[model_name] = {"status": "downloading", "error": None}
 
     def _do_download():
         try:
             from huggingface_hub import snapshot_download
             snapshot_download(model.hf_repo)
-            _download_status[model_name] = {"status": "completed", "error": None}
+            with _download_status_lock:
+                _download_status[model_name] = {"status": "completed", "error": None}
         except Exception as e:
-            _download_status[model_name] = {"status": "failed", "error": str(e)}
+            with _download_status_lock:
+                _download_status[model_name] = {"status": "failed", "error": str(e)}
 
     thread = threading.Thread(target=_do_download, daemon=True)
     thread.start()
@@ -1355,8 +1623,9 @@ async def model_delete(model_name: str):
         try:
             shutil.rmtree(cache_dir)
             # Clear download status if any
-            if model_name in _download_status:
-                del _download_status[model_name]
+            with _download_status_lock:
+                if model_name in _download_status:
+                    del _download_status[model_name]
             return {
                 "message": f"Model '{model_name}' deleted successfully",
                 "model": model_name,
@@ -1958,6 +2227,46 @@ async def list_pdfs():
     docs.sort(key=lambda d: d["name"])
     return {"documents": docs}
 
+
+@app.post("/api/pdf/extract-text")
+async def extract_pdf_text(file: UploadFile = File(...)):
+    """Extract normalized text from an uploaded PDF for read-aloud."""
+    filename = (file.filename or "").lower()
+    if filename and not filename.endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+
+    payload = await file.read()
+    if not payload:
+        raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
+
+    temp_path: Optional[str] = None
+    try:
+        from tts.audiobook import extract_pdf_with_toc
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+            temp_file.write(payload)
+            temp_path = temp_file.name
+
+        text, _chapters = extract_pdf_with_toc(temp_path)
+        normalized = _normalize_pdf_text_for_tts(text)
+        return {
+            "text": normalized,
+            "chars": len(normalized),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to extract PDF text: {exc}",
+        ) from exc
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+
 # ============== Voice Sample Sentences Endpoints ==============
 
 @app.get("/api/voice-samples")
@@ -1985,146 +2294,6 @@ async def list_voice_samples():
 
     return {"samples": samples, "total": len(samples)}
 
-# ============== LLM Configuration Endpoints ==============
-
-@app.get("/api/llm/config")
-async def get_llm_config():
-    """Get current LLM configuration."""
-    config = load_llm_config()
-    # Mask API key for security
-    if config.get("api_key"):
-        config["api_key"] = "***" + config["api_key"][-4:] if len(config["api_key"]) > 4 else "****"
-    config["available_providers"] = get_available_providers()
-    return config
-
-@app.get("/api/llm/ollama/models")
-async def get_ollama_models():
-    """Get list of locally available Ollama models."""
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get("http://localhost:11434/api/tags")
-            if response.status_code == 200:
-                data = response.json()
-                models = [m["name"] for m in data.get("models", [])]
-                return {"models": models, "available": True}
-            return {"models": [], "available": False, "error": "Ollama not responding"}
-    except Exception as e:
-        return {"models": [], "available": False, "error": str(e)}
-
-@app.post("/api/llm/config")
-async def update_llm_config(request: LLMConfigRequest):
-    """Update LLM configuration."""
-    config = {
-        "provider": request.provider,
-        "model": request.model,
-    }
-    # Only update API key if a new one is provided (not masked)
-    if request.api_key and not request.api_key.startswith("***"):
-        config["api_key"] = request.api_key
-    else:
-        # Keep existing key
-        old_config = load_llm_config()
-        if old_config.get("api_key"):
-            config["api_key"] = old_config["api_key"]
-
-    if request.api_base:
-        config["api_base"] = request.api_base
-
-    save_llm_config(config)
-    return {"message": "Configuration saved", "provider": request.provider, "model": request.model}
-
-# ============== Emma IPA Endpoints ==============
-
-@app.get("/api/ipa/sample")
-async def get_ipa_sample():
-    """Get the default sample text for IPA generation."""
-    return {"text": get_ipa_sample_text()}
-
-@app.get("/api/ipa/samples")
-async def get_ipa_samples():
-    """Get all saved Emma IPA sample texts with preloaded IPA transcriptions."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, title, input_text, audio_file, is_default, version1_ipa, version2_ipa
-        FROM emma_ipa_samples
-        ORDER BY is_default DESC, id ASC
-    """)
-    rows = cursor.fetchall()
-    conn.close()
-
-    samples = []
-    for row in rows:
-        audio_file = row[3]
-        has_audio = audio_file and Path(audio_file).exists()
-        samples.append({
-            "id": row[0],
-            "title": row[1],
-            "input_text": row[2],
-            "audio_url": f"/pregenerated/{Path(audio_file).name}" if has_audio else None,
-            "has_audio": has_audio,
-            "is_default": bool(row[4]),
-            "version1_ipa": row[5],
-            "version2_ipa": row[6],
-            "has_preloaded_ipa": bool(row[5] and row[6])
-        })
-
-    return {"samples": samples}
-
-@app.post("/api/ipa/generate")
-async def generate_ipa(request: IPAGenerateRequest):
-    """Generate IPA-like British transcription for the given text."""
-    try:
-        result = generate_ipa_transcription(
-            request.text,
-            provider_name=request.provider,
-            model=request.model
-        )
-        return {
-            "ipa": result.get("ipa", ""),
-            "version1": result.get("version1", ""),  # Backward compatibility
-            "original_text": request.text
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/ipa/pregenerated")
-async def get_ipa_pregenerated():
-    """Get pregenerated IPA sample with audio."""
-    ipa_audio_path = Path(__file__).parent / "data" / "pregenerated" / "emma-ipa-lily-sample.wav"
-    sample_text = get_ipa_sample_text()
-
-    result = {
-        "text": sample_text,
-        "has_audio": ipa_audio_path.exists(),
-        "audio_url": "/pregenerated/emma-ipa-lily-sample.wav" if ipa_audio_path.exists() else None
-    }
-    return result
-
-@app.post("/api/ipa/save-output")
-async def save_ipa_output(
-    input_text: str,
-    version1_ipa: str,
-    version2_ipa: str,
-    llm_provider: str,
-    sample_id: Optional[int] = None
-):
-    """Save a generated IPA output to history."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO emma_ipa_outputs
-           (sample_id, input_text, version1_ipa, version2_ipa, llm_provider)
-           VALUES (?, ?, ?, ?, ?)""",
-        (sample_id, input_text, version1_ipa, version2_ipa, llm_provider)
-    )
-    conn.commit()
-    output_id = cursor.lastrowid
-    conn.close()
-
-    return {"id": output_id, "message": "Output saved successfully"}
-
 # ============== Settings ==============
 
 @app.get("/api/settings")
@@ -2135,13 +2304,16 @@ async def api_get_settings():
 @app.get("/api/settings/output-folder")
 async def api_get_output_folder():
     """Get the output folder path."""
-    return {"path": get_output_folder()}
+    path = get_output_folder()
+    active_path = str(_sync_output_folder_runtime(path))
+    return {"path": active_path}
 
 @app.put("/api/settings/output-folder")
 async def api_set_output_folder(path: str):
     """Set the output folder path."""
     success = set_output_folder(path)
-    return {"success": success, "path": path}
+    active_path = str(_sync_output_folder_runtime(path))
+    return {"success": success, "path": active_path}
 
 @app.get("/api/settings/{key}")
 async def api_get_setting(key: str):

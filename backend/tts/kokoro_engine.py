@@ -1,11 +1,18 @@
 from pathlib import Path
+import threading
 import uuid
 import soundfile as sf
+import numpy as np
 
 try:
-    from kokoro import KPipeline
+    from mlx_audio.tts import load as load_tts_model
 except ImportError:
-    KPipeline = None
+    load_tts_model = None
+
+try:
+    import mlx.core as mx
+except Exception:  # pragma: no cover - fallback for non-MLX systems
+    mx = None
 
 # British voices from Kokoro-82M
 BRITISH_VOICES = {
@@ -23,18 +30,22 @@ DEFAULT_VOICE = "bm_george"
 
 class KokoroEngine:
     def __init__(self):
-        self.pipeline = None
+        self.model = None
+        self._generate_lock = threading.Lock()
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
     def load_model(self):
-        if self.pipeline is None:
-            if KPipeline is None:
-                raise ImportError("kokoro package not installed. Install with: pip install kokoro")
-            # 'b' for British English
-            self.pipeline = KPipeline(lang_code='b')
-            print("Kokoro model loaded for British English")
-        return self.pipeline
+        if self.model is None:
+            if load_tts_model is None:
+                raise ImportError("mlx-audio package not installed. Install with: pip install -U mlx-audio")
+            self.model = load_tts_model("mlx-community/Kokoro-82M-bf16")
+        return self.model
+
+    def unload(self):
+        self.model = None
+        if mx is not None:
+            mx.clear_cache()
 
     def generate(self, text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0) -> Path:
         """Generate speech using predefined British voice."""
@@ -49,26 +60,29 @@ class KokoroEngine:
 
     def generate_audio(self, text: str, voice: str = DEFAULT_VOICE, speed: float = 1.0):
         """Generate audio as a numpy array and sample rate."""
-        import numpy as np
-
         self.load_model()
 
         if voice not in BRITISH_VOICES:
             voice = DEFAULT_VOICE
 
-        # Generate audio
-        generator = self.pipeline(text, voice=voice, speed=speed)
-
-        # Kokoro returns a generator, we need to collect all audio chunks
         audio_chunks = []
-        for _, (_, _, audio) in enumerate(generator):
-            audio_chunks.append(audio)
-
+        sample_rate = 24000
+        # mlx-audio Kokoro is not thread-safe under concurrent generation.
+        with self._generate_lock:
+            generator = self.model.generate(
+                text=text,
+                voice=voice,
+                speed=speed,
+                lang_code="b",
+            )
+            for result in generator:
+                sample_rate = int(getattr(result, "sample_rate", sample_rate))
+                audio_chunks.append(np.asarray(result.audio, dtype=np.float32).reshape(-1))
         if not audio_chunks:
             return np.array([], dtype=np.float32), 24000
 
         full_audio = np.concatenate(audio_chunks)
-        return full_audio, 24000
+        return full_audio, sample_rate
 
     def get_voices(self) -> dict:
         return BRITISH_VOICES

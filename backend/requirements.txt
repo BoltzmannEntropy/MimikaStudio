@@ -5,21 +5,13 @@ python-multipart>=0.0.6
 pydantic>=2.0.0
 
 # TTS Engines
-kokoro>=0.9.4                     # Kokoro TTS (British voices)
-transformers==4.57.3              # Required by qwen-tts
+mlx-audio>=0.3.1                  # MLX backend for Kokoro, Qwen3-TTS, Chatterbox
 
 # Audio processing
 soundfile>=0.12.1
 numpy>=1.24.0,<2.0.0
 pydub>=0.25.1                     # MP3 conversion for audiobooks
 scipy>=1.10.0                     # Audio resampling for speed adjustment
-librosa>=0.10.0                   # Chatterbox audio utilities
-resampy>=0.4.3                    # Chatterbox audio resampling
-s3tokenizer>=0.3.0                # Chatterbox tokenizer
-
-# PyTorch (CPU for macOS) - keep torch/torchaudio on matching minor versions
-torch>=2.1.0
-torchaudio>=2.1.0
 
 # Database
 aiosqlite>=0.19.0

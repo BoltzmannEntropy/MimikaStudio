@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'screens/quick_tts_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
 import 'screens/chatterbox_clone_screen.dart';
-import 'screens/indextts2_screen.dart';
 import 'screens/pdf_reader_screen.dart';
 import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
@@ -65,6 +64,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _checkBackend() async {
     setState(() => _isChecking = true);
     final connected = await _api.checkHealth();
+    if (!mounted) return;
     setState(() {
       _isBackendConnected = connected;
       _isChecking = false;
@@ -113,14 +113,18 @@ class _MainScreenState extends State<MainScreen> {
           Icons.memory,
           'CPU',
           '${cpuPercent.toStringAsFixed(0)}%',
-          cpuPercent > 80 ? Colors.red : (cpuPercent > 50 ? Colors.orange : Colors.green),
+          cpuPercent > 80
+              ? Colors.red
+              : (cpuPercent > 50 ? Colors.orange : Colors.green),
         ),
         const SizedBox(width: 8),
         _buildStatChip(
           Icons.storage,
           'RAM',
           '${ramUsed.toStringAsFixed(1)}/${ramTotal.toStringAsFixed(0)}GB',
-          ramPercent > 80 ? Colors.red : (ramPercent > 50 ? Colors.orange : Colors.green),
+          ramPercent > 80
+              ? Colors.red
+              : (ramPercent > 50 ? Colors.orange : Colors.green),
         ),
         if (gpu != null) ...[
           const SizedBox(width: 8),
@@ -132,8 +136,10 @@ class _MainScreenState extends State<MainScreen> {
                 : (gpu['name'] ?? 'Active'),
             gpu['memory_percent'] != null
                 ? ((gpu['memory_percent'] ?? 0.0) > 80
-                    ? Colors.red
-                    : ((gpu['memory_percent'] ?? 0.0) > 50 ? Colors.orange : Colors.green))
+                      ? Colors.red
+                      : ((gpu['memory_percent'] ?? 0.0) > 50
+                            ? Colors.orange
+                            : Colors.green))
                 : Colors.teal,
           ),
         ],
@@ -141,7 +147,12 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Widget _buildStatChip(IconData icon, String label, String value, Color color) {
+  Widget _buildStatChip(
+    IconData icon,
+    String label,
+    String value,
+    Color color,
+  ) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -156,7 +167,11 @@ class _MainScreenState extends State<MainScreen> {
           const SizedBox(width: 4),
           Text(
             '$label: $value',
-            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: color),
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: color,
+            ),
           ),
         ],
       ),
@@ -207,7 +222,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 8,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
@@ -218,7 +233,11 @@ class _MainScreenState extends State<MainScreen> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.graphic_eq, size: 18, color: Theme.of(context).colorScheme.primary),
+                  Icon(
+                    Icons.graphic_eq,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
                   const SizedBox(width: 6),
                   Text(
                     'MimikaStudio',
@@ -231,7 +250,10 @@ class _MainScreenState extends State<MainScreen> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
                     decoration: BoxDecoration(
                       color: Theme.of(context).colorScheme.primaryContainer,
                       borderRadius: BorderRadius.circular(8),
@@ -253,12 +275,14 @@ class _MainScreenState extends State<MainScreen> {
             labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             unselectedLabelStyle: TextStyle(fontSize: 14),
             tabs: [
-              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'TTS (Kokoro)'),
-              Tab(icon: Icon(Icons.record_voice_over, size: 28), text: 'Qwen3 Clone'),
-              Tab(icon: Icon(Icons.mic, size: 28), text: 'Chatterbox'),
-              Tab(icon: Icon(Icons.auto_awesome, size: 28), text: 'IndexTTS-2'),
-              Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
               Tab(icon: Icon(Icons.model_training, size: 28), text: 'Models'),
+              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'TTS (Kokoro)'),
+              Tab(
+                icon: Icon(Icons.record_voice_over, size: 28),
+                text: 'Qwen3 Clone',
+              ),
+              Tab(icon: Icon(Icons.mic, size: 28), text: 'Chatterbox'),
+              Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
               Tab(icon: Icon(Icons.settings, size: 28), text: 'Settings'),
               Tab(icon: Icon(Icons.info_outline, size: 28), text: 'About'),
             ],
@@ -266,12 +290,11 @@ class _MainScreenState extends State<MainScreen> {
         ),
         body: const TabBarView(
           children: [
+            ModelsScreen(),
             QuickTtsScreen(),
             Qwen3CloneScreen(),
             ChatterboxCloneScreen(),
-            IndexTTS2Screen(),
             PdfReaderScreen(),
-            ModelsScreen(),
             SettingsScreen(),
             AboutScreen(),
           ],

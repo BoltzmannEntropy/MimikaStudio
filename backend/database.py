@@ -4,7 +4,8 @@ from pathlib import Path
 DB_PATH = Path(__file__).parent / "data" / "mimikastudio.db"
 
 def get_connection():
-    return sqlite3.connect(DB_PATH, check_same_thread=False)
+    # Use one connection per caller/thread; avoid cross-thread reuse hazards.
+    return sqlite3.connect(DB_PATH, timeout=30)
 
 def init_db():
     """Initialize database schema."""
@@ -141,6 +142,22 @@ def seed_db():
                 "Geopolitical analysis on Russia's nuclear posture - Lily voice",
                 """Russia's nuclear pivot is best understood as a response to geographic insecurity: compressed warning times, limited strategic depth, and constrained maritime access create acute pressure in crises. Treating nuclear signaling as a substitute for conventional resilience, however, introduces severe instability. Compressed decision cycles and ambiguous indications leave little room for interpretation, and the historical record of accidents and false alarms shows that such conditions are a poor foundation for deterrence. When the instrument of policy with the most irreversible consequences is moved downward into earlier stages of escalation, the central danger becomes misreading rather than intent.""",
                 str(pregen_dir / "kokoro-lily-nuclear-policy.wav")
+            ),
+            (
+                "qwen3",
+                "Natasha",
+                "Genesis 4 Preview (Natasha)",
+                "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
+                """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
+                str(pregen_dir / "qwen3-natasha-genesis4-demo.wav")
+            ),
+            (
+                "qwen3",
+                "Suzan",
+                "Genesis 4 Preview (Suzan)",
+                "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
+                """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
+                str(pregen_dir / "qwen3-suzan-genesis4-demo.wav")
             ),
         ]
         for sample in pregenerated_samples:

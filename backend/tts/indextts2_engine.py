@@ -28,12 +28,12 @@ class IndexTTS2Engine:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
 
         self.sample_voices_dir = (
-            Path(__file__).parent.parent / "data" / "samples" / "indextts2_voices"
+            Path(__file__).parent.parent / "data" / "samples" / "voices"
         )
         self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
 
         self.user_voices_dir = (
-            Path(__file__).parent.parent / "data" / "user_voices" / "indextts2"
+            Path(__file__).parent.parent / "data" / "user_voices" / "qwen3"
         )
         self.user_voices_dir.mkdir(parents=True, exist_ok=True)
 

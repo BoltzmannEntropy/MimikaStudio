@@ -1,34 +1,39 @@
-"""Qwen3-TTS Engine for voice cloning with 3-second audio samples.
+"""Qwen3-TTS engine backed by mlx-audio.
 
-Supports MPS (Apple Silicon) and CUDA. Voice cloning works with short
-reference audio clips (3+ seconds) and requires a transcript of the reference.
-
-Also supports CustomVoice mode with 9 preset speakers for instant TTS
-without needing reference audio.
+Supports:
+- clone mode: voice cloning from short reference audio
+- custom mode: preset speakers (Ryan, Aiden, etc.)
 """
-import platform
-import torch
-import soundfile as sf
+from __future__ import annotations
+
+import random
 import uuid
-import numpy as np
-from pathlib import Path
-from typing import Optional, Tuple
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator, Optional, Tuple
+
+import numpy as np
+import soundfile as sf
 from scipy import signal
+
+try:
+    import mlx.core as mx
+except Exception:  # pragma: no cover - fallback for non-MLX systems
+    mx = None
 
 # Supported languages
 LANGUAGES = {
-    "Auto": "Auto",
-    "Chinese": "Chinese",
-    "English": "English",
-    "Japanese": "Japanese",
-    "Korean": "Korean",
-    "German": "German",
-    "French": "French",
-    "Russian": "Russian",
-    "Portuguese": "Portuguese",
-    "Spanish": "Spanish",
-    "Italian": "Italian",
+    "Auto": "auto",
+    "Chinese": "chinese",
+    "English": "english",
+    "Japanese": "japanese",
+    "Korean": "korean",
+    "German": "german",
+    "French": "french",
+    "Russian": "russian",
+    "Portuguese": "portuguese",
+    "Spanish": "spanish",
+    "Italian": "italian",
 }
 
 # Preset speakers for CustomVoice models
@@ -58,51 +63,70 @@ class GenerationParams:
 
 
 class Qwen3TTSEngine:
-    """Qwen3-TTS engine with voice cloning and CustomVoice support."""
+    """Qwen3-TTS engine with voice cloning and preset speakers on MLX."""
 
-    # Map frontend attention values to library values
-    ATTENTION_MAP = {
-        "auto": None,
-        "sage_attn": "sage_attention",
-        "flash_attn": "flash_attention_2",
-        "sdpa": "sdpa",
-        "eager": "eager",
+    MODEL_REPOS = {
+        ("clone", "0.6B", "bf16"): "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+        ("clone", "1.7B", "bf16"): "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+        ("custom", "0.6B", "bf16"): "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16",
+        ("custom", "1.7B", "bf16"): "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16",
+        ("clone", "0.6B", "8bit"): "mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+        ("clone", "1.7B", "8bit"): "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+        ("custom", "0.6B", "8bit"): "mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+        ("custom", "1.7B", "8bit"): "mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
     }
 
-    def __init__(self, model_size: str = "0.6B", mode: str = "clone", attention: str = "auto"):
+    def __init__(
+        self,
+        model_size: str = "0.6B",
+        mode: str = "clone",
+        quantization: str = "bf16",
+        attention: str = "auto",
+    ):
         """Initialize the engine.
 
         Args:
             model_size: "0.6B" (faster, less memory) or "1.7B" (better quality)
             mode: "clone" (VoiceClone/Base) or "custom" (CustomVoice preset speakers)
+            quantization: "bf16" (higher quality) or "8bit" (faster, lower memory)
             attention: Attention implementation ("auto", "sage_attn", "flash_attn", "sdpa", "eager")
         """
         self.model = None
         self.model_size = model_size
         self.mode = mode
+        self.quantization = quantization
         self.attention = attention
         self.device = None
         self.dtype = None
+        self._model_repo = self.MODEL_REPOS.get((mode, model_size, quantization))
+        if self._model_repo is None:
+            raise ValueError(
+                "Unsupported Qwen3 config: "
+                f"mode={mode}, model_size={model_size}, quantization={quantization}"
+            )
         self.outputs_dir = Path(__file__).parent.parent / "outputs"
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
-        self.sample_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "qwen3_voices"
+        self.sample_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "voices"
         self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
         self.user_voices_dir = Path(__file__).parent.parent / "data" / "user_voices" / "qwen3"
         self.user_voices_dir.mkdir(parents=True, exist_ok=True)
-        self._voice_prompts = {}  # Cache for voice clone prompts
+        self._voice_prompts = {}
 
-    def _get_device_and_dtype(self) -> Tuple[str, torch.dtype]:
-        """Get the appropriate device and dtype for the current platform.
+    def _get_device_and_dtype(self) -> Tuple[str, str]:
+        """Best-effort runtime info for diagnostics."""
+        if mx is not None and mx.metal.is_available():
+            return "mlx", "bfloat16/fp16"
+        return "cpu", "float32"
 
-        Note: MPS has a conv1d limitation (>65536 channels not supported) that
-        affects the Qwen3-TTS tokenizer. We use CPU on Mac instead.
-        """
-        if torch.cuda.is_available():
-            return "cuda:0", torch.bfloat16
-        else:
-            # Use CPU on Mac and other non-CUDA systems
-            # MPS doesn't work due to conv1d channel limitations in the tokenizer
-            return "cpu", torch.float32
+    def _normalize_language(self, language: str) -> str:
+        if not language:
+            return "auto"
+        if language in LANGUAGES:
+            return LANGUAGES[language]
+        normalized = language.strip().lower().replace("_", " ")
+        if "auto" in normalized:
+            return "auto"
+        return normalized.replace(" ", "")
 
     def _build_gen_kwargs(self, params: Optional[GenerationParams] = None) -> dict:
         """Build generation kwargs from parameters."""
@@ -114,17 +138,25 @@ class Qwen3TTSEngine:
             "top_p": params.top_p,
             "top_k": params.top_k,
             "repetition_penalty": params.repetition_penalty,
-            "max_new_tokens": params.max_new_tokens,
-            "do_sample": params.do_sample,
+            "max_tokens": params.max_new_tokens,
         }
 
-        # Handle seed
+        # Handle deterministic generation where possible.
         if params.seed >= 0:
-            torch.manual_seed(params.seed)
-            if self.device and self.device.startswith("cuda"):
-                torch.cuda.manual_seed(params.seed)
+            random.seed(params.seed)
+            np.random.seed(params.seed)
+            if mx is not None:
+                mx.random.seed(params.seed)
 
         return kwargs
+
+    def _set_mode(self, mode: str):
+        """Switch model mode while preserving size/quantization and reloading lazily."""
+        if self.mode == mode:
+            return
+        self.mode = mode
+        self._model_repo = self.MODEL_REPOS[(self.mode, self.model_size, self.quantization)]
+        self.model = None
 
     def load_model(self):
         """Load the Qwen3-TTS model."""
@@ -132,52 +164,53 @@ class Qwen3TTSEngine:
             return self.model
 
         try:
-            from qwen_tts import Qwen3TTSModel
-        except ImportError:
+            from mlx_audio.tts import load as load_tts_model
+        except ImportError as exc:
             raise ImportError(
-                "qwen-tts package not installed. Install with: pip install -U qwen-tts soundfile"
-            )
+                "mlx-audio package not installed. Install with: pip install -U mlx-audio"
+            ) from exc
 
         self.device, self.dtype = self._get_device_and_dtype()
-
-        # Select model variant based on mode
-        variant = "Base" if self.mode == "clone" else "CustomVoice"
-        model_name = f"Qwen/Qwen3-TTS-12Hz-{self.model_size}-{variant}"
-        print(f"Loading Qwen3-TTS model: {model_name}")
-        print(f"Device: {self.device}, dtype: {self.dtype}")
-
-        # Load model - configure attention implementation
-        load_kwargs = {
-            "device_map": self.device,
-            "dtype": self.dtype,
-        }
-
-        # Resolve attention implementation
-        attn_impl = self.ATTENTION_MAP.get(self.attention)
-        if attn_impl is not None:
-            load_kwargs["attn_implementation"] = attn_impl
-        elif self.device.startswith("cuda"):
-            # Auto-select for CUDA: try flash_attention_2
-            try:
-                import flash_attn
-                load_kwargs["attn_implementation"] = "flash_attention_2"
-                print("Using FlashAttention 2")
-            except ImportError:
-                print("FlashAttention not available, using default attention")
-
-        self.model = Qwen3TTSModel.from_pretrained(model_name, **load_kwargs)
-        print(f"Qwen3-TTS model loaded successfully on {self.device}")
-
+        self.model = load_tts_model(self._model_repo)
         return self.model
 
     def unload(self):
         """Free memory by unloading the model."""
         self.model = None
         self._voice_prompts.clear()
-        if self.device == "mps":
-            torch.mps.empty_cache()
-        elif self.device and self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
+        if mx is not None:
+            mx.clear_cache()
+
+    @staticmethod
+    def _to_pcm16le_bytes(audio: np.ndarray) -> bytes:
+        clipped = np.clip(audio, -1.0, 1.0)
+        return (clipped * 32767.0).astype(np.int16).tobytes()
+
+    def _collect_audio(self, results) -> tuple[np.ndarray, int]:
+        """Collect mlx-audio generation results into a single waveform."""
+        chunks: list[np.ndarray] = []
+        sample_rate = 24000
+        for item in results:
+            sample_rate = int(getattr(item, "sample_rate", sample_rate))
+            chunks.append(np.asarray(item.audio, dtype=np.float32).reshape(-1))
+        if not chunks:
+            raise RuntimeError("No audio generated by Qwen3")
+        if len(chunks) == 1:
+            return chunks[0], sample_rate
+        return np.concatenate(chunks), sample_rate
+
+    def _iter_audio_chunks(self, results) -> Iterator[tuple[np.ndarray, int]]:
+        """Yield chunked audio from mlx-audio generation."""
+        yielded = False
+        for item in results:
+            sample_rate = int(getattr(item, "sample_rate", 24000))
+            chunk = np.asarray(item.audio, dtype=np.float32).reshape(-1)
+            if chunk.size == 0:
+                continue
+            yielded = True
+            yield chunk, sample_rate
+        if not yielded:
+            raise RuntimeError("No audio generated by Qwen3")
 
     def generate_voice_clone(
         self,
@@ -201,34 +234,24 @@ class Qwen3TTSEngine:
         Returns:
             Path to the generated audio file
         """
+        # Ensure Base clone model variant.
+        self._set_mode("clone")
         self.load_model()
 
-        lang = LANGUAGES.get(language, language)
-        if lang not in LANGUAGES.values():
-            lang = "Auto"
-
-        # Use x_vector_only_mode if no transcript provided (lower quality but works)
-        use_x_vector_only = not ref_text or not ref_text.strip()
-
-        # Build generation kwargs
+        lang = self._normalize_language(language)
         gen_kwargs = self._build_gen_kwargs(params)
-
-        # Generate audio using direct API (no prompt caching for advanced params)
-        wavs, sr = self.model.generate_voice_clone(
+        results = self.model.generate(
             text=text,
-            language=lang,
             ref_audio=ref_audio_path,
-            ref_text=ref_text if not use_x_vector_only else None,
-            x_vector_only_mode=use_x_vector_only,
+            ref_text=ref_text.strip() if ref_text and ref_text.strip() else None,
+            lang_code=lang,
+            verbose=False,
             **gen_kwargs,
         )
-
-        # Apply speed adjustment if needed
-        audio_data = np.asarray(wavs[0])
+        audio_data, sr = self._collect_audio(results)
         if speed != 1.0:
             audio_data = self._adjust_speed(audio_data, sr, speed)
 
-        # Save to file
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"qwen3-clone-{short_uuid}.wav"
@@ -261,42 +284,98 @@ class Qwen3TTSEngine:
         if speaker not in QWEN_SPEAKERS:
             raise ValueError(f"Unknown speaker: {speaker}. Available: {list(QWEN_SPEAKERS)}")
 
-        # Ensure we're using CustomVoice model
-        if self.mode != "custom":
-            print(f"Warning: Switching to CustomVoice mode for speaker generation")
-            self.mode = "custom"
-            self.model = None  # Force reload with correct variant
+        # Ensure CustomVoice model variant.
+        self._set_mode("custom")
 
         self.load_model()
 
-        lang = LANGUAGES.get(language, language)
-        if lang not in LANGUAGES.values():
-            lang = "Auto"
-
-        # Build generation kwargs
+        lang = self._normalize_language(language)
         gen_kwargs = self._build_gen_kwargs(params)
-
-        # Generate audio using CustomVoice API
-        wavs, sr = self.model.generate_custom_voice(
+        results = self.model.generate_custom_voice(
             text=text,
             speaker=speaker,
             language=lang,
             instruct=instruct,
+            verbose=False,
             **gen_kwargs,
         )
-
-        # Apply speed adjustment if needed
-        audio_data = np.asarray(wavs[0])
+        audio_data, sr = self._collect_audio(results)
         if speed != 1.0:
             audio_data = self._adjust_speed(audio_data, sr, speed)
 
-        # Save to file
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"qwen3-custom-{short_uuid}.wav"
         sf.write(str(output_file), audio_data, sr)
 
         return output_file
+
+    def stream_voice_clone_pcm(
+        self,
+        text: str,
+        ref_audio_path: str,
+        ref_text: str,
+        language: str = "English",
+        speed: float = 1.0,
+        streaming_interval: float = 0.75,
+        params: Optional[GenerationParams] = None,
+    ) -> Iterator[bytes]:
+        """Stream voice-cloned audio chunks as mono 16-bit PCM bytes."""
+        self._set_mode("clone")
+        self.load_model()
+
+        lang = self._normalize_language(language)
+        gen_kwargs = self._build_gen_kwargs(params)
+        results = self.model.generate(
+            text=text,
+            ref_audio=ref_audio_path,
+            ref_text=ref_text.strip() if ref_text and ref_text.strip() else None,
+            lang_code=lang,
+            verbose=False,
+            stream=True,
+            streaming_interval=streaming_interval,
+            **gen_kwargs,
+        )
+
+        for chunk, sr in self._iter_audio_chunks(results):
+            if speed != 1.0:
+                chunk = self._adjust_speed(chunk, sr, speed)
+            yield self._to_pcm16le_bytes(chunk)
+
+    def stream_custom_voice_pcm(
+        self,
+        text: str,
+        speaker: str,
+        language: str = "Auto",
+        instruct: Optional[str] = None,
+        speed: float = 1.0,
+        streaming_interval: float = 0.75,
+        params: Optional[GenerationParams] = None,
+    ) -> Iterator[bytes]:
+        """Stream preset-speaker audio chunks as mono 16-bit PCM bytes."""
+        if speaker not in QWEN_SPEAKERS:
+            raise ValueError(f"Unknown speaker: {speaker}. Available: {list(QWEN_SPEAKERS)}")
+
+        self._set_mode("custom")
+        self.load_model()
+
+        lang = self._normalize_language(language)
+        gen_kwargs = self._build_gen_kwargs(params)
+        results = self.model.generate_custom_voice(
+            text=text,
+            speaker=speaker,
+            language=lang,
+            instruct=instruct,
+            verbose=False,
+            stream=True,
+            streaming_interval=streaming_interval,
+            **gen_kwargs,
+        )
+
+        for chunk, sr in self._iter_audio_chunks(results):
+            if speed != 1.0:
+                chunk = self._adjust_speed(chunk, sr, speed)
+            yield self._to_pcm16le_bytes(chunk)
 
     def generate_with_voice_design(
         self,
@@ -394,10 +473,8 @@ class Qwen3TTSEngine:
     def clear_cache(self):
         """Clear the voice prompt cache and free memory."""
         self._voice_prompts.clear()
-        if self.device == "mps":
-            torch.mps.empty_cache()
-        elif self.device and self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
+        if mx is not None:
+            mx.clear_cache()
 
     def _adjust_speed(self, audio: np.ndarray, sr: int, speed: float) -> np.ndarray:
         """Adjust audio playback speed using resampling.
@@ -437,8 +514,11 @@ class Qwen3TTSEngine:
         variant = "Base" if self.mode == "clone" else "CustomVoice"
         return {
             "name": "Qwen3-TTS",
-            "version": f"12Hz-{self.model_size}-{variant}",
+            "version": f"12Hz-{self.model_size}-{variant}-{self.quantization}",
+            "repo": self._model_repo,
+            "backend": "mlx-audio",
             "mode": self.mode,
+            "quantization": self.quantization,
             "device": self.device or "not loaded",
             "dtype": str(self.dtype) if self.dtype else "not loaded",
             "loaded": self.model is not None,
@@ -456,6 +536,7 @@ _custom_engine: Optional[Qwen3TTSEngine] = None
 def get_qwen3_engine(
     model_size: str = "0.6B",
     mode: str = "clone",
+    quantization: str = "bf16",
     attention: str = "auto"
 ) -> Qwen3TTSEngine:
     """Get or create the Qwen3-TTS engine.
@@ -463,6 +544,7 @@ def get_qwen3_engine(
     Args:
         model_size: "0.6B" or "1.7B"
         mode: "clone" (Base) or "custom" (CustomVoice)
+        quantization: "bf16" or "8bit"
         attention: Attention implementation
 
     Returns:
@@ -471,15 +553,29 @@ def get_qwen3_engine(
     global _clone_engine, _custom_engine
 
     if mode == "clone":
-        if _clone_engine is None or _clone_engine.model_size != model_size:
+        if (
+            _clone_engine is None
+            or _clone_engine.model_size != model_size
+            or _clone_engine.quantization != quantization
+        ):
             _clone_engine = Qwen3TTSEngine(
-                model_size=model_size, mode="clone", attention=attention
+                model_size=model_size,
+                mode="clone",
+                quantization=quantization,
+                attention=attention,
             )
         return _clone_engine
     else:
-        if _custom_engine is None or _custom_engine.model_size != model_size:
+        if (
+            _custom_engine is None
+            or _custom_engine.model_size != model_size
+            or _custom_engine.quantization != quantization
+        ):
             _custom_engine = Qwen3TTSEngine(
-                model_size=model_size, mode="custom", attention=attention
+                model_size=model_size,
+                mode="custom",
+                quantization=quantization,
+                attention=attention,
             )
         return _custom_engine
 

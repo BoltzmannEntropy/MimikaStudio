@@ -11,11 +11,18 @@ def test_model_registry_defaults(tmp_path):
 
 
 def test_model_registry_clone_models(tmp_path):
-    """Test clone mode models."""
+    """Test clone mode models across all supported engines."""
     registry = ModelRegistry(models_dir=tmp_path)
     clone_models = registry.get_models_by_mode("clone")
-    assert len(clone_models) == 2
-    assert all("Base" in m.name for m in clone_models)
+
+    # Qwen clone models remain the two Base variants.
+    qwen_clone_models = [m for m in clone_models if m.engine == "qwen3"]
+    assert len(qwen_clone_models) == 2
+    assert all("Base" in m.name for m in qwen_clone_models)
+
+    # Registry should also include Chatterbox clone engine.
+    clone_engines = {m.engine for m in clone_models}
+    assert "chatterbox" in clone_engines
 
 
 def test_model_registry_custom_models(tmp_path):

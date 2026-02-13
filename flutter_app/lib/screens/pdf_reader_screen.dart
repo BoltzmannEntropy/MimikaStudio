@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -160,7 +159,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         }
       }
 
-      debugPrint('Loading complete. Found ${foundDocs.length} documents. mounted=$mounted');
+      debugPrint(
+        'Loading complete. Found ${foundDocs.length} documents. mounted=$mounted',
+      );
       if (mounted) {
         setState(() {
           _pdfLibrary = foundDocs;
@@ -169,13 +170,27 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
         // Auto-select first document
         if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
+          final defaultDoc = _preferredDefaultDocument(_pdfLibrary)!;
           _selectPdf(
-            _pdfLibrary.first['path'] as String,
-            _pdfLibrary.first['name'] as String,
+            defaultDoc['path'] as String,
+            defaultDoc['name'] as String,
           );
         }
       }
     }
+  }
+
+  Map<String, dynamic>? _preferredDefaultDocument(
+    List<Map<String, dynamic>> docs,
+  ) {
+    if (docs.isEmpty) return null;
+    for (final doc in docs) {
+      final name = ((doc['name'] as String?) ?? '').toLowerCase();
+      if (name == 'genesis-chapter-1.pdf') {
+        return doc;
+      }
+    }
+    return docs.first;
   }
 
   /// Resolve the backend/data/pdf directory relative to the project.
@@ -199,13 +214,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Future<void> _loadSamplePdfsFromApi() async {
     try {
       final docs = await _api.listPdfDocuments();
-      final List<Map<String, dynamic>> library = docs.map((doc) =>
-        <String, dynamic>{
-          'path': doc['url'] as String,
-          'name': doc['name'] as String,
-          'url': doc['url'] as String,
-        }
-      ).toList();
+      final List<Map<String, dynamic>> library = docs
+          .map(
+            (doc) => <String, dynamic>{
+              'path': doc['url'] as String,
+              'name': doc['name'] as String,
+              'url': doc['url'] as String,
+            },
+          )
+          .toList();
 
       if (mounted) {
         setState(() {
@@ -215,10 +232,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
         // Auto-select first document and load its bytes
         if (_selectedPdfPath == null && _pdfLibrary.isNotEmpty) {
-          final first = _pdfLibrary.first;
+          final defaultDoc = _preferredDefaultDocument(_pdfLibrary)!;
           await _selectPdfFromUrl(
-            first['url'] as String,
-            first['name'] as String,
+            defaultDoc['url'] as String,
+            defaultDoc['name'] as String,
           );
         }
       }
@@ -269,7 +286,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
           _loadTextFromBytes(bytes);
         } else if (lowerPath.endsWith('.pdf')) {
-          _extractPdfTextFromBytes(bytes);
+          _extractPdfTextFromBytes(bytes, filename: name);
         }
       }
     } catch (e) {
@@ -299,7 +316,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
     if (result != null && result.files.isNotEmpty) {
       final file = result.files.single;
-      final path = file.path ??
+      final path =
+          file.path ??
           'uploaded://${DateTime.now().millisecondsSinceEpoch}_${file.name}';
       final name = file.path != null ? p.basename(path) : file.name;
       final bytes = file.bytes;
@@ -320,7 +338,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _selectedPdfPath = path;
       _selectedPdfName = name;
       _selectedPdfBytes = bytes;
-      _selectedPdfNetworkUrl = null; // Clear network URL when selecting directly
+      _selectedPdfNetworkUrl =
+          null; // Clear network URL when selecting directly
       _isLoadingPdfBytes = false;
       _currentPage = 1;
       _totalPages = 0;
@@ -338,7 +357,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
         _loadTextFromBytes(bytes);
       } else if (lowerPath.endsWith('.pdf')) {
-        _extractPdfTextFromBytes(bytes);
+        _extractPdfTextFromBytes(bytes, filename: name);
       }
       return;
     }
@@ -365,9 +384,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     } catch (e) {
       debugPrint('Error loading text file: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading file: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading file: $e')));
       }
     }
   }
@@ -383,9 +402,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     } catch (e) {
       debugPrint('Error loading text bytes: $e');
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading file: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error loading file: $e')));
       }
     }
   }
@@ -396,7 +415,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     try {
       final file = File(path);
       final bytes = await file.readAsBytes();
-      await _extractPdfTextFromBytes(bytes);
+      await _extractPdfTextFromBytes(bytes, filename: p.basename(path));
     } catch (e) {
       debugPrint('Error extracting PDF text: $e');
       if (mounted) {
@@ -405,15 +424,33 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
-  Future<void> _extractPdfTextFromBytes(Uint8List bytes) async {
+  Future<void> _extractPdfTextFromBytes(
+    Uint8List bytes, {
+    String? filename,
+  }) async {
     try {
       if (mounted) {
         setState(() => _isExtractingText = true);
       }
-      final document = pdf.PdfDocument(inputBytes: bytes);
-      final textExtractor = pdf.PdfTextExtractor(document);
-      final text = textExtractor.extractText();
-      document.dispose();
+
+      String text = '';
+
+      // Prefer backend extraction (PyMuPDF + cleanup) for better spacing fidelity.
+      try {
+        text = await _api.extractPdfText(
+          bytes,
+          filename: filename ?? _selectedPdfName ?? 'document.pdf',
+        );
+      } catch (e) {
+        debugPrint('Backend PDF extraction failed, using local fallback: $e');
+      }
+
+      // Fallback to local extraction when backend is unavailable or result looks degraded.
+      if (text.trim().isEmpty || _looksCorruptedPdfText(text)) {
+        text = _extractPdfTextWithSyncfusion(bytes);
+      }
+
+      text = _normalizeExtractedPdfText(text);
 
       if (mounted) {
         setState(() {
@@ -428,6 +465,52 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         setState(() => _isExtractingText = false);
       }
     }
+  }
+
+  String _extractPdfTextWithSyncfusion(Uint8List bytes) {
+    final document = pdf.PdfDocument(inputBytes: bytes);
+    final textExtractor = pdf.PdfTextExtractor(document);
+    final textBuffer = StringBuffer();
+    try {
+      for (int pageIndex = 0; pageIndex < document.pages.count; pageIndex++) {
+        final pageText = textExtractor.extractText(
+          startPageIndex: pageIndex,
+          endPageIndex: pageIndex,
+        );
+        if (pageText.trim().isEmpty) continue;
+        textBuffer.writeln(_normalizeExtractedPdfText(pageText));
+        textBuffer.writeln();
+      }
+      return textBuffer.toString().trim();
+    } finally {
+      document.dispose();
+    }
+  }
+
+  String _normalizeExtractedPdfText(String text) {
+    if (text.isEmpty) return text;
+
+    var normalized = text.replaceAll('\u00a0', ' ');
+    normalized = normalized.replaceAll(RegExp(r'(?<!\n)\n(?!\n)'), ' ');
+    normalized = normalized.replaceAll(
+      RegExp(r'([.!?;:,])(?=[A-Za-z])'),
+      r'$1 ',
+    );
+    normalized = normalized.replaceAll(RegExp(r'(?<=[a-z])(?=[A-Z])'), ' ');
+    normalized = normalized.replaceAll(RegExp(r'[ \t]+'), ' ');
+    normalized = normalized.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return normalized.trim();
+  }
+
+  bool _looksCorruptedPdfText(String text) {
+    if (text.isEmpty) return true;
+    final compact = text.replaceAll(RegExp(r'\s+'), '');
+    if (compact.length < 120) return false;
+
+    final whitespaceCount = RegExp(r'\s').allMatches(text).length;
+    final whitespaceRatio = whitespaceCount / text.length;
+    final longWordRuns = RegExp(r'[A-Za-z]{30,}').allMatches(text).length;
+    return whitespaceRatio < 0.08 || longWordRuns >= 3;
   }
 
   bool get _isTextFile {
@@ -510,30 +593,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   List<String> _splitIntoSentences(String text) {
-    // Split by sentence endings
-    final sentences = <String>[];
-    final buffer = StringBuffer();
+    final normalized = _normalizeExtractedPdfText(text);
+    if (normalized.isEmpty) return [];
 
-    for (int i = 0; i < text.length; i++) {
-      buffer.write(text[i]);
-
-      if (text[i] == '.' || text[i] == '!' || text[i] == '?') {
-        // Check if followed by space or end
-        if (i + 1 >= text.length || text[i + 1] == ' ' || text[i + 1] == '\n') {
-          final sentence = buffer.toString().trim();
-          if (sentence.isNotEmpty && sentence.length > 1) {
-            sentences.add(sentence);
-          }
-          buffer.clear();
-        }
-      }
-    }
-
-    // Add remaining text as last sentence
-    final remaining = buffer.toString().trim();
-    if (remaining.isNotEmpty) {
-      sentences.add(remaining);
-    }
+    final splitter = RegExp(r'(?<=[.!?])\s+|(?<=[.!?])(?=[A-Z])|\n+');
+    final sentences = normalized
+        .split(splitter)
+        .map((s) => s.trim())
+        .where((s) => s.length > 1)
+        .toList();
 
     return sentences;
   }
@@ -586,7 +654,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     // Split sentence into words for word-level highlighting
     _currentSentenceWords = _splitSentenceWords(sentence);
     _currentWordIndex = -1;
-    _currentSentenceStartIndex = (_currentSentenceIndex >= 0 &&
+    _currentSentenceStartIndex =
+        (_currentSentenceIndex >= 0 &&
             _currentSentenceIndex < _sentenceWordStart.length)
         ? _sentenceWordStart[_currentSentenceIndex]
         : 0;
@@ -638,9 +707,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _readNextSentence();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('TTS Error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('TTS Error: $e')));
       }
       _stopReading();
     }
@@ -700,14 +769,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   }
 
   void _highlightCurrentWord() {
-    if (_currentWordIndex < 0 || _currentWordIndex >= _currentSentenceWords.length) {
+    if (_currentWordIndex < 0 ||
+        _currentWordIndex >= _currentSentenceWords.length) {
       return;
     }
 
     final word = _currentSentenceWords[_currentWordIndex];
     final globalIndex = _currentSentenceStartIndex + _currentWordIndex;
-    final hasGlobalWord =
-        globalIndex >= 0 && globalIndex < _globalWords.length;
+    final hasGlobalWord = globalIndex >= 0 && globalIndex < _globalWords.length;
 
     setState(() {
       _currentHighlightedWord = word;
@@ -854,9 +923,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _audiobookStatus = '';
       });
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
       }
     }
   }
@@ -879,14 +948,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       setState(() {
         _audiobookCurrentChunk = status['current_chunk'] as int;
         _audiobookTotalChunks = status['total_chunks'] as int;
-        _audiobookStatus = 'Processing chunk $_audiobookCurrentChunk/$_audiobookTotalChunks';
+        _audiobookStatus =
+            'Processing chunk $_audiobookCurrentChunk/$_audiobookTotalChunks';
       });
 
       if (jobStatus == 'completed') {
         _audiobookPollTimer?.cancel();
         final audioUrl = status['audio_url'] as String;
-        final durationSecs = status['duration_seconds'] as num;
-        final sizeMb = status['file_size_mb'] as num;
 
         setState(() {
           _isGeneratingAudiobook = false;
@@ -911,9 +979,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           _audiobookStatus = '';
         });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Generation failed: $error')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Generation failed: $error')));
         }
       } else if (jobStatus == 'cancelled') {
         _audiobookPollTimer?.cancel();
@@ -941,9 +1009,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to cancel: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to cancel: $e')));
       }
     }
   }
@@ -953,14 +1021,22 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     super.build(context); // Required for AutomaticKeepAliveClientMixin
     debugPrint('PDF Reader build: _pdfLibrary.length=${_pdfLibrary.length}');
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Sidebar
         _buildSidebar(),
         // Main content
         Expanded(
-          child: _selectedPdfPath != null
-              ? _buildPdfViewer()
-              : _buildEmptyState(),
+          child: Column(
+            children: [
+              _buildTopControls(),
+              Expanded(
+                child: _selectedPdfPath != null
+                    ? _buildPdfViewer()
+                    : _buildEmptyState(),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -990,7 +1066,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               children: [
                 const Icon(Icons.library_books, size: 20),
                 const SizedBox(width: 8),
-                const Text('Documents', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text(
+                  'Documents',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 const Spacer(),
                 IconButton(
                   icon: const Icon(Icons.refresh, size: 20),
@@ -1007,8 +1086,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ],
             ),
           ),
-          // Library list
+          // Document list
           Expanded(
+            flex: 3,
             child: !_isInitialized
                 ? const Center(
                     child: Column(
@@ -1021,25 +1101,29 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     ),
                   )
                 : _pdfLibrary.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(Icons.auto_stories, size: 48, color: Colors.grey.shade400),
-                            const SizedBox(height: 8),
-                            Text(
-                              'No Documents',
-                              style: TextStyle(color: Colors.grey.shade600),
-                            ),
-                            const SizedBox(height: 4),
-                            TextButton.icon(
-                              onPressed: _openPdf,
-                              icon: const Icon(Icons.add, size: 16),
-                              label: const Text('Open'),
-                            ),
-                          ],
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.auto_stories,
+                          size: 48,
+                          color: Colors.grey.shade400,
                         ),
-                      )
+                        const SizedBox(height: 8),
+                        Text(
+                          'No Documents',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                        const SizedBox(height: 4),
+                        TextButton.icon(
+                          onPressed: _openPdf,
+                          icon: const Icon(Icons.add, size: 16),
+                          label: const Text('Open'),
+                        ),
+                      ],
+                    ),
+                  )
                 : ListView.builder(
                     itemCount: _pdfLibrary.length,
                     itemBuilder: (context, index) {
@@ -1061,10 +1145,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                       return ListTile(
                         dense: true,
                         selected: isSelected,
-                        selectedTileColor: Theme.of(context).colorScheme.primaryContainer,
+                        selectedTileColor: Theme.of(
+                          context,
+                        ).colorScheme.primaryContainer,
                         leading: Icon(
                           icon,
-                          color: isSelected ? Theme.of(context).colorScheme.primary : null,
+                          color: isSelected
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
                           size: 20,
                         ),
                         title: Text(
@@ -1094,60 +1182,155 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     },
                   ),
           ),
-          // TTS Settings
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(
-                top: BorderSide(color: Theme.of(context).dividerColor),
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('TTS Voice', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 4),
-                DropdownButtonFormField<String>(
-                  value: _selectedVoice,
-                  isExpanded: true,
-                  isDense: true,
-                  decoration: const InputDecoration(
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    border: OutlineInputBorder(),
-                  ),
-                  items: _voices.map((v) {
-                    return DropdownMenuItem(
-                      value: v['id'],
-                      child: Text(v['name']!, style: const TextStyle(fontSize: 12)),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    if (value != null) setState(() => _selectedVoice = value);
-                  },
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const Text('Speed:', style: TextStyle(fontSize: 12)),
-                    Expanded(
-                      child: Slider(
-                        value: _speed,
-                        min: 0.5,
-                        max: 2.0,
-                        divisions: 15,
-                        label: '${_speed.toStringAsFixed(1)}x',
-                        onChanged: (v) => setState(() => _speed = v),
+          Container(height: 1, color: Theme.of(context).dividerColor),
+          Expanded(flex: 2, child: _buildSidebarAudiobookHistory()),
+        ],
+      ),
+    );
+  }
+
+  Color _voiceCardColor(int index) {
+    const palette = <Color>[
+      Colors.teal,
+      Colors.indigo,
+      Colors.green,
+      Colors.deepPurple,
+      Colors.orange,
+      Colors.blue,
+      Colors.pink,
+      Colors.brown,
+    ];
+    return palette[index % palette.length];
+  }
+
+  Widget _buildTopControls() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLowest,
+        border: Border(
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Kokoro Voices',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: List.generate(_voices.length, (index) {
+                final voice = _voices[index];
+                final voiceId = voice['id']!;
+                final voiceName = voice['name']!;
+                final isSelected = _selectedVoice == voiceId;
+                final color = _voiceCardColor(index);
+                return Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: GestureDetector(
+                    onTap: () => setState(() => _selectedVoice = voiceId),
+                    child: Container(
+                      width: 150,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: isSelected
+                            ? color.withValues(alpha: 0.16)
+                            : Theme.of(context).colorScheme.surface,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: isSelected ? color : Colors.grey.shade300,
+                          width: isSelected ? 2 : 1,
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  voiceName.split(' ').first,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: isSelected ? color : Colors.black87,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            voiceName,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey.shade700,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
                       ),
                     ),
-                    Text('${_speed.toStringAsFixed(1)}x', style: const TextStyle(fontSize: 11)),
-                  ],
-                ),
-              ],
+                  ),
+                );
+              }),
             ),
           ),
-          // Audiobook Library
-          _buildAudiobookLibrary(),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              const Icon(Icons.speed, size: 16),
+              const SizedBox(width: 8),
+              const Text('Read-aloud speed:'),
+              Expanded(
+                child: Slider(
+                  value: _speed,
+                  min: 0.5,
+                  max: 2.0,
+                  divisions: 150,
+                  label: '${_speed.toStringAsFixed(2)}x',
+                  onChanged: (v) => setState(() => _speed = v),
+                ),
+              ),
+              Text('${_speed.toStringAsFixed(2)}x'),
+            ],
+          ),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.library_music),
+              title: const Text(
+                'Audiobook Settings',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              subtitle: const Text(
+                'Format, subtitles, and chunking',
+                style: TextStyle(fontSize: 12),
+              ),
+              children: [_buildAudiobookLibrary()],
+            ),
+          ),
         ],
       ),
     );
@@ -1157,38 +1340,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                const Icon(Icons.library_music, size: 16),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Audiobooks',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 16),
-                  onPressed: _loadAudiobooks,
-                  tooltip: 'Refresh',
-                  visualDensity: VisualDensity.compact,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
-          ),
-          // Playback speed control
+          // Playback speed control (for audiobook preview player)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Row(
@@ -1199,13 +1356,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     value: _audiobookPlaybackSpeed,
                     min: 0.5,
                     max: 2.0,
-                    divisions: 15,
-                    label: '${_audiobookPlaybackSpeed.toStringAsFixed(1)}x',
+                    divisions: 150,
+                    label: '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
                     onChanged: _setAudiobookSpeed,
                   ),
                 ),
                 Text(
-                  '${_audiobookPlaybackSpeed.toStringAsFixed(1)}x',
+                  '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
                   style: const TextStyle(fontSize: 10),
                 ),
               ],
@@ -1220,9 +1377,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 const SizedBox(width: 8),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'mp3', label: Text('MP3', style: TextStyle(fontSize: 10))),
-                    ButtonSegment(value: 'wav', label: Text('WAV', style: TextStyle(fontSize: 10))),
-                    ButtonSegment(value: 'm4b', label: Text('M4B', style: TextStyle(fontSize: 10))),
+                    ButtonSegment(
+                      value: 'mp3',
+                      label: Text('MP3', style: TextStyle(fontSize: 10)),
+                    ),
+                    ButtonSegment(
+                      value: 'wav',
+                      label: Text('WAV', style: TextStyle(fontSize: 10)),
+                    ),
+                    ButtonSegment(
+                      value: 'm4b',
+                      label: Text('M4B', style: TextStyle(fontSize: 10)),
+                    ),
                   ],
                   selected: {_audiobookOutputFormat},
                   onSelectionChanged: (Set<String> selection) {
@@ -1245,9 +1411,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 const SizedBox(width: 8),
                 SegmentedButton<String>(
                   segments: const [
-                    ButtonSegment(value: 'none', label: Text('None', style: TextStyle(fontSize: 10))),
-                    ButtonSegment(value: 'srt', label: Text('SRT', style: TextStyle(fontSize: 10))),
-                    ButtonSegment(value: 'vtt', label: Text('VTT', style: TextStyle(fontSize: 10))),
+                    ButtonSegment(
+                      value: 'none',
+                      label: Text('None', style: TextStyle(fontSize: 10)),
+                    ),
+                    ButtonSegment(
+                      value: 'srt',
+                      label: Text('SRT', style: TextStyle(fontSize: 10)),
+                    ),
+                    ButtonSegment(
+                      value: 'vtt',
+                      label: Text('VTT', style: TextStyle(fontSize: 10)),
+                    ),
                   ],
                   selected: {_audiobookSubtitleFormat},
                   onSelectionChanged: (Set<String> selection) {
@@ -1265,9 +1440,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Smart Chunking', style: TextStyle(fontSize: 11)),
+              title: const Text(
+                'Smart Chunking',
+                style: TextStyle(fontSize: 11),
+              ),
               value: _audiobookSmartChunking,
-              onChanged: (value) => setState(() => _audiobookSmartChunking = value),
+              onChanged: (value) =>
+                  setState(() => _audiobookSmartChunking = value),
             ),
           ),
           Padding(
@@ -1283,7 +1462,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     divisions: 36,
                     label: _audiobookMaxCharsPerChunk.toString(),
                     onChanged: _audiobookSmartChunking
-                        ? (value) => setState(() => _audiobookMaxCharsPerChunk = value.round())
+                        ? (value) => setState(
+                            () => _audiobookMaxCharsPerChunk = value.round(),
+                          )
                         : null,
                   ),
                 ),
@@ -1307,7 +1488,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                     divisions: 20,
                     label: '${_audiobookCrossfadeMs}ms',
                     onChanged: _audiobookSmartChunking
-                        ? (value) => setState(() => _audiobookCrossfadeMs = value.round())
+                        ? (value) => setState(
+                            () => _audiobookCrossfadeMs = value.round(),
+                          )
                         : null,
                   ),
                 ),
@@ -1318,132 +1501,219 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ],
             ),
           ),
-          // List
-          if (_isLoadingAudiobooks)
-            const Padding(
-              padding: EdgeInsets.all(12),
-              child: Center(
-                child: SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              ),
-            )
-          else if (_audiobooks.isEmpty)
-            Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                'No audiobooks yet',
-                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-              ),
-            )
-          else
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 250),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: _audiobooks.length,
-                itemBuilder: (context, index) {
-                  final book = _audiobooks[index];
-                  final jobId = book['job_id'] as String;
-                  final duration = book['duration_seconds'] as num;
-                  final sizeMb = book['size_mb'] as num;
-                  final isThisPlaying = _playingAudiobookId == jobId;
+        ],
+      ),
+    );
+  }
 
-                  // Format duration
-                  final mins = (duration / 60).floor();
-                  final secs = (duration % 60).round();
-                  final durationStr = mins > 0 ? '${mins}m ${secs}s' : '${secs}s';
-
-                  return Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isThisPlaying
-                          ? Theme.of(context).colorScheme.primaryContainer
-                          : null,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        ListTile(
-                          dense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                          leading: Icon(
-                            Icons.audiotrack,
-                            color: isThisPlaying
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
-                            size: 20,
-                          ),
-                          title: Text(
-                            'Audiobook $jobId',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: isThisPlaying ? FontWeight.bold : null,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          subtitle: Text(
-                            '$durationStr • ${sizeMb.toStringAsFixed(1)} MB',
-                            style: const TextStyle(fontSize: 10),
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete_outline, size: 16),
-                            onPressed: () => _deleteAudiobook(jobId),
-                            tooltip: 'Delete',
-                            visualDensity: VisualDensity.compact,
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                        // Playback controls
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // Play button
-                              IconButton(
-                                icon: const Icon(Icons.play_arrow, size: 20),
-                                onPressed: (!isThisPlaying || _isAudiobookPaused)
-                                    ? () => _playAudiobookFromList(book)
-                                    : null,
-                                tooltip: 'Play',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 32),
-                              ),
-                              // Pause button
-                              IconButton(
-                                icon: const Icon(Icons.pause, size: 20),
-                                onPressed: (isThisPlaying && !_isAudiobookPaused)
-                                    ? _pauseAudiobookPlayback
-                                    : null,
-                                tooltip: 'Pause',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 32),
-                              ),
-                              // Stop button
-                              IconButton(
-                                icon: const Icon(Icons.stop, size: 20),
-                                onPressed: isThisPlaying ? _stopAudiobookPlayback : null,
-                                tooltip: 'Stop',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(minWidth: 32),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
+  Widget _buildSidebarAudiobookHistory() {
+    return Container(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHigh,
+              border: Border(
+                bottom: BorderSide(color: Theme.of(context).dividerColor),
               ),
             ),
+            child: Row(
+              children: [
+                const Icon(Icons.library_music, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Audiobooks',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  onPressed: _loadAudiobooks,
+                  tooltip: 'Refresh',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: Row(
+              children: [
+                const Text('Speed:', style: TextStyle(fontSize: 11)),
+                Expanded(
+                  child: Slider(
+                    value: _audiobookPlaybackSpeed,
+                    min: 0.5,
+                    max: 2.0,
+                    divisions: 150,
+                    label: '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
+                    onChanged: _setAudiobookSpeed,
+                  ),
+                ),
+                Text(
+                  '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _isLoadingAudiobooks
+                ? const Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : _audiobooks.isEmpty
+                ? Center(
+                    child: Text(
+                      'No audiobooks yet',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                  )
+                : ListView.builder(
+                    itemCount: _audiobooks.length,
+                    itemBuilder: (context, index) {
+                      final book = _audiobooks[index];
+                      final jobId = book['job_id'] as String;
+                      final shortId = jobId.length > 8
+                          ? jobId.substring(0, 8)
+                          : jobId;
+                      final duration = book['duration_seconds'] as num;
+                      final sizeMb = book['size_mb'] as num;
+                      final isThisPlaying = _playingAudiobookId == jobId;
+
+                      final mins = (duration / 60).floor();
+                      final secs = (duration % 60).round();
+                      final durationStr = mins > 0
+                          ? '${mins}m ${secs}s'
+                          : '${secs}s';
+
+                      return Container(
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: isThisPlaying
+                              ? Theme.of(context).colorScheme.primaryContainer
+                              : Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerLowest,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: isThisPlaying
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).dividerColor,
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            ListTile(
+                              dense: true,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                              ),
+                              leading: Icon(
+                                Icons.audiotrack,
+                                size: 18,
+                                color: isThisPlaying
+                                    ? Theme.of(context).colorScheme.primary
+                                    : null,
+                              ),
+                              title: Text(
+                                'Audiobook $shortId',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: isThisPlaying
+                                      ? FontWeight.bold
+                                      : null,
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                '$durationStr • ${sizeMb.toStringAsFixed(1)} MB',
+                                style: const TextStyle(fontSize: 10),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 16,
+                                ),
+                                onPressed: () => _deleteAudiobook(jobId),
+                                tooltip: 'Delete',
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(
+                                left: 8,
+                                right: 8,
+                                bottom: 8,
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.start,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(
+                                      Icons.play_arrow,
+                                      size: 18,
+                                    ),
+                                    onPressed:
+                                        (!isThisPlaying || _isAudiobookPaused)
+                                        ? () => _playAudiobookFromList(book)
+                                        : null,
+                                    tooltip: 'Play',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.pause, size: 18),
+                                    onPressed:
+                                        (isThisPlaying && !_isAudiobookPaused)
+                                        ? _pauseAudiobookPlayback
+                                        : null,
+                                    tooltip: 'Pause',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.stop, size: 18),
+                                    onPressed: isThisPlaying
+                                        ? _stopAudiobookPlayback
+                                        : null,
+                                    tooltip: 'Stop',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 28,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+          ),
         ],
       ),
     );
@@ -1484,7 +1754,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       await _audioPlayer.play();
 
       // Listen for completion with managed subscription
-      _audiobookPlayerSubscription = _audioPlayer.playerStateStream.listen((state) {
+      _audiobookPlayerSubscription = _audioPlayer.playerStateStream.listen((
+        state,
+      ) {
         if (state.processingState == ProcessingState.completed) {
           if (mounted) {
             setState(() {
@@ -1501,9 +1773,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           _playingAudiobookId = null;
           _isAudiobookPaused = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to play: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to play: $e')));
       }
     }
   }
@@ -1563,9 +1835,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _loadAudiobooks(); // Refresh list
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Failed to delete: $e')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
     }
@@ -1709,7 +1981,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           children: [
             const Icon(Icons.error_outline, size: 64, color: Colors.red),
             const SizedBox(height: 16),
-            Text('File not found:\n$_selectedPdfPath', textAlign: TextAlign.center),
+            Text(
+              'File not found:\n$_selectedPdfPath',
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       );
@@ -1766,7 +2041,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                       style: TextStyle(
                         fontSize: 16,
                         height: 1.6,
-                        fontFamily: _selectedPdfPath!.toLowerCase().endsWith('.md')
+                        fontFamily:
+                            _selectedPdfPath!.toLowerCase().endsWith('.md')
                             ? 'monospace'
                             : null,
                       ),
@@ -1825,7 +2101,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               size: 16,
             ),
             label: Text(
-              _selectedPdfPath!.toLowerCase().endsWith('.md') ? 'Markdown' : 'Text',
+              _selectedPdfPath!.toLowerCase().endsWith('.md')
+                  ? 'Markdown'
+                  : 'Text',
               style: const TextStyle(fontSize: 12),
             ),
           ),
@@ -2085,7 +2363,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               // Current word being read
               if (_currentHighlightedWord.isNotEmpty && !_isPaused)
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).colorScheme.primary,
                     borderRadius: BorderRadius.circular(16),
@@ -2118,7 +2399,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               'Word ${_currentWordIndex + 1} of ${_currentSentenceWords.length}',
               style: TextStyle(
                 fontSize: 11,
-                color: Theme.of(context).colorScheme.onPrimaryContainer.withOpacity(0.7),
+                color: Theme.of(
+                  context,
+                ).colorScheme.onPrimaryContainer.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -2132,15 +2415,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        border: Border(
-          top: BorderSide(color: Theme.of(context).dividerColor),
-        ),
+        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text('Page $_currentPage of $_totalPages'),
-        ],
+        children: [Text('Page $_currentPage of $_totalPages')],
       ),
     );
   }

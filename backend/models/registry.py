@@ -16,6 +16,7 @@ class ModelInfo:
     local_dir: Path
     size_gb: Optional[float] = None
     mode: str = "clone"  # "clone", "custom", or "design"
+    quantization: str = "bf16"  # "bf16" or "8bit"
     speakers: Optional[tuple[str, ...]] = None  # Available speakers for custom mode
     model_type: str = "huggingface"  # "huggingface" or "pip"
     description: str = ""
@@ -55,76 +56,113 @@ class ModelRegistry:
     def list_all_models(self) -> List[ModelInfo]:
         """List all available models across all engines."""
         return [
-            # Kokoro - pip package
+            # Kokoro (MLX)
             ModelInfo(
                 name="Kokoro",
                 engine="kokoro",
-                hf_repo="",
-                local_dir=Path(""),
+                hf_repo="mlx-community/Kokoro-82M-bf16",
+                local_dir=self.models_dir / "models--mlx-community--Kokoro-82M-bf16",
                 size_gb=0.3,
                 mode="tts",
-                model_type="pip",
-                description="Fast British English TTS via pip package",
+                model_type="huggingface",
+                description="Fast British English TTS on Apple Silicon via MLX-Audio",
             ),
-            # Qwen3 VoiceClone models (Base) - clone from user audio
+            # Qwen3 VoiceClone models (Base) - clone from user audio (MLX)
             ModelInfo(
                 name="Qwen3-TTS-12Hz-0.6B-Base",
                 engine="qwen3",
-                hf_repo="Qwen/Qwen3-TTS-12Hz-0.6B-Base",
-                local_dir=self.models_dir / "Qwen3-TTS-12Hz-0.6B-Base",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-0.6B-Base-bf16",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-bf16",
                 size_gb=1.4,
                 mode="clone",
-                description="Voice cloning (smaller, faster)",
+                quantization="bf16",
+                description="Voice cloning (smaller, faster) on MLX",
             ),
             ModelInfo(
                 name="Qwen3-TTS-12Hz-1.7B-Base",
                 engine="qwen3",
-                hf_repo="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-                local_dir=self.models_dir / "Qwen3-TTS-12Hz-1.7B-Base",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-1.7B-Base-bf16",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-1.7B-Base-bf16",
                 size_gb=3.6,
                 mode="clone",
-                description="Voice cloning (larger, higher quality)",
+                quantization="bf16",
+                description="Voice cloning (larger, higher quality) on MLX",
             ),
-            # Qwen3 CustomVoice models (preset speakers)
+            # Qwen3 CustomVoice models (preset speakers, MLX)
             ModelInfo(
                 name="Qwen3-TTS-12Hz-0.6B-CustomVoice",
                 engine="qwen3",
-                hf_repo="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
-                local_dir=self.models_dir / "Qwen3-TTS-12Hz-0.6B-CustomVoice",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-CustomVoice-bf16",
                 size_gb=1.4,
                 mode="custom",
+                quantization="bf16",
                 speakers=QWEN_SPEAKERS,
-                description="Preset speakers (smaller, faster)",
+                description="Preset speakers (smaller, faster) on MLX",
             ),
             ModelInfo(
                 name="Qwen3-TTS-12Hz-1.7B-CustomVoice",
                 engine="qwen3",
-                hf_repo="Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice",
-                local_dir=self.models_dir / "Qwen3-TTS-12Hz-1.7B-CustomVoice",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-1.7B-CustomVoice-bf16",
                 size_gb=3.6,
                 mode="custom",
+                quantization="bf16",
                 speakers=QWEN_SPEAKERS,
-                description="Preset speakers (larger, higher quality)",
+                description="Preset speakers (larger, higher quality) on MLX",
             ),
-            # Chatterbox
+            # Qwen3 8-bit variants (lower memory, faster startup)
+            ModelInfo(
+                name="Qwen3-TTS-12Hz-0.6B-Base-8bit",
+                engine="qwen3",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-0.6B-Base-8bit",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-Base-8bit",
+                size_gb=0.8,
+                mode="clone",
+                quantization="8bit",
+                description="Voice cloning (smaller, faster, 8-bit) on MLX",
+            ),
+            ModelInfo(
+                name="Qwen3-TTS-12Hz-1.7B-Base-8bit",
+                engine="qwen3",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-1.7B-Base-8bit",
+                size_gb=2.0,
+                mode="clone",
+                quantization="8bit",
+                description="Voice cloning (larger, 8-bit) on MLX",
+            ),
+            ModelInfo(
+                name="Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+                engine="qwen3",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-0.6B-CustomVoice-8bit",
+                size_gb=0.8,
+                mode="custom",
+                quantization="8bit",
+                speakers=QWEN_SPEAKERS,
+                description="Preset speakers (smaller, 8-bit) on MLX",
+            ),
+            ModelInfo(
+                name="Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                engine="qwen3",
+                hf_repo="mlx-community/Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                local_dir=self.models_dir / "models--mlx-community--Qwen3-TTS-12Hz-1.7B-CustomVoice-8bit",
+                size_gb=2.0,
+                mode="custom",
+                quantization="8bit",
+                speakers=QWEN_SPEAKERS,
+                description="Preset speakers (larger, 8-bit) on MLX",
+            ),
+            # Chatterbox (MLX)
             ModelInfo(
                 name="Chatterbox Multilingual",
                 engine="chatterbox",
-                hf_repo="ResembleAI/chatterbox",
-                local_dir=self.models_dir / "models--ResembleAI--chatterbox",
+                hf_repo="mlx-community/chatterbox-fp16",
+                local_dir=self.models_dir / "models--mlx-community--chatterbox-fp16",
                 size_gb=2.0,
                 mode="clone",
-                description="Multilingual voice cloning",
-            ),
-            # IndexTTS-2
-            ModelInfo(
-                name="IndexTTS-2",
-                engine="indextts2",
-                hf_repo="IndexTeam/IndexTTS-v2",
-                local_dir=self.models_dir / "models--IndexTeam--IndexTTS-v2",
-                size_gb=24.0,
-                mode="clone",
-                description="High-quality voice cloning (large model)",
+                description="Multilingual voice cloning on MLX",
             ),
         ]
 
@@ -145,13 +183,7 @@ class ModelRegistry:
 
     def is_model_downloaded(self, model: ModelInfo) -> bool:
         """Check if a model is downloaded."""
-        if model.model_type == "pip":
-            try:
-                __import__(model.engine)
-                return True
-            except ImportError:
-                return False
-        elif model.model_type == "huggingface":
+        if model.model_type == "huggingface":
             if not model.hf_repo:
                 return False
             cache_dir = self.models_dir / f"models--{model.hf_repo.replace('/', '--')}"
