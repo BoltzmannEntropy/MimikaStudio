@@ -10,13 +10,15 @@
   <br><br>
   macOS (Apple Silicon) · MLX-Audio · Source Available
   <br><br>
-  <b>Windows support coming soon</b> — the codebase runs on Windows, but we currently provide macOS binaries only.
+  <b>Windows support coming soon</b> — the codebase runs on Windows, but <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/">we currently provide macOS binaries only.</a>
   <br><br>
 </div>
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
 A local-first application for **macOS (Apple Silicon)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using three voice cloning engines (Qwen3-TTS, Chatterbox, Kokoro), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+
+> **License:** Source code is licensed under **Business Source License 1.1 (BSL-1.1)**, and binary distributions are licensed under the **Mimika Binary Distribution License**. See [LICENSE](LICENSE), [BINARY-LICENSE.txt](BINARY-LICENSE.txt), and the website [License page](https://boltzmannentropy.github.io/mimikastudio.github.io/license.html).
 
 > **Note:** Windows support is planned for a future release. The codebase is cross-platform, but we currently only provide pre-built binaries for macOS.
 
