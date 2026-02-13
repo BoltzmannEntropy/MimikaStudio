@@ -8,7 +8,7 @@
   <br>
   <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
   <br><br>
-  macOS (Apple Silicon) · MLX-Audio · Free &amp; Open Source
+  macOS (Apple Silicon) · MLX-Audio · Source Available
   <br><br>
   <b>Windows support coming soon</b> — the codebase runs on Windows, but we currently provide macOS binaries only.
   <br><br>
@@ -30,7 +30,6 @@ A local-first application for **macOS (Apple Silicon)**, with four core capabili
 | [Qwen3-TTS 0.6B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 600M | Preset Speakers | 4 languages (en, zh, ja, ko) |
 | [Qwen3-TTS 1.7B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers | 4 languages (en, zh, ja, ko) |
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
-| [IndexTTS-2](https://github.com/IndexTeam/IndexTTS) | — (~24GB) | Voice Cloning | Multilingual |
 
 ![Model Manager](assets/06-mimikastudio.png)
 
@@ -245,7 +244,6 @@ MimikaStudio brings together the latest advances in neural text-to-speech into a
 
 **[Kokoro TTS](https://github.com/hexgrad/kokoro)** delivers sub-200ms latency with crystal-clear British and American accents. The 82M parameter model runs effortlessly on any machine, generating natural-sounding speech with Emma, George, Lily, and other premium voices.
 
-Kokoro also includes **Emma IPA** - a British phonetic transcription tool powered by your choice of LLM (Claude, OpenAI, Ollama).
 
 ![Kokoro TTS](assets/02-mimikastudio.png)
 
@@ -253,7 +251,7 @@ Kokoro also includes **Emma IPA** - a British phonetic transcription tool powere
 
 Clone any voice from remarkably short audio samples. **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS)** requires just **3 seconds** of reference audio to capture a speaker's characteristics. Upload a voice memo, a podcast clip, or any audio snippet, and MimikaStudio will synthesize new speech in that voice.
 
-For multilingual cloning, **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** supports 23 languages, while **[IndexTTS-2](https://github.com/IndexTeam/IndexTTS)** delivers high-fidelity clones with its large ~24GB model. All three engines share a unified voice library — upload a voice sample once and use it across all cloning engines.
+For multilingual cloning, **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** supports 23 languages. Both Qwen3 and Chatterbox share a unified voice library — upload a voice sample once and use it across all cloning engines.
 
 ### Premium Preset Speakers
 
@@ -267,16 +265,14 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B Base** | Voice Cloning | 3-second cloning, 10 languages |
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B CustomVoice** | Preset Speakers | 9 premium voices, style control |
 | **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
-| **[IndexTTS-2](https://github.com/IndexTeam/IndexTTS)** | Voice Cloning | High-quality cloning, large model (~24GB) |
 
 ![Qwen3-TTS Voice Clone](assets/03-mimikastudio.png)
 
 ### Beyond Simple TTS
 
-- **Emma IPA Transcription**: British IPA-like phonetic transcriptions using LLM providers (Claude, OpenAI, Ollama)
 - **PDF Reader with Voice**: Read PDFs aloud with sentence-by-sentence highlighting
 - **Audiobook Creator**: Convert documents (PDF, EPUB, TXT, MD, DOCX) into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers
-- **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox, IndexTTS-2)
+- **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox)
 - **Model Manager**: In-app model download manager — check status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
 - **Style Instructions**: Tell speakers *how* to speak - "whisper softly", "speak with excitement", etc.
@@ -292,7 +288,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Qwen3-TTS Voice Clone**: Clone any voice from just 3+ seconds of audio
 - **Qwen3-TTS Custom Voice**: 9 preset premium speakers (Ryan, Aiden, Vivian, Serena, Uncle Fu, Dylan, Eric, Ono Anna, Sohee)
 - **Chatterbox Voice Clone**: Multilingual voice cloning with prompt audio
-- **IndexTTS-2 Voice Clone**: High-quality voice cloning with a large model (~24GB)
 - **Shared Voice Library**: Voice samples uploaded to any engine are available across all voice cloning models
 - **Model Manager**: In-app UI to check model download status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
@@ -301,7 +296,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads stored in `backend/data/user_voices/`
 - **User Voices in UI**: Uploaded voices appear under each engine's **Your Voices** section after refresh
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
-- **Emma IPA**: British phonetic transcription with multi-LLM support (Claude, OpenAI, Ollama)
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
 - **CLI Tool**: Full command-line interface for Kokoro and Qwen3
@@ -489,15 +483,9 @@ All format dependencies are included in `requirements.txt`.
 
 ## TTS Engines
 
-### Kokoro TTS + Emma IPA
+### Kokoro TTS
 
-Fast, high-quality British English synthesis (82M parameters, 24kHz) with integrated IPA transcription.
-
-**Emma IPA** generates British phonetic transcriptions using your choice of LLM provider:
-- **Claude** (Anthropic) - claude-sonnet-4, claude-opus-4, claude-haiku-3
-- **OpenAI** - gpt-4, gpt-4-turbo, gpt-3.5-turbo
-- **Ollama** (Local) - Any locally installed model
-- **Claude Code CLI** - Use your local Claude CLI
+Fast, high-quality British English synthesis (82M parameters, 24kHz). Features 8 premium British voices including Emma, Alice, Isabella, Lily, George, Daniel, Fable, and Lewis.
 
 ![TTS Screen](assets/02-mimikastudio.png)
 
@@ -577,24 +565,6 @@ curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
 
 ![Chatterbox Voice Clone](assets/04-mimikastudio.png)
 
-### IndexTTS-2
-
-High-quality voice cloning with a large model (~24GB). IndexTTS-2 produces natural-sounding clones from reference audio.
-
-**Model**: `IndexTeam/IndexTTS-v2` (~24GB, auto-downloaded from HuggingFace on first use)
-
-**How It Works**:
-1. Upload a reference audio sample (WAV)
-2. Enter text to synthesize
-3. Adjust speed if needed
-4. Generate!
-
-**Parameters**:
-- Speed (playback speed multiplier)
-- Unload after generation (free GPU memory)
-
-**Note**: IndexTTS-2 requires significant disk space (~24GB) and benefits from CUDA GPU acceleration.
-
 ---
 
 ## API Reference
@@ -648,18 +618,6 @@ The backend exposes 60+ REST endpoints via FastAPI. Full interactive docs at **h
 | `/api/chatterbox/languages` | GET | List supported languages |
 | `/api/chatterbox/info` | GET | Model info |
 
-### IndexTTS-2
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/indextts2/generate` | POST | Generate speech (voice clone) |
-| `/api/indextts2/voices` | GET | List saved voice samples |
-| `/api/indextts2/voices` | POST | Upload new voice sample |
-| `/api/indextts2/voices/{name}` | PUT | Update voice sample |
-| `/api/indextts2/voices/{name}` | DELETE | Delete voice sample |
-| `/api/indextts2/voices/{name}/audio` | GET | Preview voice sample audio |
-| `/api/indextts2/info` | GET | Model info |
-
 ### Model Management
 
 | Endpoint | Method | Description |
@@ -696,26 +654,8 @@ The backend exposes 60+ REST endpoints via FastAPI. Full interactive docs at **h
 |----------|--------|-------------|
 | `/api/tts/audio/list` | GET | List Kokoro-generated audio |
 | `/api/tts/audio/{filename}` | DELETE | Delete TTS audio file |
-| `/api/voice-clone/audio/list` | GET | List Qwen3/Chatterbox/IndexTTS-2 clone audio |
+| `/api/voice-clone/audio/list` | GET | List Qwen3/Chatterbox clone audio |
 | `/api/voice-clone/audio/{filename}` | DELETE | Delete clone audio file |
-
-### Emma IPA
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/ipa/sample` | GET | Default sample text |
-| `/api/ipa/samples` | GET | All saved IPA samples |
-| `/api/ipa/generate` | POST | Generate British IPA transcription |
-| `/api/ipa/pregenerated` | GET | Pregenerated IPA with audio |
-| `/api/ipa/save-output` | POST | Save IPA output to history |
-
-### LLM Configuration
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/llm/config` | GET | Current LLM config |
-| `/api/llm/config` | POST | Update LLM provider settings |
-| `/api/llm/ollama/models` | GET | List local Ollama models |
 
 ### Samples & Pregenerated Content
 
@@ -750,12 +690,11 @@ MimikaStudio includes a full MCP (Model Context Protocol) server that exposes ev
 **Start:** `./bin/mimikactl mcp start` (port 8010)
 
 The MCP server provides 50+ tools for:
-- TTS generation (Kokoro, Qwen3, Chatterbox, IndexTTS-2)
+- TTS generation (Kokoro, Qwen3, Chatterbox)
 - Voice management (list, upload, delete, update, preview)
 - Audiobook generation and management
 - System info and monitoring
 - LLM configuration
-- IPA transcription
 - Audio library management
 
 ### MCP & API Dashboard (In-App)
@@ -763,7 +702,7 @@ The MCP server provides 50+ tools for:
 The **MCP & API** tab in the Flutter app provides a live dashboard showing:
 
 - **Server status** — Backend API (port 8000), MCP Server (port 8010), and API Docs availability with green/red indicators
-- **All MCP tools** grouped by category (System, Kokoro, Qwen3, Chatterbox, IndexTTS-2, Audiobook, Voice Management, Models, Samples, LLM, IPA) with expandable parameter details
+- **All MCP tools** grouped by category (System, Kokoro, Qwen3, Chatterbox, Audiobook, Voice Management, Models, Samples) with expandable parameter details
 - **All 60+ REST API endpoints** grouped by category with HTTP method badges (GET/POST/PUT/DELETE)
 - **Search** — Filter tools and endpoints by name, path, or description
 
@@ -810,16 +749,14 @@ MimikaStudio/
 │   ├── lib/
 │   │   ├── main.dart         # App entry, 6-tab navigation + Model Manager
 │   │   ├── screens/
-│   │   │   ├── quick_tts_screen.dart        # Kokoro TTS + Emma IPA
+│   │   │   ├── quick_tts_screen.dart        # Kokoro TTS
 │   │   │   ├── qwen3_clone_screen.dart      # Qwen3 voice cloning
 │   │   │   ├── chatterbox_clone_screen.dart # Chatterbox voice cloning
-│   │   │   ├── indextts2_screen.dart        # IndexTTS-2 voice cloning
 │   │   │   ├── pdf_reader_screen.dart       # PDF reader with TTS
 │   │   │   ├── mcp_endpoints_screen.dart    # MCP & API dashboard
 │   │   │   └── models_dialog.dart           # Model download manager
 │   │   ├── widgets/
 │   │   │   ├── audio_player_widget.dart     # Shared audio player
-│   │   │   ├── emma_ipa_widget.dart         # IPA transcription widget
 │   │   │   └── multi_layer_text.dart        # Text overlay widget
 │   │   └── services/
 │   │       └── api_service.dart             # Backend API client (823 lines)
@@ -833,12 +770,10 @@ MimikaStudio/
 │   │   ├── kokoro_engine.py
 │   │   ├── qwen3_engine.py        # Clone + CustomVoice
 │   │   ├── chatterbox_engine.py   # Multilingual voice clone
-│   │   ├── indextts2_engine.py    # IndexTTS-2 voice clone
 │   │   ├── text_chunking.py       # Smart text chunking for audiobooks
 │   │   ├── audio_utils.py         # Audio processing utilities
 │   │   └── audiobook.py           # Audiobook generation logic (822 lines)
 │   ├── language/
-│   │   └── ipa_generator.py # British IPA transcription
 │   ├── llm/                 # LLM provider integration
 │   │   ├── factory.py       # Claude, OpenAI, Ollama support
 │   │   ├── claude_provider.py
@@ -852,12 +787,10 @@ MimikaStudio/
 │       ├── samples/         # Shipped voice samples (shared across engines)
 │       │   ├── qwen3_voices/      # Natasha, Suzan
 │       │   ├── chatterbox_voices/ # Natasha, Suzan, Hebrew_Natasha
-│       │   ├── indextts2_voices/
 │       │   └── kokoro/            # Pre-generated Kokoro samples
 │       ├── user_voices/     # User uploads (git-ignored, shared across engines)
 │       │   ├── qwen3/
 │       │   ├── chatterbox/
-│       │   └── indextts2/
 │       └── outputs/         # Generated audio files
 │
 ├── scripts/                 # Build & installer scripts
@@ -883,7 +816,7 @@ MimikaStudio/
 | Directory | Lines | Description |
 |-----------|-------|-------------|
 | `backend/main.py` | 2,078 | FastAPI endpoints |
-| `backend/tts/` | 2,037 | TTS engine wrappers (Kokoro, Qwen3, Chatterbox, IndexTTS-2) |
+| `backend/tts/` | 2,037 | TTS engine wrappers (Kokoro, Qwen3, Chatterbox) |
 | `backend/tests/` | 1,567 | Comprehensive test suite |
 | `bin/tts_mcp_server.py` | 1,438 | MCP server |
 | `backend/llm/` | 409 | LLM provider integration |
@@ -894,9 +827,9 @@ MimikaStudio/
 
 | Directory | Lines | Description |
 |-----------|-------|-------------|
-| `lib/screens/` | 7,080 | 7 screens (TTS, Qwen3, Chatterbox, IndexTTS-2, PDF, MCP, Models) |
+| `lib/screens/` | 7,080 | 8 screens (Models, TTS, Qwen3, Chatterbox, PDF, MCP, Settings, About) |
 | `lib/services/` | 823 | API service client |
-| `lib/widgets/` | 952 | Shared widgets (audio player, IPA, text overlay) |
+| `lib/widgets/` | 952 | Shared widgets (audio player, text overlay) |
 | `lib/main.dart` | 270 | App entry + 6-tab navigation |
 
 ### Largest Files
@@ -909,7 +842,6 @@ MimikaStudio/
 | `screens/qwen3_clone_screen.dart` | 1,482 |
 | `screens/chatterbox_clone_screen.dart` | 1,243 |
 | `screens/quick_tts_screen.dart` | 1,085 |
-| `screens/indextts2_screen.dart` | 1,053 |
 | `backend/tests/test_all_endpoints.py` | 927 |
 | `backend/tts/audiobook.py` | 822 |
 | `services/api_service.dart` | 823 |
@@ -977,7 +909,6 @@ MimikaStudio is optimized for Apple Silicon Macs with MPS (Metal Performance Sha
 - **Kokoro TTS**: Uses MPS for GPU-accelerated inference — sub-200ms latency
 - **Qwen3-TTS**: Runs on CPU (MPS support planned); still fast on M-series chips
 - **Chatterbox**: Runs on CPU due to MPS resampling limitations
-- **IndexTTS-2**: Benefits from CUDA on Linux/Windows; runs on CPU on macOS
 - **Audiobook generation**: Expect ~60 chars/sec on M2 MacBook Pro (matching audiblez benchmark)
 - **Memory**: Close other apps when generating long audiobooks with 1.7B model
 
@@ -1029,13 +960,19 @@ S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop 
 - **From audiblez**: spaCy-based sentence tokenization, character-based progress tracking, M4B with chapters
 - **From pdf-narrator**: Smart PDF extraction that skips headers/footers/page numbers, TOC-based chapters
 - **From abogen**: Multiple output formats (WAV/MP3/M4B), real-time progress with ETA
-- **Unique to MimikaStudio**: Native macOS Flutter UI, 3-second voice cloning, voice library management, Emma IPA transcription, full MCP server integration, 60+ REST API endpoints, in-app MCP & API dashboard
+- **Unique to MimikaStudio**: Native macOS Flutter UI, 3-second voice cloning, voice library management, full MCP server integration, 60+ REST API endpoints, in-app MCP & API dashboard
 
 ---
 
 ## License
 
-MIT License
+MimikaStudio is source-available under the **Business Source License 1.1** (BSL-1.1).
+
+- **Source Code**: Free for non-production use, learning, and modification
+- **Production Use**: Requires a commercial license
+- **Change License**: Converts to GPL-2.0-or-later after the change date
+
+See [LICENSE](LICENSE) for the full license text, or visit our [License page](https://boltzmannentropy.github.io/mimikastudio.github.io/license.html) for details.
 
 ## Acknowledgments
 
@@ -1043,7 +980,6 @@ MIT License
 - [Kokoro TTS](https://github.com/hexgrad/kokoro) - Fast, high-quality English TTS
 - [Chatterbox](https://github.com/resemble-ai/chatterbox) - Multilingual voice cloning
 - [Dicta ONNX](https://github.com/thewh1teagle/dicta-onnx) - Hebrew diacritization for Chatterbox TTS
-- [IndexTTS-2](https://github.com/IndexTeam/IndexTTS) - High-quality voice cloning
 - [Flutter](https://flutter.dev) - Cross-platform UI framework
 - [FastAPI](https://fastapi.tiangolo.com) - Python API framework
 - [spaCy](https://spacy.io) - Industrial-strength NLP for sentence tokenization
