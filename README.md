@@ -1,20 +1,24 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>NEW</code>&nbsp;&nbsp;macOS · Windows · Web · CUDA · Apple MPS
+  <code>v2026.02</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i></h1>
-  <p>Local-first voice cloning, text-to-speech, PDF reader, and audiobook creator.<br>Runs on macOS (MPS), Windows (CUDA), and Web. Tested on RTX 4090 &amp; 5090.</p>
+  <p>Local-first voice cloning, text-to-speech, PDF reader, and audiobook creator.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
   <br>
   <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
   <br><br>
-  macOS (MPS) · Windows (CUDA) · Web UI · Free &amp; Open Source
+  macOS (Apple Silicon) · MLX-Audio · Free &amp; Open Source
+  <br><br>
+  <b>Windows support coming soon</b> — the codebase runs on Windows, but we currently provide macOS binaries only.
   <br><br>
 </div>
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first application for **macOS (MPS), Windows (CUDA), and Web**, with four core capabilities: **clone any voice** from just 3 seconds of audio using four voice cloning engines (Qwen3-TTS, Chatterbox, IndexTTS-2), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+A local-first application for **macOS (Apple Silicon)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using three voice cloning engines (Qwen3-TTS, Chatterbox, Kokoro), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+
+> **Note:** Windows support is planned for a future release. The codebase is cross-platform, but we currently only provide pre-built binaries for macOS.
 
 ### Supported Models
 
@@ -28,9 +32,9 @@ A local-first application for **macOS (MPS), Windows (CUDA), and Web**, with fou
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 | [IndexTTS-2](https://github.com/IndexTeam/IndexTTS) | — (~24GB) | Voice Cloning | Multilingual |
 
-![Model Manager](assets/10-model-manager.png)
+![Model Manager](assets/06-mimikastudio.png)
 
-![MimikaStudio](assets/00-mimikastudio-hero.png)
+![MimikaStudio](assets/01-mimikastudio.png)
 
 ---
 
@@ -83,20 +87,14 @@ All samples below were generated using philosophical texts. Click to listen.
 
 | Component | Requirement |
 |-----------|-------------|
-| **OS** | macOS 12+ (Monterey or later) |
-| **CPU** | Apple Silicon (M1/M2/M3/M4) or Intel |
+| **OS** | macOS 13+ (Ventura or later) |
+| **Chip** | Apple Silicon (M1/M2/M3/M4) — Intel not supported |
 | **RAM** | 8GB minimum, 16GB+ recommended |
-| **Storage** | 10GB for models and dependencies |
+| **Storage** | 5-10GB for models |
 | **Python** | 3.10 or later |
-| **Flutter** | 3.x with desktop support (**required** for macOS, Windows, and web UI) |
+| **Flutter** | 3.x with desktop support |
 
-### Flutter Requirement
-
-**Flutter is required** to run the MimikaStudio GUI on **macOS**, **Windows**, and **web**. The backend (API server) runs without Flutter, but for the desktop or web UI you must install Flutter SDK 3.x:
-
-- **macOS**: `brew install --cask flutter` or follow [Flutter macOS install guide](https://docs.flutter.dev/get-started/install/macos)
-- **Windows**: Follow the [Flutter Windows install guide](https://docs.flutter.dev/get-started/install/windows)
-- **Web**: Same Flutter SDK; the web UI is launched via `./bin/mimikactl up --web`
+> **Windows & Linux:** The codebase supports these platforms, but pre-built binaries are currently macOS-only. Windows/Linux support is planned for future releases.
 
 ### Automated Install (Recommended)
 
@@ -220,7 +218,7 @@ MCP Server started on port 8010
 Starting Flutter UI (dev mode)...
 ```
 
-![MimikaStudio Running](assets/09-app-up.png)
+![MimikaStudio Running](assets/07-mimikastudio.png)
 
 ---
 
@@ -235,7 +233,7 @@ MimikaStudio ships two UIs backed by the same local FastAPI server:
 > The web UI uses the same backend and voice library as the desktop app.
 > In web mode, use **Open Document** to upload PDFs from your machine.
 
-![MimikaStudio App Running](assets/08-running-app.png)
+![MimikaStudio App Running](assets/01-mimikastudio.png)
 
 ---
 
@@ -249,7 +247,7 @@ MimikaStudio brings together the latest advances in neural text-to-speech into a
 
 Kokoro also includes **Emma IPA** - a British phonetic transcription tool powered by your choice of LLM (Claude, OpenAI, Ollama).
 
-![Kokoro TTS with Emma IPA](assets/01-kokoro-tts-emma-ipa.png)
+![Kokoro TTS](assets/02-mimikastudio.png)
 
 ### Voice Cloning Without Limits
 
@@ -271,7 +269,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 | **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
 | **[IndexTTS-2](https://github.com/IndexTeam/IndexTTS)** | Voice Cloning | High-quality cloning, large model (~24GB) |
 
-![Qwen3-TTS Custom Voice Speakers](assets/04-qwen3-custom-voice.png)
+![Qwen3-TTS Voice Clone](assets/03-mimikastudio.png)
 
 ### Beyond Simple TTS
 
@@ -285,7 +283,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Real-time System Monitoring**: CPU, RAM, and GPU usage in the app header
 - **Multi-LLM Support**: Claude, OpenAI, Ollama (local), or Claude Code CLI
 
-![PDF Reader & Audiobook Creator](assets/03-pdf-audiobook-creator.png)
+![PDF Reader & Audiobook Creator](assets/05-mimikastudio.png)
 
 ---
 
@@ -501,7 +499,7 @@ Fast, high-quality British English synthesis (82M parameters, 24kHz) with integr
 - **Ollama** (Local) - Any locally installed model
 - **Claude Code CLI** - Use your local Claude CLI
 
-![Emma IPA Phonetic Transcription](assets/02-emma-ipa-transcription.png)
+![TTS Screen](assets/02-mimikastudio.png)
 
 ### Qwen3-TTS
 
@@ -542,7 +540,7 @@ Use 9 premium preset speakers without any reference audio.
 | Repetition Penalty | 1.0 | 1.0-2.0 | Reduce repetition |
 | Seed | -1 | -1 or 0+ | Reproducible generation (-1=random) |
 
-![Qwen3-TTS with Advanced Parameters](assets/05-qwen3-advanced.png)
+![Qwen3-TTS](assets/03-mimikastudio.png)
 
 ### Chatterbox Multilingual TTS
 
@@ -577,7 +575,7 @@ curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
 
 **Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations.
 
-![Chatterbox Voice Clone](assets/07-chatterbox-voice-clone.png)
+![Chatterbox Voice Clone](assets/04-mimikastudio.png)
 
 ### IndexTTS-2
 
@@ -771,7 +769,7 @@ The **MCP & API** tab in the Flutter app provides a live dashboard showing:
 
 The dashboard fetches MCP tools live from the MCP server via JSON-RPC, so it always reflects the current tool set.
 
-![MCP & API Dashboard](assets/06-mcp-api-dashboard.png)
+![MCP & API Dashboard](assets/06-mimikastudio.png)
 
 ---
 
