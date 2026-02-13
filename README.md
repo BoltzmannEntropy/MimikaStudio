@@ -966,13 +966,24 @@ S. Kashani, "MimikaStudio: Local-First Voice Cloning and Text-to-Speech Desktop 
 
 ## License
 
-MimikaStudio is source-available under the **Business Source License 1.1** (BSL-1.1).
+MimikaStudio uses a dual-license model:
 
-- **Source Code**: Free for non-production use, learning, and modification
-- **Production Use**: Requires a commercial license
-- **Change License**: Converts to GPL-2.0-or-later after the change date
+| License | Scope | File |
+|---------|-------|------|
+| **Business Source License 1.1** | Source code | [LICENSE](LICENSE) |
+| **Binary Distribution License** | DMG/executables | [BINARY-LICENSE.txt](BINARY-LICENSE.txt) |
 
-See [LICENSE](LICENSE) for the full license text, or visit our [License page](https://boltzmannentropy.github.io/mimikastudio.github.io/license.html) for details.
+**Source Code (BSL-1.1):**
+- Free to use, modify, and build for personal/internal use
+- Production use permitted under BSL terms
+- Converts to GPL-2.0-or-later after the change date
+
+**Binary Distribution:**
+- Free for personal and evaluation use
+- Commercial use requires a license
+- Redistribution not permitted
+
+See our [License page](https://boltzmannentropy.github.io/mimikastudio.github.io/license.html) for a plain-English overview, or contact solomon@qneura.ai for commercial licensing.
 
 ## Acknowledgments
 

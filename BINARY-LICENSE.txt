@@ -1,0 +1,28 @@
+Binary Distribution License
+
+This Binary Distribution License ("License") governs use of the compiled
+binary distribution for MimikaStudio (the "Binary"), including DMG, EXE, and
+app bundles.
+
+1. License Grant
+You may install and use the Binary for personal or internal evaluation use.
+
+2. Restrictions
+You may not sell, rent, sublicense, or redistribute the Binary.
+You may not use the Binary for any commercial offering or commercial purpose.
+
+3. Source Code
+Source code is licensed separately under the Business Source License 1.1.
+See LICENSE for details.
+
+4. No Warranty
+THE BINARY IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+5. Limitation of Liability
+IN NO EVENT SHALL QNEURA.AI BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM THE USE OF THE BINARY.
+
+6. Contact
+If you need commercial binary distribution rights, contact solomon@qneura.ai.
