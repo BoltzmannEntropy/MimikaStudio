@@ -717,143 +717,23 @@ class TestSamples:
 
 
 # ===================================================================
-# LLM CONFIG ENDPOINTS (3)
+# REMOVED LEGACY ENDPOINTS (LLM/IPA)
 # ===================================================================
 
-class TestLLMConfig:
-    """GET /api/llm/config, POST /api/llm/config, GET /api/llm/ollama/models"""
+class TestRemovedLegacyEndpoints:
+    """LLM/IPA endpoints were intentionally removed from production surface."""
 
-    def test_get_config_returns_200(self, client):
-        resp = client.get("/api/llm/config")
-        assert resp.status_code == 200
+    def test_llm_config_endpoints_return_404(self, client):
+        assert client.get("/api/llm/config").status_code == 404
+        assert client.post("/api/llm/config", json={}).status_code == 404
+        assert client.get("/api/llm/ollama/models").status_code == 404
 
-    def test_get_config_has_provider(self, client):
-        data = client.get("/api/llm/config").json()
-        assert "provider" in data
-
-    def test_get_config_has_available_providers(self, client):
-        data = client.get("/api/llm/config").json()
-        assert "available_providers" in data
-        assert isinstance(data["available_providers"], list)
-
-    def test_post_config_valid_body(self, client):
-        resp = client.post("/api/llm/config", json={
-            "provider": "ollama",
-            "model": "llama3",
-        })
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "message" in data
-        assert data["provider"] == "ollama"
-        assert data["model"] == "llama3"
-
-    def test_post_config_missing_fields_returns_422(self, client):
-        resp = client.post("/api/llm/config", json={})
-        assert resp.status_code == 422
-
-    def test_post_config_with_api_key(self, client):
-        resp = client.post("/api/llm/config", json={
-            "provider": "openai",
-            "model": "gpt-4o",
-            "api_key": "sk-test-key-12345",
-        })
-        assert resp.status_code == 200
-
-    def test_get_ollama_models_returns_200(self, client):
-        resp = client.get("/api/llm/ollama/models")
-        assert resp.status_code == 200
-
-    def test_get_ollama_models_has_models_key(self, client):
-        data = client.get("/api/llm/ollama/models").json()
-        assert "models" in data
-        assert isinstance(data["models"], list)
-
-    def test_get_ollama_models_has_available_key(self, client):
-        data = client.get("/api/llm/ollama/models").json()
-        assert "available" in data
-
-
-# ===================================================================
-# IPA ENDPOINTS (5)
-# ===================================================================
-
-class TestIPAEndpoints:
-    """IPA transcription generation and retrieval."""
-
-    # -- GET /api/ipa/sample --
-    def test_ipa_sample_returns_200(self, client):
-        resp = client.get("/api/ipa/sample")
-        assert resp.status_code == 200
-
-    def test_ipa_sample_has_text(self, client):
-        data = client.get("/api/ipa/sample").json()
-        assert "text" in data
-        assert len(data["text"]) > 0
-
-    # -- GET /api/ipa/samples --
-    def test_ipa_samples_returns_200(self, client):
-        resp = client.get("/api/ipa/samples")
-        assert resp.status_code == 200
-
-    def test_ipa_samples_has_list(self, client):
-        data = client.get("/api/ipa/samples").json()
-        assert "samples" in data
-        assert isinstance(data["samples"], list)
-
-    def test_ipa_samples_entry_structure(self, client):
-        data = client.get("/api/ipa/samples").json()
-        if data["samples"]:
-            sample = data["samples"][0]
-            for key in ("id", "title", "input_text", "is_default"):
-                assert key in sample, f"Missing key: {key}"
-
-    # -- POST /api/ipa/generate --
-    def test_ipa_generate_missing_text_returns_422(self, client):
-        resp = client.post("/api/ipa/generate", json={})
-        assert resp.status_code == 422
-
-    def test_ipa_generate_valid_body_not_422(self, client):
-        """Valid body should not be validation error; may fail due to LLM."""
-        resp = client.post("/api/ipa/generate", json={
-            "text": "Hello world",
-        })
-        # 200 (success) or 500 (LLM not configured) -- but not 422
-        assert resp.status_code != 422
-
-    # -- GET /api/ipa/pregenerated --
-    def test_ipa_pregenerated_returns_200(self, client):
-        resp = client.get("/api/ipa/pregenerated")
-        assert resp.status_code == 200
-
-    def test_ipa_pregenerated_has_text(self, client):
-        data = client.get("/api/ipa/pregenerated").json()
-        assert "text" in data
-        assert "has_audio" in data
-
-    # -- POST /api/ipa/save-output --
-    def test_ipa_save_output_returns_200(self, client):
-        resp = client.post("/api/ipa/save-output", params={
-            "input_text": "Test text",
-            "version1_ipa": "TEST-text",
-            "version2_ipa": "TEST-text-v2",
-            "llm_provider": "test",
-        })
-        assert resp.status_code == 200
-
-    def test_ipa_save_output_has_id(self, client):
-        resp = client.post("/api/ipa/save-output", params={
-            "input_text": "Another test",
-            "version1_ipa": "test-ipa-1",
-            "version2_ipa": "test-ipa-2",
-            "llm_provider": "test",
-        })
-        data = resp.json()
-        assert "id" in data
-        assert "message" in data
-
-    def test_ipa_save_output_missing_required_params(self, client):
-        resp = client.post("/api/ipa/save-output")
-        assert resp.status_code == 422
+    def test_ipa_endpoints_return_404(self, client):
+        assert client.get("/api/ipa/sample").status_code == 404
+        assert client.get("/api/ipa/samples").status_code == 404
+        assert client.post("/api/ipa/generate", json={"text": "hello"}).status_code == 404
+        assert client.get("/api/ipa/pregenerated").status_code == 404
+        assert client.post("/api/ipa/save-output").status_code == 404
 
 
 # ===================================================================

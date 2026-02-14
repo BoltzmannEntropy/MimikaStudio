@@ -17,20 +17,35 @@ class SettingsService {
     return http.put(uri, headers: headers, body: body).timeout(_requestTimeout);
   }
 
+  dynamic _decodeJson(String body) {
+    try {
+      return json.decode(body);
+    } catch (e) {
+      throw Exception('Backend returned invalid JSON for settings');
+    }
+  }
+
+  Exception _settingsError(String action, http.Response response) {
+    final fallback = response.body.trim().isEmpty
+        ? 'HTTP ${response.statusCode}'
+        : response.body.trim();
+    return Exception('$action failed (${response.statusCode}): $fallback');
+  }
+
   Future<Map<String, String>> getAllSettings() async {
     final response = await _get(Uri.parse('$baseUrl/api/settings'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body) as Map<String, dynamic>;
+      final data = _decodeJson(response.body) as Map<String, dynamic>;
       return data.map((k, v) => MapEntry(k, v.toString()));
     }
-    throw Exception('Failed to load settings');
+    throw _settingsError('Failed to load settings', response);
   }
 
   Future<String?> getSetting(String key) async {
     try {
       final response = await _get(Uri.parse('$baseUrl/api/settings/$key'));
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        final data = _decodeJson(response.body);
         return data['value'] as String?;
       }
     } catch (e) {
@@ -46,7 +61,7 @@ class SettingsService {
       body: json.encode({'key': key, 'value': value}),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to update setting');
+      throw _settingsError('Failed to update setting', response);
     }
   }
 
@@ -55,10 +70,10 @@ class SettingsService {
       Uri.parse('$baseUrl/api/settings/output-folder'),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return data['path'] as String;
     }
-    throw Exception('Failed to get output folder');
+    throw _settingsError('Failed to get output folder', response);
   }
 
   Future<void> setOutputFolder(String path) async {
@@ -68,7 +83,7 @@ class SettingsService {
       ),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to set output folder');
+      throw _settingsError('Failed to set output folder', response);
     }
   }
 }

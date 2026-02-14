@@ -3,6 +3,12 @@ from pathlib import Path
 from database import get_connection
 from datetime import datetime
 
+
+def _ensure_folder(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def get_setting(key: str) -> str | None:
     """Get a setting value by key."""
     conn = get_connection()
@@ -39,15 +45,19 @@ def get_output_folder() -> str:
     """Get the output folder path, creating it if needed."""
     folder = get_setting("output_folder")
     if folder:
-        Path(folder).mkdir(parents=True, exist_ok=True)
-        return folder
-    default = str(Path.home() / "MimikaStudio" / "outputs")
-    Path(default).mkdir(parents=True, exist_ok=True)
-    return default
+        try:
+            return str(_ensure_folder(Path(folder).expanduser()))
+        except OSError:
+            pass
+
+    default = Path.home() / "MimikaStudio" / "outputs"
+    return str(_ensure_folder(default))
 
 def set_output_folder(path: str) -> bool:
     """Set the output folder path."""
-    folder = Path(path)
-    if not folder.exists():
-        folder.mkdir(parents=True, exist_ok=True)
-    return set_setting("output_folder", path)
+    normalized = (path or "").strip()
+    if not normalized:
+        raise OSError("output folder path cannot be empty")
+    folder = Path(normalized).expanduser()
+    _ensure_folder(folder)
+    return set_setting("output_folder", str(folder))

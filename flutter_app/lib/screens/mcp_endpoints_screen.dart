@@ -93,16 +93,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
     {'method': 'GET', 'path': '/api/samples/{engine}', 'description': 'Get sample texts for engine', 'category': 'Samples'},
     {'method': 'GET', 'path': '/api/pregenerated', 'description': 'List pregenerated audio samples', 'category': 'Samples'},
     {'method': 'GET', 'path': '/api/voice-samples', 'description': 'List voice sample sentences', 'category': 'Samples'},
-    // LLM
-    {'method': 'GET', 'path': '/api/llm/config', 'description': 'Get LLM configuration', 'category': 'LLM Config'},
-    {'method': 'POST', 'path': '/api/llm/config', 'description': 'Update LLM configuration', 'category': 'LLM Config'},
-    {'method': 'GET', 'path': '/api/llm/ollama/models', 'description': 'Get available Ollama models', 'category': 'LLM Config'},
-    // IPA
-    {'method': 'GET', 'path': '/api/ipa/sample', 'description': 'Get default IPA sample text', 'category': 'Emma IPA'},
-    {'method': 'GET', 'path': '/api/ipa/samples', 'description': 'Get all saved IPA samples', 'category': 'Emma IPA'},
-    {'method': 'POST', 'path': '/api/ipa/generate', 'description': 'Generate IPA transcription via LLM', 'category': 'Emma IPA'},
-    {'method': 'GET', 'path': '/api/ipa/pregenerated', 'description': 'Get pregenerated IPA with audio', 'category': 'Emma IPA'},
-    {'method': 'POST', 'path': '/api/ipa/save-output', 'description': 'Save IPA output to history', 'category': 'Emma IPA'},
   ];
 
   List<Map<String, dynamic>> _filteredTools() {
@@ -346,10 +336,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
         category = 'Audiobook';
       } else if (name.startsWith('voice_clone') || name == 'list_all_custom_voices') {
         category = 'Voice Management';
-      } else if (name.startsWith('ipa')) {
-        category = 'Emma IPA';
-      } else if (name.startsWith('llm')) {
-        category = 'LLM Config';
       } else if (name.startsWith('list_samples') ||
           name.startsWith('list_pregenerated') ||
           name.startsWith('list_voice_samples')) {
@@ -363,7 +349,7 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
 
     final categoryOrder = [
       'System & Health', 'Kokoro TTS', 'Qwen3 TTS', 'Chatterbox TTS',
-      'Voice Management', 'Audiobook', 'Samples', 'LLM Config', 'Emma IPA', 'Other',
+      'Voice Management', 'Audiobook', 'Samples', 'Other',
     ];
     final sortedKeys = groups.keys.toList()
       ..sort((a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)));
@@ -376,8 +362,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       'Voice Management': Icons.library_music,
       'Audiobook': Icons.menu_book,
       'Samples': Icons.playlist_play,
-      'LLM Config': Icons.settings,
-      'Emma IPA': Icons.translate,
       'Other': Icons.more_horiz,
     };
 
@@ -389,8 +373,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       'Voice Management': Colors.purple,
       'Audiobook': Colors.blue,
       'Samples': Colors.pink,
-      'LLM Config': Colors.grey,
-      'Emma IPA': Colors.amber.shade700,
       'Other': Colors.blueGrey,
     };
 
@@ -535,7 +517,7 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
 
     final categoryOrder = [
       'System & Health', 'Kokoro TTS', 'Qwen3 TTS', 'Chatterbox TTS',
-      'Voice Management', 'Audiobook', 'Audio Library', 'Samples', 'LLM Config', 'Emma IPA',
+      'Voice Management', 'Audiobook', 'Audio Library', 'Samples',
     ];
     final sortedKeys = groups.keys.toList()
       ..sort((a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)));
@@ -549,8 +531,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       'Audiobook': Icons.menu_book,
       'Audio Library': Icons.audiotrack,
       'Samples': Icons.playlist_play,
-      'LLM Config': Icons.settings,
-      'Emma IPA': Icons.translate,
     };
 
     final categoryColors = {
@@ -562,8 +542,6 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       'Audiobook': Colors.blue,
       'Audio Library': Colors.cyan,
       'Samples': Colors.pink,
-      'LLM Config': Colors.grey,
-      'Emma IPA': Colors.amber.shade700,
     };
 
     return Column(

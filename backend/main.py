@@ -3,14 +3,17 @@
 import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
+import logging
+from logging.handlers import RotatingFileHandler
 import os
 import re
 import shutil
@@ -29,6 +32,42 @@ from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
 from settings_service import get_all_settings, get_setting, set_setting, get_output_folder, set_output_folder
+
+_repo_root = Path(__file__).resolve().parents[1]
+_log_dir = _repo_root / "runs" / "logs"
+_log_dir.mkdir(parents=True, exist_ok=True)
+_api_log_path = _log_dir / "backend_api.log"
+
+logger = logging.getLogger("mimika.backend.api")
+
+
+class _RequestContextFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "request_id"):
+            record.request_id = "-"
+        return True
+
+
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s [request_id=%(request_id)s] %(message)s"
+    )
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
+    file_handler = RotatingFileHandler(
+        _api_log_path,
+        maxBytes=2 * 1024 * 1024,
+        backupCount=3,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(formatter)
+    request_filter = _RequestContextFilter()
+    stream_handler.addFilter(request_filter)
+    file_handler.addFilter(request_filter)
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
+    logger.propagate = False
 
 # Request models
 class KokoroRequest(BaseModel):
@@ -93,15 +132,15 @@ class SettingsUpdateRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    print("Initializing database...")
+    logger.info("Initializing database...", extra={"request_id": "startup"})
     init_db()
     seed_db()
     _sync_output_folder_runtime(get_output_folder())
     _migrate_legacy_voice_samples()
-    print("Database ready.")
+    logger.info("Database ready.", extra={"request_id": "startup"})
     yield
     # Shutdown
-    print("Shutting down...")
+    logger.info("Shutting down...", extra={"request_id": "shutdown"})
 
 app = FastAPI(
     title="MimikaStudio API",
@@ -109,6 +148,59 @@ app = FastAPI(
     version=VERSION,
     lifespan=lifespan
 )
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", str(uuid.uuid4())[:12])
+    request.state.request_id = request_id
+    try:
+        response = await call_next(request)
+    except (HTTPException, RequestValidationError):
+        raise
+    except Exception:
+        logger.exception(
+            "Unhandled exception while processing %s %s",
+            request.method,
+            request.url.path,
+            extra={"request_id": request_id},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": "internal_server_error",
+                "detail": "Internal server error",
+                "request_id": request_id,
+            },
+        )
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    request_id = getattr(request.state, "request_id", "-")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": "http_error",
+            "detail": exc.detail,
+            "request_id": request_id,
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    request_id = getattr(request.state, "request_id", "-")
+    return JSONResponse(
+        status_code=422,
+        content={
+            "error": "validation_error",
+            "detail": exc.errors(),
+            "request_id": request_id,
+        },
+    )
 
 # CORS origins are configurable for production hardening.
 _default_local_origins = [
@@ -140,11 +232,31 @@ outputs_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
 
 
+def _safe_read_text(path: Path) -> str:
+    """Read text files safely to avoid decode/runtime crashes on user files."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
 def _sync_output_folder_runtime(path: str) -> Path:
     """Apply output-folder setting to runtime storage and /audio static mount."""
     global outputs_dir
-    resolved = Path(path).expanduser()
-    resolved.mkdir(parents=True, exist_ok=True)
+    configured = (path or "").strip()
+    resolved = Path(configured).expanduser() if configured else (Path.home() / "MimikaStudio" / "outputs")
+    try:
+        resolved.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        fallback = Path(__file__).parent / "outputs"
+        fallback.mkdir(parents=True, exist_ok=True)
+        logger.exception(
+            "Failed to use output folder '%s', falling back to '%s'",
+            configured or "<empty>",
+            fallback,
+            extra={"request_id": "runtime"},
+        )
+        resolved = fallback
     outputs_dir = resolved
 
     # Retarget the mounted /audio StaticFiles app without requiring restart.
@@ -233,7 +345,7 @@ def _get_all_voices() -> list:
                 transcript = ""
                 txt_file = wav.with_suffix(".txt")
                 if txt_file.exists():
-                    transcript = txt_file.read_text().strip()
+                    transcript = _safe_read_text(txt_file).strip()
                 voices[name] = {
                     "name": name,
                     "source": source,
@@ -607,7 +719,7 @@ async def qwen3_generate(request: Qwen3Request):
                 transcript = ""
                 txt_file = audio_file.with_suffix(".txt")
                 if txt_file.exists():
-                    transcript = txt_file.read_text().strip()
+                    transcript = _safe_read_text(txt_file).strip()
                 voice = {"name": request.voice_name, "audio_path": str(audio_file), "transcript": transcript}
 
             output_path = engine.generate_voice_clone(
@@ -733,7 +845,7 @@ async def qwen3_generate_stream(request: Qwen3Request):
                 transcript = ""
                 txt_file = audio_file.with_suffix(".txt")
                 if txt_file.exists():
-                    transcript = txt_file.read_text().strip()
+                    transcript = _safe_read_text(txt_file).strip()
                 voice = {
                     "name": request.voice_name,
                     "audio_path": str(audio_file),
@@ -1017,7 +1129,7 @@ async def qwen3_update_voice(
     return {
         "message": f"Voice updated successfully",
         "name": final_name,
-        "transcript": transcript or (new_transcript.read_text() if new_transcript.exists() else ""),
+        "transcript": transcript or (_safe_read_text(new_transcript) if new_transcript.exists() else ""),
     }
 
 
@@ -1235,7 +1347,7 @@ async def chatterbox_update_voice(
     return {
         "message": "Voice updated successfully",
         "name": final_name,
-        "transcript": transcript or (new_transcript.read_text() if new_transcript.exists() else ""),
+        "transcript": transcript or (_safe_read_text(new_transcript) if new_transcript.exists() else ""),
     }
 
 
@@ -1499,7 +1611,7 @@ async def indextts2_update_voice(
     return {
         "message": "Voice updated successfully",
         "name": final_name,
-        "transcript": transcript or (new_transcript.read_text() if new_transcript.exists() else ""),
+        "transcript": transcript or (_safe_read_text(new_transcript) if new_transcript.exists() else ""),
     }
 
 
@@ -2311,9 +2423,18 @@ async def api_get_output_folder():
 @app.put("/api/settings/output-folder")
 async def api_set_output_folder(path: str):
     """Set the output folder path."""
-    success = set_output_folder(path)
-    active_path = str(_sync_output_folder_runtime(path))
-    return {"success": success, "path": active_path}
+    normalized = (path or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Output folder path cannot be empty")
+    try:
+        success = set_output_folder(normalized)
+        active_path = str(_sync_output_folder_runtime(normalized))
+        return {"success": success, "path": active_path}
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to set output folder: {exc}",
+        ) from exc
 
 @app.get("/api/settings/{key}")
 async def api_get_setting(key: str):
@@ -2326,8 +2447,17 @@ async def api_get_setting(key: str):
 @app.put("/api/settings")
 async def api_update_setting(request: SettingsUpdateRequest):
     """Update a setting."""
-    set_setting(request.key, request.value)
-    return {"key": request.key, "value": request.value}
+    try:
+        set_setting(request.key, request.value)
+        response = {"key": request.key, "value": request.value}
+        if request.key == "output_folder":
+            response["path"] = str(_sync_output_folder_runtime(request.value))
+        return response
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to persist setting '{request.key}': {exc}",
+        ) from exc
 
 
 if __name__ == "__main__":

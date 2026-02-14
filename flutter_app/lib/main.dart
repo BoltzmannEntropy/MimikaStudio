@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'screens/quick_tts_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
@@ -10,7 +13,49 @@ import 'services/api_service.dart';
 import 'version.dart';
 
 void main() {
-  runApp(const MimikaStudioApp());
+  WidgetsFlutterBinding.ensureInitialized();
+
+  FlutterError.onError = (FlutterErrorDetails details) {
+    FlutterError.presentError(details);
+    debugPrint('Flutter framework error: ${details.exceptionAsString()}');
+    debugPrintStack(stackTrace: details.stack);
+  };
+
+  PlatformDispatcher.instance.onError = (Object error, StackTrace stack) {
+    debugPrint('Uncaught platform error: $error');
+    debugPrintStack(stackTrace: stack);
+    return true;
+  };
+
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    return Material(
+      color: Colors.transparent,
+      child: Center(
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 520),
+          margin: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.red.withValues(alpha: 0.08),
+            border: Border.all(color: Colors.red.withValues(alpha: 0.35)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: const Text(
+            'A UI error occurred. Please restart MimikaStudio or check backend status.',
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
+    );
+  };
+
+  runZonedGuarded(
+    () => runApp(const MimikaStudioApp()),
+    (Object error, StackTrace stack) {
+      debugPrint('Uncaught zoned error: $error');
+      debugPrintStack(stackTrace: stack);
+    },
+  );
 }
 
 class MimikaStudioApp extends StatelessWidget {

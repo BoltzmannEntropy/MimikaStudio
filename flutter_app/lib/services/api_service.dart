@@ -28,6 +28,38 @@ class ApiService {
     return http.delete(uri, headers: headers, body: body).timeout(timeout);
   }
 
+  dynamic _decodeJson(String body) {
+    try {
+      return json.decode(body);
+    } catch (e) {
+      throw Exception('Backend returned invalid JSON');
+    }
+  }
+
+  String _extractErrorMessage(http.Response response) {
+    final fallback = response.body.trim().isEmpty
+        ? 'HTTP ${response.statusCode}'
+        : response.body.trim();
+    try {
+      final parsed = _decodeJson(response.body);
+      if (parsed is Map<String, dynamic>) {
+        final detail = parsed['detail'] ?? parsed['error'] ?? parsed['message'];
+        if (detail != null) {
+          return detail.toString();
+        }
+      }
+    } catch (_) {
+      // Fall back to raw body.
+    }
+    return fallback;
+  }
+
+  Exception _apiError(String action, http.Response response) {
+    return Exception(
+      '$action failed (${response.statusCode}): ${_extractErrorMessage(response)}',
+    );
+  }
+
   // Health check
   Future<bool> checkHealth() async {
     try {
@@ -42,18 +74,18 @@ class ApiService {
   Future<Map<String, dynamic>> getSystemInfo() async {
     final response = await _get(Uri.parse('$baseUrl/api/system/info'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load system info');
+    throw _apiError('Failed to load system info', response);
   }
 
   // System stats (CPU/RAM/GPU)
   Future<Map<String, dynamic>> getSystemStats() async {
     final response = await _get(Uri.parse('$baseUrl/api/system/stats'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load system stats');
+    throw _apiError('Failed to load system stats', response);
   }
 
   // ============== Kokoro ==============
@@ -61,9 +93,9 @@ class ApiService {
   Future<Map<String, dynamic>> getKokoroVoices() async {
     final response = await _get(Uri.parse('$baseUrl/api/kokoro/voices'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Kokoro voices');
+    throw _apiError('Failed to load Kokoro voices', response);
   }
 
   Future<String> generateKokoro({
@@ -87,10 +119,10 @@ class ApiService {
       }),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return '$baseUrl${data['audio_url']}';
     }
-    throw Exception('Failed to generate Kokoro audio: ${response.body}');
+    throw _apiError('Failed to generate Kokoro audio', response);
   }
 
   // ============== Samples ==============
@@ -98,10 +130,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getSamples(String engine) async {
     final response = await _get(Uri.parse('$baseUrl/api/samples/$engine'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
     }
-    throw Exception('Failed to load samples');
+    throw _apiError('Failed to load samples', response);
   }
 
   // ============== Pregenerated Samples ==============
@@ -114,10 +146,10 @@ class ApiService {
         : Uri.parse('$baseUrl/api/pregenerated');
     final response = await _get(uri);
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
     }
-    throw Exception('Failed to load pregenerated samples');
+    throw _apiError('Failed to load pregenerated samples', response);
   }
 
   String getPregeneratedAudioUrl(String audioPath) {
@@ -129,10 +161,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getVoiceSamples() async {
     final response = await _get(Uri.parse('$baseUrl/api/voice-samples'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
     }
-    throw Exception('Failed to load voice samples');
+    throw _apiError('Failed to load voice samples', response);
   }
 
   String getSampleAudioUrl(String audioPath) {
@@ -144,25 +176,25 @@ class ApiService {
   Future<Map<String, dynamic>> getQwen3Voices() async {
     final response = await _get(Uri.parse('$baseUrl/api/qwen3/voices'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Qwen3 voices');
+    throw _apiError('Failed to load Qwen3 voices', response);
   }
 
   Future<Map<String, dynamic>> getQwen3Speakers() async {
     final response = await _get(Uri.parse('$baseUrl/api/qwen3/speakers'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Qwen3 speakers');
+    throw _apiError('Failed to load Qwen3 speakers', response);
   }
 
   Future<Map<String, dynamic>> getQwen3Models() async {
     final response = await _get(Uri.parse('$baseUrl/api/qwen3/models'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Qwen3 models');
+    throw _apiError('Failed to load Qwen3 models', response);
   }
 
   /// Generate speech using Qwen3-TTS.
@@ -218,10 +250,10 @@ class ApiService {
       body: json.encode(body),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return '$baseUrl${data['audio_url']}';
     }
-    throw Exception('Failed to generate Qwen3 audio: ${response.body}');
+    throw _apiError('Failed to generate Qwen3 audio', response);
   }
 
   Future<void> uploadQwen3Voice(
@@ -252,7 +284,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/qwen3/voices/$name'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete voice: ${response.body}');
+      throw _apiError('Failed to delete voice', response);
     }
   }
 
@@ -289,18 +321,18 @@ class ApiService {
   Future<List<String>> getQwen3Languages() async {
     final response = await _get(Uri.parse('$baseUrl/api/qwen3/languages'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<String>.from(data['languages']);
     }
-    throw Exception('Failed to load Qwen3 languages');
+    throw _apiError('Failed to load Qwen3 languages', response);
   }
 
   Future<Map<String, dynamic>> getQwen3Info() async {
     final response = await _get(Uri.parse('$baseUrl/api/qwen3/info'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Qwen3 info');
+    throw _apiError('Failed to load Qwen3 info', response);
   }
 
   // ============== Chatterbox (Voice Clone) ==============
@@ -308,9 +340,9 @@ class ApiService {
   Future<Map<String, dynamic>> getChatterboxVoices() async {
     final response = await _get(Uri.parse('$baseUrl/api/chatterbox/voices'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Chatterbox voices');
+    throw _apiError('Failed to load Chatterbox voices', response);
   }
 
   Future<String> generateChatterbox({
@@ -346,10 +378,10 @@ class ApiService {
       body: json.encode(body),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return '$baseUrl${data['audio_url']}';
     }
-    throw Exception('Failed to generate Chatterbox audio: ${response.body}');
+    throw _apiError('Failed to generate Chatterbox audio', response);
   }
 
   Future<void> uploadChatterboxVoice(
@@ -380,7 +412,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/chatterbox/voices/$name'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete voice: ${response.body}');
+      throw _apiError('Failed to delete voice', response);
     }
   }
 
@@ -417,18 +449,18 @@ class ApiService {
   Future<List<String>> getChatterboxLanguages() async {
     final response = await _get(Uri.parse('$baseUrl/api/chatterbox/languages'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<String>.from(data['languages']);
     }
-    throw Exception('Failed to load Chatterbox languages');
+    throw _apiError('Failed to load Chatterbox languages', response);
   }
 
   Future<Map<String, dynamic>> getChatterboxInfo() async {
     final response = await _get(Uri.parse('$baseUrl/api/chatterbox/info'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Chatterbox info');
+    throw _apiError('Failed to load Chatterbox info', response);
   }
 
   Future<Map<String, dynamic>> getChatterboxDictaStatus() async {
@@ -436,9 +468,9 @@ class ApiService {
       Uri.parse('$baseUrl/api/chatterbox/dicta/status'),
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load Dicta status');
+    throw _apiError('Failed to load Dicta status', response);
   }
 
   Future<Map<String, dynamic>> downloadChatterboxDictaModel() async {
@@ -447,9 +479,9 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to start Dicta download: ${response.body}');
+    throw _apiError('Failed to start Dicta download', response);
   }
 
   // ============== IndexTTS-2 (Voice Clone) ==============
@@ -457,9 +489,9 @@ class ApiService {
   Future<Map<String, dynamic>> getIndexTTS2Voices() async {
     final response = await _get(Uri.parse('$baseUrl/api/indextts2/voices'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load IndexTTS-2 voices');
+    throw _apiError('Failed to load IndexTTS-2 voices', response);
   }
 
   Future<String> generateIndexTTS2({
@@ -485,10 +517,10 @@ class ApiService {
       body: json.encode(body),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return '$baseUrl${data['audio_url']}';
     }
-    throw Exception('Failed to generate IndexTTS-2 audio: ${response.body}');
+    throw _apiError('Failed to generate IndexTTS-2 audio', response);
   }
 
   Future<void> uploadIndexTTS2Voice(
@@ -519,7 +551,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/indextts2/voices/$name'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete voice: ${response.body}');
+      throw _apiError('Failed to delete voice', response);
     }
   }
 
@@ -556,9 +588,9 @@ class ApiService {
   Future<Map<String, dynamic>> getIndexTTS2Info() async {
     final response = await _get(Uri.parse('$baseUrl/api/indextts2/info'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load IndexTTS-2 info');
+    throw _apiError('Failed to load IndexTTS-2 info', response);
   }
 
   // ============== Model Management ==============
@@ -566,10 +598,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getModelsStatus() async {
     final response = await _get(Uri.parse('$baseUrl/api/models/status'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['models']);
     }
-    throw Exception('Failed to load models status');
+    throw _apiError('Failed to load models status', response);
   }
 
   Future<Map<String, dynamic>> downloadModel(String modelName) async {
@@ -580,9 +612,9 @@ class ApiService {
       headers: {'Content-Type': 'application/json'},
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to start model download: ${response.body}');
+    throw _apiError('Failed to start model download', response);
   }
 
   Future<Map<String, dynamic>> deleteModel(String modelName) async {
@@ -590,9 +622,9 @@ class ApiService {
       Uri.parse('$baseUrl/api/models/${Uri.encodeComponent(modelName)}'),
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to delete model: ${response.body}');
+    throw _apiError('Failed to delete model', response);
   }
 
   // ============== LLM Configuration ==============
@@ -600,16 +632,16 @@ class ApiService {
   Future<Map<String, dynamic>> getLlmConfig() async {
     final response = await _get(Uri.parse('$baseUrl/api/llm/config'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load LLM config');
+    throw _apiError('Failed to load LLM config', response);
   }
 
   Future<List<String>> getOllamaModels() async {
     try {
       final response = await _get(Uri.parse('$baseUrl/api/llm/ollama/models'));
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        final data = _decodeJson(response.body);
         if (data['available'] == true) {
           return List<String>.from(data['models']);
         }
@@ -627,7 +659,7 @@ class ApiService {
       body: json.encode(config),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to update LLM config: ${response.body}');
+      throw _apiError('Failed to update LLM config', response);
     }
   }
 
@@ -636,19 +668,19 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getEmmaIpaSamples() async {
     final response = await _get(Uri.parse('$baseUrl/api/ipa/samples'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['samples']);
     }
-    throw Exception('Failed to load Emma IPA samples');
+    throw _apiError('Failed to load Emma IPA samples', response);
   }
 
   Future<String> getEmmaIpaSampleText() async {
     final response = await _get(Uri.parse('$baseUrl/api/ipa/sample'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return data['text'] as String;
     }
-    throw Exception('Failed to load Emma IPA sample text');
+    throw _apiError('Failed to load Emma IPA sample text', response);
   }
 
   Future<Map<String, dynamic>> generateEmmaIpa({
@@ -666,17 +698,17 @@ class ApiService {
       }),
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to generate Emma IPA: ${response.body}');
+    throw _apiError('Failed to generate Emma IPA', response);
   }
 
   Future<Map<String, dynamic>> getEmmaIpaPregenerated() async {
     final response = await _get(Uri.parse('$baseUrl/api/ipa/pregenerated'));
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to load pregenerated IPA');
+    throw _apiError('Failed to load pregenerated IPA', response);
   }
 
   // ============== Audiobook Generation ==============
@@ -712,9 +744,9 @@ class ApiService {
       }),
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to start audiobook generation: ${response.body}');
+    throw _apiError('Failed to start audiobook generation', response);
   }
 
   /// Get the status of an audiobook generation job.
@@ -723,9 +755,9 @@ class ApiService {
       Uri.parse('$baseUrl/api/audiobook/status/$jobId'),
     );
     if (response.statusCode == 200) {
-      return json.decode(response.body);
+      return _decodeJson(response.body);
     }
-    throw Exception('Failed to get audiobook status: ${response.body}');
+    throw _apiError('Failed to get audiobook status', response);
   }
 
   /// Cancel an in-progress audiobook generation job.
@@ -734,7 +766,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/audiobook/cancel/$jobId'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to cancel audiobook: ${response.body}');
+      throw _apiError('Failed to cancel audiobook', response);
     }
   }
 
@@ -747,17 +779,17 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getAudiobooks() async {
     final response = await _get(Uri.parse('$baseUrl/api/audiobook/list'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['audiobooks']);
     }
-    throw Exception('Failed to list audiobooks: ${response.body}');
+    throw _apiError('Failed to list audiobooks', response);
   }
 
   /// Delete an audiobook.
   Future<void> deleteAudiobook(String jobId) async {
     final response = await _delete(Uri.parse('$baseUrl/api/audiobook/$jobId'));
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete audiobook: ${response.body}');
+      throw _apiError('Failed to delete audiobook', response);
     }
   }
 
@@ -767,10 +799,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getTtsAudioFiles() async {
     final response = await _get(Uri.parse('$baseUrl/api/tts/audio/list'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['audio_files']);
     }
-    throw Exception('Failed to list TTS audio files: ${response.body}');
+    throw _apiError('Failed to list TTS audio files', response);
   }
 
   /// Delete a TTS audio file.
@@ -779,7 +811,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/tts/audio/$filename'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete audio file: ${response.body}');
+      throw _apiError('Failed to delete audio file', response);
     }
   }
 
@@ -787,10 +819,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> getKokoroAudioFiles() async {
     final response = await _get(Uri.parse('$baseUrl/api/kokoro/audio/list'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['audio_files']);
     }
-    throw Exception('Failed to list Kokoro audio files: ${response.body}');
+    throw _apiError('Failed to list Kokoro audio files', response);
   }
 
   /// Delete a Kokoro audio file.
@@ -799,7 +831,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/kokoro/audio/$filename'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete audio file: ${response.body}');
+      throw _apiError('Failed to delete audio file', response);
     }
   }
 
@@ -811,10 +843,10 @@ class ApiService {
       Uri.parse('$baseUrl/api/voice-clone/audio/list'),
     );
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['audio_files']);
     }
-    throw Exception('Failed to list voice clone audio files: ${response.body}');
+    throw _apiError('Failed to list voice clone audio files', response);
   }
 
   /// Delete a voice clone audio file.
@@ -823,7 +855,7 @@ class ApiService {
       Uri.parse('$baseUrl/api/voice-clone/audio/$filename'),
     );
     if (response.statusCode != 200) {
-      throw Exception('Failed to delete audio file: ${response.body}');
+      throw _apiError('Failed to delete audio file', response);
     }
   }
 
@@ -833,10 +865,10 @@ class ApiService {
   Future<List<Map<String, dynamic>>> listPdfDocuments() async {
     final response = await _get(Uri.parse('$baseUrl/api/pdf/list'));
     if (response.statusCode == 200) {
-      final data = json.decode(response.body);
+      final data = _decodeJson(response.body);
       return List<Map<String, dynamic>>.from(data['documents']);
     }
-    throw Exception('Failed to list documents');
+    throw _apiError('Failed to list documents', response);
   }
 
   /// Get the full URL for a PDF document served by the backend.
@@ -850,7 +882,7 @@ class ApiService {
     if (response.statusCode == 200) {
       return response.bodyBytes;
     }
-    throw Exception('Failed to fetch document');
+    throw _apiError('Failed to fetch document', response);
   }
 
   /// Extract text from PDF bytes using backend extraction (PyMuPDF fallback).
@@ -872,10 +904,10 @@ class ApiService {
     final streamed = await request.send().timeout(_requestTimeout);
     final response = await http.Response.fromStream(streamed);
     if (response.statusCode == 200) {
-      final data = json.decode(response.body) as Map<String, dynamic>;
+      final data = _decodeJson(response.body) as Map<String, dynamic>;
       return (data['text'] as String?) ?? '';
     }
-    throw Exception('Failed to extract PDF text: ${response.body}');
+    throw _apiError('Failed to extract PDF text', response);
   }
 
   // ============== MCP Server ==============
@@ -913,7 +945,7 @@ class ApiService {
         }),
       );
       if (response.statusCode == 200) {
-        final data = json.decode(response.body);
+        final data = _decodeJson(response.body);
         if (data['result'] != null && data['result']['tools'] != null) {
           return List<Map<String, dynamic>>.from(data['result']['tools']);
         }
