@@ -22,7 +22,11 @@ A local-first application for **macOS (Apple Silicon)**, with four core capabili
 
 > **Note:** Windows support is planned for a future release. The codebase is cross-platform, but we currently only provide pre-built binaries for macOS.
 
-### Supported Models
+![Model Manager](assets/04-mimikastudio.png)
+
+---
+
+## Supported Models
 
 | Model | Parameters | Type | Languages |
 |-------|-----------|------|-----------|
@@ -33,11 +37,7 @@ A local-first application for **macOS (Apple Silicon)**, with four core capabili
 | [Qwen3-TTS 1.7B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers | 4 languages (en, zh, ja, ko) |
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 
-![Model Manager](assets/06-mimikastudio.png)
-
 ![MimikaStudio](assets/01-mimikastudio.png)
-
----
 
 ## Audio Samples
 
