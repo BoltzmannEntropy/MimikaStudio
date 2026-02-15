@@ -22,6 +22,12 @@ A local-first application for **macOS (Apple Silicon)**, with four core capabili
 
 > **Note:** Windows support is planned for a future release. The codebase is cross-platform, but we currently only provide pre-built binaries for macOS.
 
+## Stars
+
+[![GitHub Stars](https://img.shields.io/github/stars/BoltzmannEntropy/MimikaStudio?style=social)](https://github.com/BoltzmannEntropy/MimikaStudio/stargazers)
+
+[![Star History Chart](https://api.star-history.com/svg?repos=BoltzmannEntropy/MimikaStudio&type=Date)](https://star-history.com/#BoltzmannEntropy/MimikaStudio&Date)
+
 ![Model Manager](assets/04-mimikastudio.png)
 
 ---
