@@ -16,7 +16,7 @@
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first application for **macOS (Apple Silicon)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using three voice cloning engines (Qwen3-TTS, Chatterbox, Kokoro), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert documents to audiobooks** with your choice of voice.
+A local-first application for **macOS (Apple Silicon)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using three voice cloning engines (Qwen3-TTS, Chatterbox, Kokoro), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert PDFs to audiobooks** using Kokoro voices.
 
 > **License:** Source code is licensed under **Business Source License 1.1 (BSL-1.1)**, and binary distributions are licensed under the **Mimika Binary Distribution License**. See [LICENSE](LICENSE), [BINARY-LICENSE.txt](BINARY-LICENSE.txt), and the website [License page](https://boltzmannentropy.github.io/mimikastudio.github.io/license.html).
 
@@ -279,7 +279,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 ### Beyond Simple TTS
 
 - **PDF Reader with Voice**: Read PDFs aloud with sentence-by-sentence highlighting
-- **Audiobook Creator**: Convert documents (PDF, EPUB, TXT, MD, DOCX) into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers
+- **Audiobook Creator**: Convert PDFs into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers (Kokoro voices only)
 - **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox)
 - **Model Manager**: In-app model download manager — check status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
@@ -300,12 +300,12 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Model Manager**: In-app UI to check model download status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
 - **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
-- **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices
+- **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices (IPA transcription is not part of the current release)
 - **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads stored in `backend/data/user_voices/`
 - **User Voices in UI**: Uploaded voices appear under each engine's **Your Voices** section after refresh
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
-- **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls
+- **Audiobook Creator**: Convert full PDFs to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)
 - **CLI Tool**: Full command-line interface for Kokoro and Qwen3
 - **MCP & API Dashboard**: Built-in tab showing all MCP tools and REST endpoints with live server status
 - **MCP Server**: Full MCP integration for programmatic access to all API endpoints
@@ -363,11 +363,13 @@ Full command-line interface for voice cloning and TTS generation.
 
 # Qwen3 Custom Voice (preset speakers)
 ./bin/mimika qwen3 "Hello, world!" --speaker Ryan --style "professional narration"
-./bin/mimika qwen3 book.epub --speaker Sohee --output audiobook.wav
 
 # Qwen3 Voice Clone (clone from reference audio)
 ./bin/mimika qwen3 "Hello, world!" --clone --reference Alina.wav
 ./bin/mimika qwen3 book.pdf --clone --reference Bella.wav --output book.wav
+
+# PDF audiobook generation (Kokoro voices only)
+./bin/mimika kokoro book.pdf --voice bf_emma --output audiobook.wav
 
 # List available voices
 ./bin/mimika voices --engine kokoro
@@ -561,7 +563,7 @@ Chatterbox adds multilingual voice cloning from a reference audio prompt. It use
 - Exaggeration (style intensity)
 - Seed (reproducibility)
 
-**Hebrew TTS**: Chatterbox Hebrew requires the **Dicta ONNX** diacritizer model (`dicta-1.0.onnx`, ~1.1 GB) which adds vowel marks (nikud) to unvocalized Hebrew text before synthesis. Without it, Hebrew output quality is severely degraded. The model is downloaded automatically by `install.sh` (skip with `SKIP_DICTA=1`) and stored at `backend/models/dicta-onnx/dicta-1.0.onnx`. To download manually:
+**Hebrew TTS**: Chatterbox Hebrew requires the **Dicta ONNX** diacritizer model (`dicta-1.0.onnx`, ~1.1 GB) which adds vowel marks (nikud) to unvocalized Hebrew text before synthesis. Without it, Hebrew output quality is severely degraded. The model can be downloaded from the app's Model Manager, or automatically by `install.sh` (skip with `SKIP_DICTA=1`), and is stored at `backend/models/dicta-onnx/dicta-1.0.onnx`. To download manually:
 
 ```bash
 mkdir -p backend/models/dicta-onnx
@@ -644,7 +646,7 @@ The backend exposes 60+ REST endpoints via FastAPI. Full interactive docs at **h
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/audiobook/generate` | POST | Start audiobook generation from text |
-| `/api/audiobook/generate-from-file` | POST | Generate from uploaded file (PDF/EPUB/TXT/DOCX) |
+| `/api/audiobook/generate-from-file` | POST | Generate from uploaded PDF file (Kokoro voices only) |
 | `/api/audiobook/status/{job_id}` | GET | Job progress (chars/sec, ETA, chapters) |
 | `/api/audiobook/cancel/{job_id}` | POST | Cancel in-progress job |
 | `/api/audiobook/list` | GET | List generated audiobooks |
