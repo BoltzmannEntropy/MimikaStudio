@@ -19,7 +19,6 @@ class Speaker {
 
 const List<Speaker> kSpeakers = [
   Speaker('Ryan', 'English', 'Dynamic male, strong rhythm', Color(0xFF2196F3)),
-  Speaker('Aiden', 'English', 'Sunny American male', Color(0xFF03A9F4)),
   Speaker('Vivian', 'Chinese', 'Bright young female', Color(0xFFE91E63)),
   Speaker('Serena', 'Chinese', 'Warm gentle female', Color(0xFFFF4081)),
   Speaker('Uncle_Fu', 'Chinese', 'Seasoned male, mellow', Color(0xFF795548)),
@@ -743,11 +742,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   }
 
   List<Map<String, dynamic>> _samplesForCurrentMode() {
-    const presetVoices = {'Ryan', 'Aiden'};
+    const presetVoices = {'Ryan'};
     const cloneVoices = {'Natasha', 'Suzan'};
     const presetTitles = {
       'Genesis 4 Preview (Ryan)',
-      'Genesis 4 Preview (Aiden)',
     };
     const cloneTitles = {
       'Genesis 4 Preview (Natasha)',

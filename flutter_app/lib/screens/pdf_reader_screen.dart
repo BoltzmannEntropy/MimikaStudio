@@ -11,6 +11,29 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import '../services/api_service.dart';
 
+class _SearchQueryCandidate {
+  const _SearchQueryCandidate({
+    required this.query,
+    required this.expectedOccurrence,
+    required this.totalExpectedOccurrences,
+    required this.tokenCount,
+  });
+
+  final String query;
+  final int expectedOccurrence;
+  final int totalExpectedOccurrences;
+  final int tokenCount;
+}
+
+enum _SearchWaitOutcome { matched, noMatch, unavailable, superseded }
+
+class _PdfWordAnchor {
+  const _PdfWordAnchor({required this.normalizedWord, required this.line});
+
+  final String normalizedWord;
+  final PdfTextLine line;
+}
+
 class PdfReaderScreen extends StatefulWidget {
   const PdfReaderScreen({super.key});
 
@@ -20,6 +43,18 @@ class PdfReaderScreen extends StatefulWidget {
 
 class _PdfReaderScreenState extends State<PdfReaderScreen>
     with AutomaticKeepAliveClientMixin {
+  static const Color _activeReadAloudHighlightColor = Color.fromARGB(
+    220,
+    68,
+    84,
+    170,
+  );
+  static const Color _trailingReadAloudHighlightColor = Color.fromARGB(
+    150,
+    255,
+    213,
+    79,
+  );
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final PdfViewerController _pdfController = PdfViewerController();
@@ -54,13 +89,21 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // Word-level sync state
   List<String> _currentSentenceWords = [];
   int _currentWordIndex = -1;
-  String _currentHighlightedWord = '';
   StreamSubscription<Duration>? _positionSubscription;
   List<int> _wordTimings = []; // Estimated start time (ms) for each word
-  List<String> _globalWords = [];
-  List<int> _globalWordOccurrences = [];
+  List<String> _globalWords = []; // Normalized words for sequence matching
+  List<String> _globalSurfaceWords =
+      []; // Searchable words with punctuation context
+  List<int> _globalWordAnchorIndices = [];
+  List<_PdfWordAnchor> _pdfWordAnchors = [];
+  final List<Annotation> _activeReadAloudAnnotations = <Annotation>[];
+  int _activeReadAloudAnchorIndex = -1;
+  int _pdfWordAnchorBuildId = 0;
   List<int> _sentenceWordStart = [];
+  final Map<String, int> _queryOccurrenceProgress = <String, int>{};
   int _searchRequestId = 0;
+  bool _highlightSearchInFlight = false;
+  bool _highlightRetryPending = false;
 
   // TTS settings
   String _selectedVoice = 'bf_emma';
@@ -92,11 +135,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   final List<Map<String, String>> _voices = [
     {'id': 'bf_emma', 'name': 'Emma (British F)'},
     {'id': 'bf_alice', 'name': 'Alice (British F)'},
-    {'id': 'bf_isabella', 'name': 'Isabella (British F)'},
     {'id': 'bf_lily', 'name': 'Lily (British F)'},
     {'id': 'bm_george', 'name': 'George (British M)'},
-    {'id': 'bm_daniel', 'name': 'Daniel (British M)'},
-    {'id': 'bm_fable', 'name': 'Fable (British M)'},
     {'id': 'bm_lewis', 'name': 'Lewis (British M)'},
   ];
 
@@ -266,6 +306,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _isLoadingPdfBytes = true;
       _textFileContent = null;
       _pdfExtractedText = null;
+      _pdfWordAnchors = [];
+      _globalWordAnchorIndices = [];
+      _activeReadAloudAnnotations.clear();
+      _activeReadAloudAnchorIndex = -1;
+      _pdfWordAnchorBuildId++;
     });
 
     // Also fetch bytes for text extraction (read-aloud)
@@ -346,6 +391,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _textFileContent = null;
       _selectedText = null;
       _pdfExtractedText = null;
+      _pdfWordAnchors = [];
+      _globalWordAnchorIndices = [];
+      _activeReadAloudAnnotations.clear();
+      _activeReadAloudAnchorIndex = -1;
+      _pdfWordAnchorBuildId++;
       _stopReading();
     });
 
@@ -533,6 +583,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _selectedPdfPath = null;
         _selectedPdfName = null;
         _selectedPdfBytes = null;
+        _pdfWordAnchors = [];
+        _globalWordAnchorIndices = [];
+        _activeReadAloudAnnotations.clear();
+        _activeReadAloudAnchorIndex = -1;
+        _pdfWordAnchorBuildId++;
         _stopReading();
       }
     });
@@ -582,6 +637,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     _sentences = _splitIntoSentences(textToRead);
     if (_sentences.isEmpty) return;
     _buildWordIndex(_sentences);
+    if (_readingSource == 'pdf') {
+      await _preparePdfWordAnchorsIfNeeded();
+      _buildGlobalWordAnchorMap();
+    } else {
+      _globalWordAnchorIndices = List<int>.filled(_globalWords.length, -1);
+    }
 
     setState(() {
       _isReading = true;
@@ -611,6 +672,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     return cleaned.toLowerCase();
   }
 
+  String _surfaceWordForSearch(String word) {
+    var surface = word.trim();
+    surface = surface.replaceAll(RegExp(r'^[^A-Za-z0-9]+'), '');
+    surface = surface.replaceAll(RegExp(r'[^A-Za-z0-9]+$'), '');
+    return surface;
+  }
+
   List<String> _splitSentenceWords(String sentence) {
     return sentence
         .split(RegExp(r'\s+'))
@@ -621,9 +689,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   void _buildWordIndex(List<String> sentences) {
     _globalWords = [];
-    _globalWordOccurrences = [];
+    _globalSurfaceWords = [];
+    _globalWordAnchorIndices = [];
     _sentenceWordStart = [];
-    final counts = <String, int>{};
 
     for (final sentence in sentences) {
       _sentenceWordStart.add(_globalWords.length);
@@ -631,12 +699,161 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       for (final word in words) {
         final clean = _cleanWordForSearch(word);
         if (clean.length < 2) continue;
-        final nextCount = (counts[clean] ?? 0) + 1;
-        counts[clean] = nextCount;
+        final surface = _surfaceWordForSearch(word);
+        if (surface.isEmpty) continue;
         _globalWords.add(clean);
-        _globalWordOccurrences.add(nextCount);
+        _globalSurfaceWords.add(surface);
       }
     }
+
+    _globalWordAnchorIndices = List<int>.filled(_globalWords.length, -1);
+  }
+
+  Future<Uint8List?> _loadCurrentPdfBytesForAnchors() async {
+    if (_isTextFile || _selectedPdfPath == null) return null;
+    if (_selectedPdfBytes != null && _selectedPdfBytes!.isNotEmpty) {
+      return _selectedPdfBytes;
+    }
+    if (kIsWeb) return null;
+
+    final path = _selectedPdfPath!;
+    if (path.startsWith('http://') || path.startsWith('https://')) return null;
+    final file = File(path);
+    if (!await file.exists()) return null;
+    return file.readAsBytes();
+  }
+
+  Future<void> _preparePdfWordAnchorsIfNeeded() async {
+    if (_readingSource != 'pdf' || _isTextFile) return;
+    if (_pdfWordAnchors.isNotEmpty) return;
+
+    final bytes = await _loadCurrentPdfBytesForAnchors();
+    if (bytes == null || bytes.isEmpty) return;
+
+    final buildId = ++_pdfWordAnchorBuildId;
+    final anchors = <_PdfWordAnchor>[];
+    pdf.PdfDocument? document;
+    try {
+      document = pdf.PdfDocument(inputBytes: bytes);
+      final extractor = pdf.PdfTextExtractor(document);
+      final textLines = extractor.extractTextLines();
+
+      for (final line in textLines) {
+        final pageNumber = line.pageIndex + 1;
+        for (final word in line.wordCollection) {
+          final normalized = _cleanWordForSearch(word.text);
+          if (normalized.length < 2) continue;
+          anchors.add(
+            _PdfWordAnchor(
+              normalizedWord: normalized,
+              line: PdfTextLine(word.bounds, word.text, pageNumber),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to build PDF word anchors: $e');
+      return;
+    } finally {
+      document?.dispose();
+    }
+
+    if (!mounted || buildId != _pdfWordAnchorBuildId) return;
+    _pdfWordAnchors = anchors;
+  }
+
+  void _buildGlobalWordAnchorMap() {
+    _globalWordAnchorIndices = List<int>.filled(_globalWords.length, -1);
+    if (_globalWords.isEmpty || _pdfWordAnchors.isEmpty) return;
+
+    int anchorCursor = 0;
+    for (int i = 0; i < _globalWords.length; i++) {
+      final target = _globalWords[i];
+      while (anchorCursor < _pdfWordAnchors.length &&
+          _pdfWordAnchors[anchorCursor].normalizedWord != target) {
+        anchorCursor++;
+      }
+      if (anchorCursor >= _pdfWordAnchors.length) break;
+      _globalWordAnchorIndices[i] = anchorCursor;
+      anchorCursor++;
+    }
+  }
+
+  void _clearReadAloudAnnotations() {
+    final stale = <Annotation>[..._activeReadAloudAnnotations];
+
+    try {
+      final existing = _pdfController.getAnnotations();
+      for (final annotation in existing) {
+        if ((annotation.subject ?? '') == 'mimika.readaloud') {
+          stale.add(annotation);
+        }
+      }
+    } catch (_) {
+      // Viewer may not be ready for annotation enumeration yet.
+    }
+
+    for (final annotation in stale.toSet()) {
+      try {
+        _pdfController.removeAnnotation(annotation);
+      } catch (_) {
+        // Ignore stale references while rapidly updating playback highlights.
+      }
+    }
+
+    _activeReadAloudAnnotations.clear();
+    _activeReadAloudAnchorIndex = -1;
+  }
+
+  bool _tryHighlightWithPdfWordAnchor(int globalIndex) {
+    if (_readingSource != 'pdf') return false;
+    if (globalIndex < 0 || globalIndex >= _globalWordAnchorIndices.length) {
+      return false;
+    }
+
+    final indices = <int>[];
+    for (int offset = 2; offset >= 0; offset--) {
+      final idx = globalIndex - offset;
+      if (idx < 0 || idx >= _globalWordAnchorIndices.length) continue;
+      final anchorIndex = _globalWordAnchorIndices[idx];
+      if (anchorIndex < 0 || anchorIndex >= _pdfWordAnchors.length) continue;
+      indices.add(anchorIndex);
+    }
+    if (indices.isEmpty) return false;
+
+    final currentAnchorIndex = indices.last;
+    if (_activeReadAloudAnchorIndex == currentAnchorIndex &&
+        _activeReadAloudAnnotations.length == indices.length) {
+      return true;
+    }
+
+    // Clear search UI highlight to avoid painting entire matched phrases.
+    _searchResult?.clear();
+    _searchResult = null;
+
+    _clearReadAloudAnnotations();
+    for (int i = 0; i < indices.length; i++) {
+      final anchor = _pdfWordAnchors[indices[i]];
+      final isCurrentWord = i == indices.length - 1;
+      final annotation =
+          HighlightAnnotation(textBoundsCollection: [anchor.line])
+            ..subject = 'mimika.readaloud'
+            ..author = 'mimika'
+            ..color = isCurrentWord
+                ? _activeReadAloudHighlightColor
+                : _trailingReadAloudHighlightColor
+            ..opacity = isCurrentWord ? 0.82 : 0.55;
+      _pdfController.addAnnotation(annotation);
+      _activeReadAloudAnnotations.add(annotation);
+    }
+    _activeReadAloudAnchorIndex = currentAnchorIndex;
+
+    final currentAnchor = _pdfWordAnchors[currentAnchorIndex];
+    if (_pdfController.pageNumber != currentAnchor.line.pageNumber) {
+      _pdfController.jumpToPage(currentAnchor.line.pageNumber);
+    }
+
+    return true;
   }
 
   Future<void> _readNextSentence() async {
@@ -673,10 +890,32 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       // Set up audio
       await _audioPlayer.setUrl(audioUrl);
 
-      // Get audio duration for word timing estimation
-      final duration = _audioPlayer.duration;
-      if (duration != null && _currentSentenceWords.isNotEmpty) {
-        _calculateWordTimings(duration);
+      if (_currentSentenceWords.isNotEmpty) {
+        var aligned = false;
+        try {
+          final alignedTimings = await _api.alignWordsToAudio(
+            text: sentence,
+            audioUrl: audioUrl,
+            language: 'en',
+          );
+          if (alignedTimings.length == _currentSentenceWords.length) {
+            _wordTimings = alignedTimings;
+            aligned = true;
+          }
+        } catch (_) {
+          // Alignment is optional; fall back to heuristic timings.
+        }
+
+        if (!aligned) {
+          final duration =
+              _audioPlayer.duration ??
+              Duration(
+                milliseconds: _estimateSentenceDurationMs(
+                  _currentSentenceWords,
+                ),
+              );
+          _calculateWordTimings(duration);
+        }
         _startWordTracking();
       }
 
@@ -738,8 +977,29 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
+  int _estimateSentenceDurationMs(List<String> words) {
+    if (words.isEmpty) return 0;
+    final totalChars = words.fold<int>(0, (sum, w) => sum + w.length);
+    // Approximate 4.2 words/sec baseline and adjust by playback speed.
+    final baseMs = ((words.length / 4.2) * 1000).round();
+    final charMs = (totalChars * 22).round();
+    final adjusted = ((baseMs + charMs) / _speed).round();
+    return adjusted.clamp(600, 16000);
+  }
+
   void _startWordTracking() {
     _positionSubscription?.cancel();
+
+    if (_wordTimings.isNotEmpty && _currentSentenceWords.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _currentWordIndex = 0;
+        });
+      } else {
+        _currentWordIndex = 0;
+      }
+      _highlightCurrentWord();
+    }
 
     _positionSubscription = _audioPlayer.positionStream.listen((position) {
       if (!_isReading || _isPaused) return;
@@ -757,7 +1017,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
       // Update highlight if word changed
       if (newWordIndex != _currentWordIndex) {
-        _currentWordIndex = newWordIndex;
+        if (mounted) {
+          setState(() {
+            _currentWordIndex = newWordIndex;
+          });
+        } else {
+          _currentWordIndex = newWordIndex;
+        }
         _highlightCurrentWord();
       }
     });
@@ -768,57 +1034,388 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     _positionSubscription = null;
   }
 
-  void _highlightCurrentWord() {
+  List<_SearchQueryCandidate> _buildSearchCandidates(int globalIndex) {
+    if (_globalWords.isEmpty ||
+        _globalSurfaceWords.length != _globalWords.length ||
+        globalIndex < 0 ||
+        globalIndex >= _globalWords.length) {
+      return const [];
+    }
+
+    final candidates = <_SearchQueryCandidate>[];
+    final seenQueries = <String>{};
+
+    void addCandidate(int leftContextWords, int rightContextWords) {
+      final start = globalIndex - leftContextWords;
+      final end = globalIndex + rightContextWords + 1;
+      if (start < 0 || end > _globalWords.length || start >= end) return;
+
+      final normalizedTokens = _globalWords.sublist(start, end);
+      final surfaceTokens = _globalSurfaceWords.sublist(start, end);
+      if (normalizedTokens.length < 3 || surfaceTokens.isEmpty) return;
+
+      final query = surfaceTokens.join(' ');
+      if (query.length < 3 || !seenQueries.add(query)) return;
+
+      final expected = _countSequenceOccurrences(
+        normalizedTokens,
+        uptoStart: start,
+      );
+      final totalExpected = _countSequenceOccurrences(normalizedTokens);
+      candidates.add(
+        _SearchQueryCandidate(
+          query: query,
+          expectedOccurrence: expected,
+          totalExpectedOccurrences: totalExpected,
+          tokenCount: normalizedTokens.length,
+        ),
+      );
+    }
+
+    // First try exact local context: previous + target + next.
+    addCandidate(1, 1);
+    // Then widen context for disambiguation in repetitive text.
+    addCandidate(8, 8);
+    addCandidate(7, 7);
+    addCandidate(6, 6);
+    addCandidate(5, 5);
+    addCandidate(4, 4);
+    addCandidate(3, 3);
+    addCandidate(2, 2);
+    addCandidate(0, 4);
+    addCandidate(4, 0);
+    addCandidate(0, 3);
+    addCandidate(3, 0);
+    addCandidate(1, 3);
+    addCandidate(3, 1);
+
+    return candidates;
+  }
+
+  int _countSequenceOccurrences(List<String> sequence, {int? uptoStart}) {
+    if (sequence.isEmpty || _globalWords.length < sequence.length) return 0;
+
+    int count = 0;
+    final lastStart = _globalWords.length - sequence.length;
+    final cappedEnd = uptoStart == null
+        ? lastStart
+        : uptoStart.clamp(0, lastStart);
+
+    for (int i = 0; i <= cappedEnd; i++) {
+      bool isMatch = true;
+      for (int j = 0; j < sequence.length; j++) {
+        if (_globalWords[i + j] != sequence[j]) {
+          isMatch = false;
+          break;
+        }
+      }
+      if (isMatch) count++;
+    }
+
+    return count;
+  }
+
+  int _countWordOccurrences(String normalizedWord, {int? uptoIndex}) {
+    if (normalizedWord.isEmpty || _globalWords.isEmpty) return 0;
+
+    int count = 0;
+    final endIndex = uptoIndex == null
+        ? _globalWords.length - 1
+        : uptoIndex.clamp(0, _globalWords.length - 1);
+
+    for (int i = 0; i <= endIndex; i++) {
+      if (_globalWords[i] == normalizedWord) {
+        count++;
+      }
+    }
+
+    return count;
+  }
+
+  int _resolveDesiredOccurrence({
+    required int desiredOccurrence,
+    required int expectedTotalOccurrences,
+    required int actualTotalOccurrences,
+    int? previousDesiredOccurrence,
+  }) {
+    var desired = desiredOccurrence;
+    if (desired <= 0) desired = 1;
+
+    if (desired > actualTotalOccurrences && expectedTotalOccurrences > 0) {
+      final ratio = desired / expectedTotalOccurrences;
+      desired = (ratio * actualTotalOccurrences).round();
+    }
+
+    if (previousDesiredOccurrence != null &&
+        desired < previousDesiredOccurrence) {
+      desired = previousDesiredOccurrence;
+    }
+
+    return desired.clamp(1, actualTotalOccurrences);
+  }
+
+  void _seekToSearchOccurrence(
+    PdfTextSearchResult result,
+    int desiredOccurrence,
+    int totalOccurrences,
+  ) {
+    int safety = 0;
+    while (result.currentInstanceIndex != desiredOccurrence &&
+        safety < totalOccurrences) {
+      result.nextInstance();
+      safety++;
+    }
+  }
+
+  Future<_SearchWaitOutcome> _waitForSearchCompletion(
+    PdfTextSearchResult result,
+    int requestId, {
+    Duration timeout = const Duration(milliseconds: 2000),
+  }) {
+    final completer = Completer<_SearchWaitOutcome>();
+    late VoidCallback listener;
+    Timer? timer;
+    final initialHasResult = result.hasResult;
+    final initialTotal = result.totalInstanceCount;
+    final initialCurrent = result.currentInstanceIndex;
+    final initialCompleted = result.isSearchCompleted;
+    bool hasStateChange = false;
+
+    bool hasUsableMatch() =>
+        result.hasResult &&
+        result.totalInstanceCount > 0 &&
+        result.currentInstanceIndex > 0;
+
+    _SearchWaitOutcome evaluate() {
+      if (!hasStateChange) return _SearchWaitOutcome.unavailable;
+      if (hasUsableMatch()) return _SearchWaitOutcome.matched;
+      if (result.isSearchCompleted) return _SearchWaitOutcome.noMatch;
+      return _SearchWaitOutcome.unavailable;
+    }
+
+    void finish(_SearchWaitOutcome outcome) {
+      if (completer.isCompleted) return;
+      timer?.cancel();
+      result.removeListener(listener);
+      completer.complete(outcome);
+    }
+
+    listener = () {
+      if (requestId != _searchRequestId) {
+        finish(_SearchWaitOutcome.superseded);
+        return;
+      }
+      if (!hasStateChange &&
+          (result.hasResult != initialHasResult ||
+              result.totalInstanceCount != initialTotal ||
+              result.currentInstanceIndex != initialCurrent ||
+              result.isSearchCompleted != initialCompleted)) {
+        hasStateChange = true;
+      }
+      final outcome = evaluate();
+      if (outcome == _SearchWaitOutcome.matched ||
+          outcome == _SearchWaitOutcome.noMatch) {
+        finish(outcome);
+      }
+    };
+
+    result.addListener(listener);
+    timer = Timer(timeout, () => finish(evaluate()));
+
+    return completer.future;
+  }
+
+  Future<bool> _trySearchCandidate(
+    _SearchQueryCandidate candidate,
+    int requestId,
+  ) async {
+    if (requestId != _searchRequestId) return false;
+
+    if (candidate.tokenCount < 3) return false;
+
+    Future<({PdfTextSearchResult? result, _SearchWaitOutcome outcome})>
+    runSearch({required bool wholeWords}) async {
+      if (requestId != _searchRequestId) {
+        return (result: null, outcome: _SearchWaitOutcome.superseded);
+      }
+      final result = wholeWords
+          ? _pdfController.searchText(
+              candidate.query,
+              searchOption: pdf.TextSearchOption.wholeWords,
+            )
+          : _pdfController.searchText(candidate.query);
+      final outcome = await _waitForSearchCompletion(result, requestId);
+      if (requestId != _searchRequestId) {
+        return (result: null, outcome: _SearchWaitOutcome.superseded);
+      }
+      if (outcome != _SearchWaitOutcome.matched) {
+        return (result: null, outcome: outcome);
+      }
+      if (!result.hasResult ||
+          result.totalInstanceCount <= 0 ||
+          result.currentInstanceIndex <= 0) {
+        return (result: null, outcome: _SearchWaitOutcome.noMatch);
+      }
+      return (result: result, outcome: outcome);
+    }
+
+    final firstAttempt = await runSearch(wholeWords: true);
+    if (firstAttempt.outcome == _SearchWaitOutcome.superseded ||
+        firstAttempt.outcome == _SearchWaitOutcome.unavailable) {
+      return false;
+    }
+
+    PdfTextSearchResult? result = firstAttempt.result;
+    if (result == null) {
+      final secondAttempt = await runSearch(wholeWords: false);
+      if (secondAttempt.outcome == _SearchWaitOutcome.superseded ||
+          secondAttempt.outcome == _SearchWaitOutcome.unavailable) {
+        return false;
+      }
+      result = secondAttempt.result;
+    }
+    if (result == null) return false;
+    _searchResult = result;
+
+    final total = result.totalInstanceCount;
+    final previousDesired = _queryOccurrenceProgress[candidate.query];
+    final desired = _resolveDesiredOccurrence(
+      desiredOccurrence: candidate.expectedOccurrence,
+      expectedTotalOccurrences: candidate.totalExpectedOccurrences,
+      actualTotalOccurrences: total,
+      previousDesiredOccurrence: previousDesired,
+    );
+
+    _seekToSearchOccurrence(result, desired, total);
+    _queryOccurrenceProgress[candidate.query] = desired;
+    return true;
+  }
+
+  Future<bool> _tryHighlightExactWord(int globalIndex, int requestId) async {
+    if (requestId != _searchRequestId) return false;
+    if (globalIndex < 0 || globalIndex >= _globalWords.length) return false;
+    if (_globalSurfaceWords.length != _globalWords.length) return false;
+
+    final normalizedWord = _globalWords[globalIndex];
+    if (normalizedWord.length < 2) return false;
+
+    final surfaceWord = _globalSurfaceWords[globalIndex];
+    final queries = <String>{
+      if (surfaceWord.length >= 2) surfaceWord,
+      normalizedWord,
+      if (normalizedWord.isNotEmpty)
+        '${normalizedWord[0].toUpperCase()}${normalizedWord.substring(1)}',
+    };
+
+    for (final query in queries) {
+      if (requestId != _searchRequestId) return false;
+
+      for (final wholeWords in [true, false]) {
+        if (requestId != _searchRequestId) return false;
+
+        final result = wholeWords
+            ? _pdfController.searchText(
+                query,
+                searchOption: pdf.TextSearchOption.wholeWords,
+              )
+            : _pdfController.searchText(query);
+        final outcome = await _waitForSearchCompletion(result, requestId);
+        if (requestId != _searchRequestId ||
+            outcome == _SearchWaitOutcome.superseded) {
+          return false;
+        }
+        if (outcome == _SearchWaitOutcome.unavailable) {
+          return false;
+        }
+        if (outcome != _SearchWaitOutcome.matched ||
+            !result.hasResult ||
+            result.totalInstanceCount <= 0 ||
+            result.currentInstanceIndex <= 0) {
+          continue;
+        }
+
+        final expectedOccurrence = _countWordOccurrences(
+          normalizedWord,
+          uptoIndex: globalIndex,
+        );
+        final expectedTotal = _countWordOccurrences(normalizedWord);
+        final progressKey = 'word::$normalizedWord';
+        final previousDesired = _queryOccurrenceProgress[progressKey];
+        final desired = _resolveDesiredOccurrence(
+          desiredOccurrence: expectedOccurrence,
+          expectedTotalOccurrences: expectedTotal,
+          actualTotalOccurrences: result.totalInstanceCount,
+          previousDesiredOccurrence: previousDesired,
+        );
+
+        _seekToSearchOccurrence(result, desired, result.totalInstanceCount);
+        _searchResult = result;
+        _queryOccurrenceProgress[progressKey] = desired;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  Future<void> _performHighlightCurrentWord() async {
     if (_currentWordIndex < 0 ||
         _currentWordIndex >= _currentSentenceWords.length) {
       return;
     }
 
-    final word = _currentSentenceWords[_currentWordIndex];
     final globalIndex = _currentSentenceStartIndex + _currentWordIndex;
     final hasGlobalWord = globalIndex >= 0 && globalIndex < _globalWords.length;
 
-    setState(() {
-      _currentHighlightedWord = word;
-    });
-
-    if (_readingSource != 'pdf' || _isTextFile || !hasGlobalWord) {
+    if (_isTextFile || !hasGlobalWord) {
+      return;
+    }
+    if (!(_readingSource == 'pdf' || _readingSource == 'selection')) {
       return;
     }
 
-    final cleanWord = _globalWords[globalIndex];
-    if (cleanWord.isEmpty) return;
-    final targetInstance = _globalWordOccurrences[globalIndex];
-
-    _searchResult?.clear();
-    final searchResult = _pdfController.searchText(cleanWord);
-    _searchResult = searchResult;
-
-    final int requestId = ++_searchRequestId;
-    void handleSearchUpdate() {
-      if (requestId != _searchRequestId) {
-        searchResult.removeListener(handleSearchUpdate);
-        return;
-      }
-      if (!searchResult.hasResult || !searchResult.isSearchCompleted) return;
-
-      final total = searchResult.totalInstanceCount;
-      if (total <= 0) {
-        searchResult.removeListener(handleSearchUpdate);
-        return;
-      }
-
-      final desired = targetInstance.clamp(1, total);
-      int safety = 0;
-      while (searchResult.currentInstanceIndex != desired && safety < total) {
-        searchResult.nextInstance();
-        safety++;
-      }
-      searchResult.removeListener(handleSearchUpdate);
+    if (_globalWords[globalIndex].isEmpty) return;
+    if (_readingSource == 'pdf' && _pdfWordAnchors.isNotEmpty) {
+      _tryHighlightWithPdfWordAnchor(globalIndex);
+      return;
     }
 
-    searchResult.addListener(handleSearchUpdate);
-    handleSearchUpdate();
+    final int requestId = ++_searchRequestId;
+
+    final exactWordMatched = await _tryHighlightExactWord(
+      globalIndex,
+      requestId,
+    );
+    if (exactWordMatched) return;
+
+    final candidates = _buildSearchCandidates(globalIndex);
+    if (candidates.isEmpty) return;
+
+    for (final candidate in candidates) {
+      if (requestId != _searchRequestId || !_isReading || _isPaused) {
+        return;
+      }
+      final matched = await _trySearchCandidate(candidate, requestId);
+      if (matched) return;
+    }
+  }
+
+  Future<void> _highlightCurrentWord() async {
+    if (_highlightSearchInFlight) {
+      _highlightRetryPending = true;
+      return;
+    }
+
+    _highlightSearchInFlight = true;
+    try {
+      do {
+        _highlightRetryPending = false;
+        await _performHighlightCurrentWord();
+      } while (_highlightRetryPending && _isReading && !_isPaused);
+    } finally {
+      _highlightSearchInFlight = false;
+      _highlightRetryPending = false;
+    }
   }
 
   void _pauseReading() {
@@ -855,19 +1452,23 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _currentSentenceIndex = -1;
       _currentWordIndex = -1;
       _currentReadingText = '';
-      _currentHighlightedWord = '';
       _sentences = [];
       _currentSentenceWords = [];
       _wordTimings = [];
       _globalWords = [];
-      _globalWordOccurrences = [];
+      _globalSurfaceWords = [];
+      _globalWordAnchorIndices = [];
       _sentenceWordStart = [];
+      _queryOccurrenceProgress.clear();
       _currentSentenceStartIndex = 0;
+      _highlightSearchInFlight = false;
+      _highlightRetryPending = false;
     });
     _audioPlayer.stop();
   }
 
   void _clearHighlight() {
+    _clearReadAloudAnnotations();
     _searchResult?.clear();
     _searchResult = null;
   }
@@ -1887,6 +2488,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               _selectedPdfBytes!,
               key: _pdfViewerKey,
               controller: _pdfController,
+              currentSearchTextHighlightColor: _activeReadAloudHighlightColor,
+              otherSearchTextHighlightColor: Colors.transparent,
               onDocumentLoaded: (details) {
                 setState(() {
                   _totalPages = details.document.pages.count;
@@ -1921,6 +2524,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 _selectedPdfNetworkUrl!,
                 key: _pdfViewerKey,
                 controller: _pdfController,
+                currentSearchTextHighlightColor: _activeReadAloudHighlightColor,
+                otherSearchTextHighlightColor: Colors.transparent,
                 onDocumentLoaded: (details) {
                   setState(() {
                     _totalPages = details.document.pages.count;
@@ -1999,6 +2604,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             file,
             key: _pdfViewerKey,
             controller: _pdfController,
+            currentSearchTextHighlightColor: _activeReadAloudHighlightColor,
+            otherSearchTextHighlightColor: Colors.transparent,
             onDocumentLoaded: (details) {
               setState(() {
                 _totalPages = details.document.pages.count;
@@ -2360,28 +2967,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   ),
                 ),
               ),
-              // Current word being read
-              if (_currentHighlightedWord.isNotEmpty && !_isPaused)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primary,
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Text(
-                    _currentHighlightedWord,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onPrimary,
-                    ),
-                  ),
-                ),
             ],
           ),
+          if (_currentReadingText.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            _buildCurrentSentencePreview(),
+          ],
           // Word progress bar
           if (_currentSentenceWords.isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -2407,6 +2998,59 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildCurrentSentencePreview() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final baseStyle = TextStyle(
+      fontSize: 14,
+      color: colorScheme.onPrimaryContainer,
+      height: 1.35,
+    );
+    final highlightedStyle = baseStyle.copyWith(
+      fontWeight: FontWeight.w700,
+      color: colorScheme.onPrimaryContainer,
+      backgroundColor: colorScheme.primary.withValues(alpha: 0.25),
+    );
+
+    final sentence = _currentReadingText;
+    final spans = <InlineSpan>[];
+    final tokenPattern = RegExp(r'\S+');
+
+    int cursor = 0;
+    int trackedWordIndex = -1;
+    for (final match in tokenPattern.allMatches(sentence)) {
+      if (match.start > cursor) {
+        spans.add(TextSpan(text: sentence.substring(cursor, match.start)));
+      }
+
+      final token = match.group(0) ?? '';
+      final clean = _cleanWordForSearch(token);
+      final shouldTrack = clean.length >= 2;
+      if (shouldTrack) trackedWordIndex++;
+
+      final isActiveWord =
+          !_isPaused &&
+          _currentWordIndex >= 0 &&
+          shouldTrack &&
+          trackedWordIndex == _currentWordIndex;
+
+      spans.add(
+        TextSpan(
+          text: token,
+          style: isActiveWord ? highlightedStyle : baseStyle,
+        ),
+      );
+      cursor = match.end;
+    }
+
+    if (cursor < sentence.length) {
+      spans.add(TextSpan(text: sentence.substring(cursor)));
+    }
+
+    return RichText(
+      text: TextSpan(style: baseStyle, children: spans),
     );
   }
 
