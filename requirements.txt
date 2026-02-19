@@ -14,6 +14,7 @@ pydantic>=2.0.0
 # --- TTS Engines ---
 kokoro>=0.9.4                     # Kokoro TTS (British/American voices)
 qwen-tts>=0.0.5                   # Qwen3-TTS (voice cloning & custom voices)
+supertonic>=1.1.2                 # Supertonic-2 ONNX TTS
 transformers==4.57.3              # Required by qwen-tts (pinned)
 accelerate>=1.12.0                # Required by qwen-tts
 
@@ -35,6 +36,7 @@ s3tokenizer>=0.3.0                # Tokenizer
 # --- PyTorch (CPU for macOS) ---
 torch>=2.1.0
 torchaudio>=2.1.0
+faster-whisper>=1.1.0            # Forced word alignment timestamps for read-aloud sync
 
 # --- Chatterbox TTS dependencies ---
 # chatterbox-tts itself is installed with --no-deps to avoid version conflicts.

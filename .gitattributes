@@ -3,6 +3,6 @@
 *.py text eol=lf
 bin/mimika text eol=lf
 bin/mimikactl text eol=lf
-
 # Auto-detect for everything else
 * text=auto
+dist/*.dmg filter=lfs diff=lfs merge=lfs -text

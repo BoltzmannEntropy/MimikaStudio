@@ -47,8 +47,8 @@ if (Test-Path (Join-Path $RootDir "venv")) {
 }
 
 # Ports
-$BackendPort = 8000
-$McpPort = 8010
+$BackendPort = if ($env:MIMIKA_BACKEND_PORT) { [int]$env:MIMIKA_BACKEND_PORT } else { 7693 }
+$McpPort = if ($env:MIMIKA_MCP_PORT) { [int]$env:MIMIKA_MCP_PORT } else { 8010 }
 
 # Flutter
 $FlutterAppName = "mimika_studio"

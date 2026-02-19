@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 class SettingsService {
-  static const String baseUrl = 'http://localhost:8000';
+  static const String baseUrl = 'http://localhost:7693';
   static const Duration _requestTimeout = Duration(seconds: 30);
 
   Future<http.Response> _get(Uri uri) {

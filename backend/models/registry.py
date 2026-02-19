@@ -2,6 +2,7 @@
 
 Defines available models, their modes, capabilities, and download status.
 """
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
@@ -46,7 +47,18 @@ class ModelRegistry:
             models_dir: Base directory for HuggingFace cache
         """
         if models_dir is None:
-            models_dir = Path.home() / ".cache" / "huggingface" / "hub"
+            env_hub_cache = os.environ.get("HUGGINGFACE_HUB_CACHE")
+            env_hf_home = os.environ.get("HF_HOME")
+            env_xdg_cache = os.environ.get("XDG_CACHE_HOME")
+
+            if env_hub_cache:
+                models_dir = Path(env_hub_cache)
+            elif env_hf_home:
+                models_dir = Path(env_hf_home) / "hub"
+            elif env_xdg_cache:
+                models_dir = Path(env_xdg_cache) / "huggingface" / "hub"
+            else:
+                models_dir = Path.home() / ".cache" / "huggingface" / "hub"
         self.models_dir = Path(models_dir)
 
     def list_models(self) -> List[ModelInfo]:
@@ -164,6 +176,17 @@ class ModelRegistry:
                 mode="clone",
                 description="Multilingual voice cloning on MLX",
             ),
+            # Supertonic-2 (ONNX Runtime)
+            ModelInfo(
+                name="Supertonic-2",
+                engine="supertonic",
+                hf_repo="Supertone/supertonic-2",
+                local_dir=self.models_dir / "models--Supertone--supertonic-2",
+                size_gb=0.3,
+                mode="tts",
+                model_type="huggingface",
+                description="Lightning-fast multilingual ONNX TTS",
+            ),
         ]
 
     def get_model(self, name: str) -> Optional[ModelInfo]:
@@ -181,15 +204,65 @@ class ModelRegistry:
         """Get models filtered by engine."""
         return [m for m in self.list_all_models() if m.engine == engine]
 
+    def get_model_cache_dir(self, model: ModelInfo) -> Path:
+        """Return cache directory for a model repo."""
+        return self.models_dir / f"models--{model.hf_repo.replace('/', '--')}"
+
+    def _snapshot_dirs(self, model: ModelInfo) -> list[Path]:
+        cache_dir = self.get_model_cache_dir(model)
+        snapshots_dir = cache_dir / "snapshots"
+        if not snapshots_dir.exists():
+            return []
+        return [p for p in snapshots_dir.iterdir() if p.is_dir()]
+
+    def _snapshot_has_required_payload(self, snapshot_dir: Path) -> bool:
+        """Best-effort check that a snapshot contains usable model files.
+
+        We require at least one model weight file and prefer at least one
+        metadata json, preventing false positives from empty/partial snapshots.
+        """
+        weight_suffixes = (".safetensors", ".bin", ".gguf", ".onnx")
+        has_weight = False
+        has_metadata = False
+
+        metadata_names = {
+            "config.json",
+            "generation_config.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "preprocessor_config.json",
+        }
+
+        for entry in snapshot_dir.rglob("*"):
+            if not entry.is_file():
+                continue
+            lowered = entry.name.lower()
+            if lowered in metadata_names or lowered.endswith(".json"):
+                has_metadata = True
+            if lowered.endswith(weight_suffixes):
+                has_weight = True
+            if has_weight and has_metadata:
+                return True
+
+        # Keep compatibility with minimal model snapshots that only expose
+        # weights but no obvious metadata.
+        return has_weight
+
+    def get_downloaded_snapshot_path(self, model: ModelInfo) -> Optional[Path]:
+        """Return a usable snapshot path if present."""
+        snapshots = self._snapshot_dirs(model)
+        if not snapshots:
+            return None
+        snapshots.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for snapshot in snapshots:
+            if self._snapshot_has_required_payload(snapshot):
+                return snapshot
+        return None
+
     def is_model_downloaded(self, model: ModelInfo) -> bool:
         """Check if a model is downloaded."""
         if model.model_type == "huggingface":
             if not model.hf_repo:
                 return False
-            cache_dir = self.models_dir / f"models--{model.hf_repo.replace('/', '--')}"
-            if cache_dir.exists():
-                snapshots = cache_dir / "snapshots"
-                if snapshots.exists() and any(snapshots.iterdir()):
-                    return True
-            return False
+            return self.get_downloaded_snapshot_path(model) is not None
         return False

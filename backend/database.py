@@ -1,7 +1,25 @@
 import sqlite3
+import os
 from pathlib import Path
 
-DB_PATH = Path(__file__).parent / "data" / "mimikastudio.db"
+
+def _resolve_data_dir() -> Path:
+    configured = (os.getenv("MIMIKA_DATA_DIR") or "").strip()
+    if configured:
+        target = Path(configured).expanduser()
+    else:
+        target = Path.home() / "MimikaStudio" / "data"
+
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+    except OSError:
+        fallback = Path("/tmp/mimikastudio-data")
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+DB_PATH = _resolve_data_dir() / "mimikastudio.db"
 
 def get_connection():
     # Use one connection per caller/thread; avoid cross-thread reuse hazards.
@@ -134,6 +152,7 @@ def seed_db():
     # Seed pregenerated samples
     pregen_dir = Path(__file__).parent / "data" / "pregenerated"
     if pregen_dir.exists():
+        genesis_ch5_text = """Genesis chapter 5, verses 1 through 3: This is the book of the generations of Adam. In the day that God created man, in the likeness of God made he him; male and female created he them. And Adam lived an hundred and thirty years, and begat a son in his own likeness."""
         pregenerated_samples = [
             (
                 "kokoro",
@@ -158,6 +177,62 @@ def seed_db():
                 "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
                 """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
                 str(pregen_dir / "qwen3-suzan-genesis4-demo.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Genesis 5 Neutral",
+                "Natural delivery for Genesis chapter 5 baseline",
+                genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-neutral.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Expressive: Chuckle",
+                "Genesis chapter 5 with [chuckle] cue",
+                "[chuckle] " + genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-chuckle.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Expressive: Sigh",
+                "Genesis chapter 5 with [sigh] cue",
+                "[sigh] " + genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-sigh.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Expressive: Gasp",
+                "Genesis chapter 5 with [gasp] cue",
+                "[gasp] " + genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-gasp.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Expressive: Laugh",
+                "Genesis chapter 5 with [laugh] cue",
+                "[laugh] " + genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-laugh.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Exaggeration: Subtle (0.25)",
+                "Genesis chapter 5 with subtle exaggeration",
+                genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-exaggeration-subtle.wav")
+            ),
+            (
+                "chatterbox",
+                "Natasha",
+                "Exaggeration: Dramatic (1.10)",
+                "Genesis chapter 5 with dramatic exaggeration",
+                genesis_ch5_text,
+                str(pregen_dir / "chatterbox-natasha-genesis5-exaggeration-dramatic.wav")
             ),
         ]
         for sample in pregenerated_samples:

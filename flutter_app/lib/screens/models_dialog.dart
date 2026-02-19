@@ -20,7 +20,10 @@ class _ModelsDialogState extends State<ModelsDialog> {
   void initState() {
     super.initState();
     _loadModels();
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadModels());
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _loadModels(),
+    );
   }
 
   @override
@@ -62,9 +65,9 @@ class _ModelsDialogState extends State<ModelsDialog> {
       });
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to start download: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to start download: $e')));
       }
     }
   }
@@ -77,6 +80,8 @@ class _ModelsDialogState extends State<ModelsDialog> {
         return Icons.record_voice_over;
       case 'chatterbox':
         return Icons.mic;
+      case 'supertonic':
+        return Icons.bolt;
       case 'indextts2':
         return Icons.auto_awesome;
       default:
@@ -92,6 +97,8 @@ class _ModelsDialogState extends State<ModelsDialog> {
         return Colors.teal;
       case 'chatterbox':
         return Colors.orange;
+      case 'supertonic':
+        return Colors.deepPurple;
       case 'indextts2':
         return Colors.deepPurple;
       default:
@@ -128,7 +135,13 @@ class _ModelsDialogState extends State<ModelsDialog> {
         title: Row(
           children: [
             Expanded(
-              child: Text(name, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              child: Text(
+                name,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
+              ),
             ),
             if (sizeGb != null)
               Container(
@@ -158,7 +171,13 @@ class _ModelsDialogState extends State<ModelsDialog> {
               ),
           ],
         ),
-        trailing: _buildStatusWidget(downloaded, isDownloading, downloadFailed, modelType, name),
+        trailing: _buildStatusWidget(
+          downloaded,
+          isDownloading,
+          downloadFailed,
+          modelType,
+          name,
+        ),
       ),
     );
   }
@@ -183,7 +202,14 @@ class _ModelsDialogState extends State<ModelsDialog> {
           children: [
             Icon(Icons.check_circle, size: 14, color: Colors.green),
             SizedBox(width: 4),
-            Text('Ready', style: TextStyle(fontSize: 11, color: Colors.green, fontWeight: FontWeight.w600)),
+            Text(
+              'Ready',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.green,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       );
@@ -220,7 +246,14 @@ class _ModelsDialogState extends State<ModelsDialog> {
           children: [
             Icon(Icons.warning_amber, size: 14, color: Colors.orange),
             SizedBox(width: 4),
-            Text('pip install', style: TextStyle(fontSize: 11, color: Colors.orange, fontWeight: FontWeight.w600)),
+            Text(
+              'pip install',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.orange,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ],
         ),
       );
@@ -239,9 +272,16 @@ class _ModelsDialogState extends State<ModelsDialog> {
   @override
   Widget build(BuildContext context) {
     // Group models by engine
-    final engineOrder = ['kokoro', 'qwen3', 'chatterbox', 'indextts2'];
+    final engineOrder = [
+      'kokoro',
+      'supertonic',
+      'qwen3',
+      'chatterbox',
+      'indextts2',
+    ];
     final engineLabels = {
       'kokoro': 'Kokoro',
+      'supertonic': 'Supertonic',
       'qwen3': 'Qwen3-TTS',
       'chatterbox': 'Chatterbox',
       'indextts2': 'IndexTTS-2',
@@ -253,7 +293,9 @@ class _ModelsDialogState extends State<ModelsDialog> {
       grouped.putIfAbsent(engine, () => []).add(model);
     }
 
-    final downloadedCount = _models.where((m) => m['downloaded'] == true).length;
+    final downloadedCount = _models
+        .where((m) => m['downloaded'] == true)
+        .length;
     final totalCount = _models.length;
 
     return Dialog(
@@ -269,7 +311,10 @@ class _ModelsDialogState extends State<ModelsDialog> {
                 const Text('Models', style: TextStyle(fontSize: 18)),
                 const Spacer(),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: downloadedCount == totalCount
                         ? Colors.green.withValues(alpha: 0.15)
@@ -280,7 +325,9 @@ class _ModelsDialogState extends State<ModelsDialog> {
                     '$downloadedCount/$totalCount ready',
                     style: TextStyle(
                       fontSize: 12,
-                      color: downloadedCount == totalCount ? Colors.green : Colors.orange,
+                      color: downloadedCount == totalCount
+                          ? Colors.green
+                          : Colors.orange,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -306,54 +353,58 @@ class _ModelsDialogState extends State<ModelsDialog> {
           body: _isLoading
               ? const Center(child: CircularProgressIndicator())
               : _error != null
-                  ? Center(
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(Icons.error_outline, size: 48, color: Colors.red),
-                          const SizedBox(height: 8),
-                          Text(_error!, style: const TextStyle(color: Colors.red)),
-                          const SizedBox(height: 16),
-                          ElevatedButton(
-                            onPressed: () {
-                              setState(() => _isLoading = true);
-                              _loadModels();
-                            },
-                            child: const Text('Retry'),
-                          ),
-                        ],
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.error_outline,
+                        size: 48,
+                        color: Colors.red,
                       ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        for (final engine in engineOrder)
-                          if (grouped.containsKey(engine)) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8, bottom: 4),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    _engineIcon(engine),
-                                    size: 16,
-                                    color: _engineColor(engine),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    engineLabels[engine] ?? engine,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: _engineColor(engine),
-                                    ),
-                                  ),
-                                ],
+                      const SizedBox(height: 8),
+                      Text(_error!, style: const TextStyle(color: Colors.red)),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () {
+                          setState(() => _isLoading = true);
+                          _loadModels();
+                        },
+                        child: const Text('Retry'),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    for (final engine in engineOrder)
+                      if (grouped.containsKey(engine)) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8, bottom: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _engineIcon(engine),
+                                size: 16,
+                                color: _engineColor(engine),
                               ),
-                            ),
-                            ...grouped[engine]!.map(_buildModelTile),
-                          ],
+                              const SizedBox(width: 6),
+                              Text(
+                                engineLabels[engine] ?? engine,
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                  color: _engineColor(engine),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ...grouped[engine]!.map(_buildModelTile),
                       ],
-                    ),
+                  ],
+                ),
         ),
       ),
     );

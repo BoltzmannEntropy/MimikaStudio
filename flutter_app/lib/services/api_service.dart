@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 class ApiService {
-  static const String baseUrl = 'http://localhost:8000';
+  static const String baseUrl = 'http://localhost:7693';
   static const Duration _requestTimeout = Duration(seconds: 120);
 
   Future<http.Response> _get(Uri uri, {Duration timeout = _requestTimeout}) {
@@ -60,6 +60,25 @@ class ApiService {
     );
   }
 
+  String _extractDownloadFilename(String? contentDisposition, String fallback) {
+    if (contentDisposition == null || contentDisposition.isEmpty) {
+      return fallback;
+    }
+    final quotedMatch = RegExp(
+      r'filename="([^"]+)"',
+    ).firstMatch(contentDisposition);
+    if (quotedMatch != null) {
+      return quotedMatch.group(1) ?? fallback;
+    }
+    final plainMatch = RegExp(
+      r'filename=([^;]+)',
+    ).firstMatch(contentDisposition);
+    if (plainMatch != null) {
+      return plainMatch.group(1)?.trim() ?? fallback;
+    }
+    return fallback;
+  }
+
   // Health check
   Future<bool> checkHealth() async {
     try {
@@ -86,6 +105,59 @@ class ApiService {
       return _decodeJson(response.body);
     }
     throw _apiError('Failed to load system stats', response);
+  }
+
+  Future<Map<String, dynamic>> exportDiagnosticLogs() async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/system/diagnostics/export'),
+      timeout: const Duration(seconds: 180),
+    );
+    if (response.statusCode == 200) {
+      final now = DateTime.now();
+      final fallbackName =
+          'mimika_diagnostics_'
+          '${now.year}'
+          '${now.month.toString().padLeft(2, '0')}'
+          '${now.day.toString().padLeft(2, '0')}.zip';
+      final fileName = _extractDownloadFilename(
+        response.headers['content-disposition'],
+        fallbackName,
+      );
+      return {'fileName': fileName, 'bytes': response.bodyBytes};
+    }
+    throw _apiError('Failed to export diagnostic logs', response);
+  }
+
+  Future<Map<String, dynamic>> getSystemLogs({int maxLines = 500}) async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/system/logs?max_lines=$maxLines'),
+      timeout: const Duration(seconds: 45),
+    );
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load system logs', response);
+  }
+
+  Future<Map<String, dynamic>> exportSystemLogs({int maxLines = 2000}) async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/system/logs/export?max_lines=$maxLines'),
+      timeout: const Duration(seconds: 120),
+    );
+    if (response.statusCode == 200) {
+      final now = DateTime.now();
+      final fallbackName =
+          'mimika_system_logs_'
+          '${now.year}'
+          '${now.month.toString().padLeft(2, '0')}'
+          '${now.day.toString().padLeft(2, '0')}.log';
+      final fileName = _extractDownloadFilename(
+        response.headers['content-disposition'],
+        fallbackName,
+      );
+      return {'fileName': fileName, 'bytes': response.bodyBytes};
+    }
+    throw _apiError('Failed to export system logs', response);
   }
 
   // ============== Kokoro ==============
@@ -123,6 +195,147 @@ class ApiService {
       return '$baseUrl${data['audio_url']}';
     }
     throw _apiError('Failed to generate Kokoro audio', response);
+  }
+
+  // ============== Supertonic ==============
+
+  Future<Map<String, dynamic>> getSupertonicVoices() async {
+    final response = await _get(Uri.parse('$baseUrl/api/supertonic/voices'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load Supertonic voices', response);
+  }
+
+  Future<Map<String, dynamic>> getSupertonicLanguages() async {
+    final response = await _get(Uri.parse('$baseUrl/api/supertonic/languages'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load Supertonic languages', response);
+  }
+
+  Future<Map<String, dynamic>> getSupertonicInfo() async {
+    final response = await _get(Uri.parse('$baseUrl/api/supertonic/info'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load Supertonic info', response);
+  }
+
+  Future<String> generateSupertonic({
+    required String text,
+    required String voice,
+    String language = 'en',
+    double speed = 1.05,
+    int totalSteps = 5,
+    bool smartChunking = true,
+    int maxCharsPerChunk = 300,
+    int silenceMs = 300,
+  }) async {
+    final response = await _post(
+      Uri.parse('$baseUrl/api/supertonic/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'text': text,
+        'voice': voice,
+        'language': language,
+        'speed': speed,
+        'total_steps': totalSteps,
+        'smart_chunking': smartChunking,
+        'max_chars_per_chunk': maxCharsPerChunk,
+        'silence_ms': silenceMs,
+      }),
+      timeout: const Duration(seconds: 180),
+    );
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      return '$baseUrl${data['audio_url']}';
+    }
+    throw _apiError('Failed to generate Supertonic audio', response);
+  }
+
+  // ============== CosyVoice3 (backed by Supertonic-2) ==============
+
+  Future<Map<String, dynamic>> getCosyVoice3Voices() async {
+    final response = await _get(Uri.parse('$baseUrl/api/cosyvoice3/voices'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load CosyVoice3 voices', response);
+  }
+
+  Future<Map<String, dynamic>> getCosyVoice3Languages() async {
+    final response = await _get(Uri.parse('$baseUrl/api/cosyvoice3/languages'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load CosyVoice3 languages', response);
+  }
+
+  Future<Map<String, dynamic>> getCosyVoice3Info() async {
+    final response = await _get(Uri.parse('$baseUrl/api/cosyvoice3/info'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to load CosyVoice3 info', response);
+  }
+
+  Future<String> generateCosyVoice3({
+    required String text,
+    required String voice,
+    String language = 'en',
+    double speed = 1.05,
+    int totalSteps = 5,
+    bool smartChunking = true,
+    int maxCharsPerChunk = 300,
+    int silenceMs = 300,
+  }) async {
+    final response = await _post(
+      Uri.parse('$baseUrl/api/cosyvoice3/generate'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'text': text,
+        'voice': voice,
+        'language': language,
+        'speed': speed,
+        'total_steps': totalSteps,
+        'smart_chunking': smartChunking,
+        'max_chars_per_chunk': maxCharsPerChunk,
+        'silence_ms': silenceMs,
+      }),
+      timeout: const Duration(seconds: 180),
+    );
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      return '$baseUrl${data['audio_url']}';
+    }
+    throw _apiError('Failed to generate CosyVoice3 audio', response);
+  }
+
+  Future<List<int>> alignWordsToAudio({
+    required String text,
+    required String audioUrl,
+    String language = 'en',
+  }) async {
+    final response = await _post(
+      Uri.parse('$baseUrl/api/tts/align-words'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({
+        'text': text,
+        'audio_url': audioUrl,
+        'language': language,
+      }),
+      timeout: const Duration(seconds: 30),
+    );
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      final timings = (data['timings_ms'] as List<dynamic>? ?? const [])
+          .map((e) => (e as num).toInt())
+          .toList();
+      return timings;
+    }
+    throw _apiError('Failed to align words to audio', response);
   }
 
   // ============== Samples ==============
@@ -409,7 +622,7 @@ class ApiService {
 
   Future<void> deleteChatterboxVoice(String name) async {
     final response = await _delete(
-      Uri.parse('$baseUrl/api/chatterbox/voices/$name'),
+      Uri.parse('$baseUrl/api/chatterbox/voices/${Uri.encodeComponent(name)}'),
     );
     if (response.statusCode != 200) {
       throw _apiError('Failed to delete voice', response);
@@ -829,6 +1042,50 @@ class ApiService {
   Future<void> deleteKokoroAudio(String filename) async {
     final response = await _delete(
       Uri.parse('$baseUrl/api/kokoro/audio/$filename'),
+    );
+    if (response.statusCode != 200) {
+      throw _apiError('Failed to delete audio file', response);
+    }
+  }
+
+  /// List all generated Supertonic audio files.
+  Future<List<Map<String, dynamic>>> getSupertonicAudioFiles() async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/supertonic/audio/list'),
+    );
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      return List<Map<String, dynamic>>.from(data['audio_files']);
+    }
+    throw _apiError('Failed to list Supertonic audio files', response);
+  }
+
+  /// Delete a Supertonic audio file.
+  Future<void> deleteSupertonicAudio(String filename) async {
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/supertonic/audio/$filename'),
+    );
+    if (response.statusCode != 200) {
+      throw _apiError('Failed to delete audio file', response);
+    }
+  }
+
+  /// List all generated CosyVoice3 audio files.
+  Future<List<Map<String, dynamic>>> getCosyVoice3AudioFiles() async {
+    final response = await _get(
+      Uri.parse('$baseUrl/api/cosyvoice3/audio/list'),
+    );
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      return List<Map<String, dynamic>>.from(data['audio_files']);
+    }
+    throw _apiError('Failed to list CosyVoice3 audio files', response);
+  }
+
+  /// Delete a CosyVoice3 audio file.
+  Future<void> deleteCosyVoice3Audio(String filename) async {
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/cosyvoice3/audio/$filename'),
     );
     if (response.statusCode != 200) {
       throw _apiError('Failed to delete audio file', response);

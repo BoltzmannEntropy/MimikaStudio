@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'license_screen.dart';
+import 'privacy_policy_screen.dart';
+import 'terms_of_service_screen.dart';
 import '../version.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -7,20 +10,16 @@ class AboutScreen extends StatelessWidget {
 
   static const String _websiteUrl =
       'https://boltzmannentropy.github.io/mimikastudio.github.io/';
+  static const String _qneuraUrl = 'https://qneura.ai/apps.html';
   static const String _githubUrl =
       'https://github.com/BoltzmannEntropy/MimikaStudio';
   static const String _issuesUrl =
       'https://github.com/BoltzmannEntropy/MimikaStudio/issues';
-  static const String _licenseUrl =
-      'https://boltzmannentropy.github.io/mimikastudio.github.io/license.html';
-  static const String _privacyUrl =
-      'https://boltzmannentropy.github.io/mimikastudio.github.io/privacy.html';
-  static const String _termsUrl =
-      'https://boltzmannentropy.github.io/mimikastudio.github.io/terms.html';
 
   // TTS Engine URLs
   static const Map<String, String> _engineUrls = {
     'Kokoro TTS': 'https://github.com/hexgrad/kokoro',
+    'Supertonic': 'https://github.com/supertone-inc/supertonic',
     'Qwen3-TTS': 'https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base',
     'Chatterbox': 'https://huggingface.co/ResembleAI/chatterbox',
     'IndexTTS-2': 'https://huggingface.co/IndexTeam/IndexTTS-v2',
@@ -93,6 +92,74 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 32),
 
+              // Important Notice
+              Card(
+                color: theme.colorScheme.errorContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.warning_amber_rounded,
+                            color: theme.colorScheme.onErrorContainer,
+                          ),
+                          const SizedBox(width: 10),
+                          Text(
+                            'Important Notice',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: theme.colorScheme.onErrorContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'MimikaStudio is for creative, educational, and productivity use. '
+                        'Always ensure you have consent for voice cloning and comply with local law and platform policies.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onErrorContainer,
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // What This Project Does
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'What This Project Does',
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        '• Generates high-quality speech from text locally on Apple Silicon\n'
+                        '• Supports few-shot voice cloning from short reference audio\n'
+                        '• Reads PDF documents aloud and exports audiobook-ready audio\n'
+                        '• Keeps inference on-device for privacy-first workflows',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          height: 1.45,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+
               // Links section
               Card(
                 child: Padding(
@@ -154,19 +221,37 @@ class AboutScreen extends StatelessWidget {
                       ),
                       const SizedBox(height: 16),
                       FilledButton.tonalIcon(
-                        onPressed: () => _launchUrl(_licenseUrl),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const LicenseScreen(),
+                            ),
+                          );
+                        },
                         icon: const Icon(Icons.article_outlined),
                         label: const Text('License'),
                       ),
                       const SizedBox(height: 8),
                       FilledButton.tonalIcon(
-                        onPressed: () => _launchUrl(_privacyUrl),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const PrivacyPolicyScreen(),
+                            ),
+                          );
+                        },
                         icon: const Icon(Icons.privacy_tip_outlined),
                         label: const Text('Privacy Policy'),
                       ),
                       const SizedBox(height: 8),
                       FilledButton.tonalIcon(
-                        onPressed: () => _launchUrl(_termsUrl),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const TermsOfServiceScreen(),
+                            ),
+                          );
+                        },
                         icon: const Icon(Icons.gavel_outlined),
                         label: const Text('Terms of Service'),
                       ),
@@ -176,7 +261,7 @@ class AboutScreen extends StatelessWidget {
               ),
               const SizedBox(height: 24),
 
-              // Credits section
+              // Model credits section
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -184,14 +269,14 @@ class AboutScreen extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Text(
-                        'Powered By',
+                        'Model Credits & Licenses',
                         style: theme.textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Click to visit model sources',
+                        'Primary speech engines used by MimikaStudio',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -202,11 +287,41 @@ class AboutScreen extends StatelessWidget {
                         runSpacing: 8,
                         alignment: WrapAlignment.center,
                         children: [
-                          _buildEngineChip('Kokoro TTS', Colors.blue, _engineUrls['Kokoro TTS']!),
-                          _buildEngineChip('Qwen3-TTS', Colors.teal, _engineUrls['Qwen3-TTS']!),
-                          _buildEngineChip('Chatterbox', Colors.orange, _engineUrls['Chatterbox']!),
-                          _buildEngineChip('IndexTTS-2', Colors.purple, _engineUrls['IndexTTS-2']!),
+                          _buildEngineChip(
+                            'Kokoro TTS',
+                            Colors.blue,
+                            _engineUrls['Kokoro TTS']!,
+                          ),
+                          _buildEngineChip(
+                            'Supertonic',
+                            Colors.deepPurple,
+                            _engineUrls['Supertonic']!,
+                          ),
+                          _buildEngineChip(
+                            'Qwen3-TTS',
+                            Colors.teal,
+                            _engineUrls['Qwen3-TTS']!,
+                          ),
+                          _buildEngineChip(
+                            'Chatterbox',
+                            Colors.orange,
+                            _engineUrls['Chatterbox']!,
+                          ),
+                          _buildEngineChip(
+                            'IndexTTS-2',
+                            Colors.purple,
+                            _engineUrls['IndexTTS-2']!,
+                          ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'Kokoro (Apache-2.0) · Supertonic (OpenRail) · '
+                        'Qwen3-TTS (Apache-2.0) · Chatterbox (MIT) · '
+                        'IndexTTS-2 (open model license)',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
@@ -224,10 +339,21 @@ class AboutScreen extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                '2026 BoltzmannEntropy',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+              InkWell(
+                onTap: () => _launchUrl(_qneuraUrl),
+                borderRadius: BorderRadius.circular(4),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    '2026 Qneura.ai',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -240,7 +366,11 @@ class AboutScreen extends StatelessWidget {
   Widget _buildEngineChip(String label, Color color, String url) {
     return ActionChip(
       onPressed: () => _launchUrl(url),
-      avatar: Icon(Icons.open_in_new, size: 16, color: Colors.white.withValues(alpha: 0.9)),
+      avatar: Icon(
+        Icons.open_in_new,
+        size: 16,
+        color: Colors.white.withValues(alpha: 0.9),
+      ),
       label: Text(
         label,
         style: const TextStyle(

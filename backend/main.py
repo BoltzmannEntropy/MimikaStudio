@@ -3,23 +3,30 @@
 import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
+from starlette.staticfiles import NotModifiedResponse
 from pydantic import BaseModel
 from pathlib import Path
 from contextlib import asynccontextmanager
+from collections import deque
 from typing import Optional
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 import re
 import shutil
+import mimetypes
 import threading
 import tempfile
 import urllib.request
+import zipfile
+from datetime import datetime
+from urllib.parse import urlparse
 import uuid
 import soundfile as sf
 
@@ -28,17 +35,127 @@ from version import VERSION, VERSION_NAME
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
 from tts.chatterbox_engine import get_chatterbox_engine, ChatterboxParams
+from tts.supertonic_engine import (
+    get_supertonic_engine,
+    SupertonicParams,
+    SUPPORTED_LANGUAGES as SUPERTONIC_LANGUAGES,
+    DEFAULT_VOICE_NAME as SUPERTONIC_DEFAULT_VOICE,
+)
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
 from settings_service import get_all_settings, get_setting, set_setting, get_output_folder, set_output_folder
 
-_repo_root = Path(__file__).resolve().parents[1]
-_log_dir = _repo_root / "runs" / "logs"
-_log_dir.mkdir(parents=True, exist_ok=True)
+def _env_path(name: str) -> Optional[Path]:
+    raw = (os.getenv(name) or "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+BACKEND_HOST = (os.getenv("MIMIKA_BACKEND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
+BACKEND_PORT = _env_int("MIMIKA_BACKEND_PORT", 7693)
+
+
+def _ensure_dir_with_fallback(primary: Path, fallback: Path) -> Path:
+    try:
+        primary.mkdir(parents=True, exist_ok=True)
+        return primary
+    except OSError:
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
+_backend_dir = Path(__file__).resolve().parent
+_repo_root = _backend_dir.parents[0]
+_runtime_home = _ensure_dir_with_fallback(
+    _env_path("MIMIKA_RUNTIME_HOME") or (Path.home() / "MimikaStudio"),
+    Path("/tmp/mimikastudio"),
+)
+_runtime_data_dir = _ensure_dir_with_fallback(
+    _env_path("MIMIKA_DATA_DIR") or (_runtime_home / "data"),
+    _runtime_home / "data",
+)
+_bundled_data_dir = _backend_dir / "data"
+_log_dir = _ensure_dir_with_fallback(
+    _env_path("MIMIKA_LOG_DIR") or (_runtime_home / "logs"),
+    Path("/tmp/mimikastudio-logs"),
+)
 _api_log_path = _log_dir / "backend_api.log"
 
+COSYVOICE3_ALIAS_TO_STYLE = {
+    "Eden": "F1",
+    "Astra": "F2",
+    "Lyra": "F3",
+    "Nova": "F4",
+    "Iris": "F5",
+    "Orion": "M1",
+    "Atlas": "M2",
+    "Silas": "M3",
+    "Kai": "M4",
+    "Noah": "M5",
+}
+COSYVOICE3_STYLE_TO_ALIAS = {v: k for k, v in COSYVOICE3_ALIAS_TO_STYLE.items()}
+COSYVOICE3_DEFAULT_VOICE = "Eden"
+
 logger = logging.getLogger("mimika.backend.api")
+
+
+def _init_mimetypes_for_sandbox() -> None:
+    """Avoid sandbox-denied reads of system mime.types files in bundled app builds."""
+    # Prevent later bare mimetypes.init() calls from reading protected system paths
+    # like /etc/apache2/mime.types inside sandboxed app translocation.
+    mimetypes.knownfiles = []
+    mimetypes.inited = False
+    mimetypes.init(files=[])
+    # Ensure common media types used by StaticFiles/FileResponse are registered.
+    mimetypes.add_type("application/pdf", ".pdf")
+    mimetypes.add_type("audio/wav", ".wav")
+    mimetypes.add_type("audio/mpeg", ".mp3")
+
+
+_init_mimetypes_for_sandbox()
+
+
+_STATIC_MEDIA_TYPES = {
+    ".pdf": "application/pdf",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".txt": "text/plain; charset=utf-8",
+    ".md": "text/markdown; charset=utf-8",
+}
+
+
+class SafeStaticFiles(StaticFiles):
+    """Static files wrapper that avoids stdlib mimetypes file probing in sandbox."""
+
+    def file_response(
+        self,
+        full_path,
+        stat_result,
+        scope,
+        status_code: int = 200,
+    ):
+        request_headers = Headers(scope=scope)
+        suffix = Path(str(full_path)).suffix.lower()
+        media_type = _STATIC_MEDIA_TYPES.get(suffix, "application/octet-stream")
+        response = FileResponse(
+            full_path,
+            status_code=status_code,
+            stat_result=stat_result,
+            media_type=media_type,
+        )
+        if self.is_not_modified(response.headers, request_headers):
+            return NotModifiedResponse(response.headers)
+        return response
 
 
 class _RequestContextFilter(logging.Filter):
@@ -77,6 +194,18 @@ class KokoroRequest(BaseModel):
     smart_chunking: bool = True
     max_chars_per_chunk: int = 1500
     crossfade_ms: int = 40
+
+
+class SupertonicRequest(BaseModel):
+    text: str
+    voice: str = SUPERTONIC_DEFAULT_VOICE
+    language: str = "en"
+    speed: float = 1.05
+    total_steps: int = 5
+    smart_chunking: bool = True
+    max_chars_per_chunk: int = 300
+    silence_ms: int = 300
+
 
 class Qwen3Request(BaseModel):
     text: str
@@ -128,6 +257,12 @@ class SettingsUpdateRequest(BaseModel):
     value: str
 
 
+class WordAlignmentRequest(BaseModel):
+    text: str
+    audio_url: str
+    language: str = "en"
+
+
 # Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -135,6 +270,8 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...", extra={"request_id": "startup"})
     init_db()
     seed_db()
+    _ensure_supertonic_pregenerated_rows()
+    _ensure_cosyvoice3_pregenerated_rows()
     _sync_output_folder_runtime(get_output_folder())
     _migrate_legacy_voice_samples()
     logger.info("Database ready.", extra={"request_id": "startup"})
@@ -207,10 +344,12 @@ _default_local_origins = [
     "http://localhost",
     "http://localhost:3000",
     "http://localhost:5173",
+    "http://localhost:7693",
     "http://localhost:8000",
     "http://127.0.0.1",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:5173",
+    "http://127.0.0.1:7693",
     "http://127.0.0.1:8000",
 ]
 _cors_origins_env = os.getenv("MIMIKA_CORS_ORIGINS", "")
@@ -227,9 +366,94 @@ app.add_middleware(
 )
 
 # Mount outputs directory for serving audio files
-outputs_dir = Path(__file__).parent / "outputs"
-outputs_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/audio", StaticFiles(directory=str(outputs_dir)), name="audio")
+outputs_dir = _ensure_dir_with_fallback(
+    _env_path("MIMIKA_OUTPUT_DIR") or (_runtime_home / "outputs"),
+    Path("/tmp/mimikastudio-outputs"),
+)
+app.mount("/audio", SafeStaticFiles(directory=str(outputs_dir)), name="audio")
+
+_word_align_model = None
+_word_align_model_lock = threading.Lock()
+
+
+def _normalize_alignment_token(token: str) -> str:
+    """Normalize words for robust sentence-word alignment."""
+    return re.sub(r"[^\w]", "", token).lower()
+
+
+def _tokenize_alignment_text(text: str) -> list[str]:
+    tokens = []
+    for raw in re.split(r"\s+", text):
+        tok = _normalize_alignment_token(raw)
+        if len(tok) >= 2:
+            tokens.append(tok)
+    return tokens
+
+
+def _resolve_audio_path_from_url(audio_url: str) -> Path:
+    """Resolve /audio/... or absolute localhost URL into local outputs path."""
+    path_part = audio_url
+    parsed = urlparse(audio_url)
+    if parsed.scheme:
+        path_part = parsed.path
+    if not path_part.startswith("/audio/"):
+        raise HTTPException(
+            status_code=400,
+            detail="audio_url must point to /audio/<filename>",
+        )
+    filename = Path(path_part).name
+    candidate = outputs_dir / filename
+    if not candidate.exists() or not candidate.is_file():
+        raise HTTPException(status_code=404, detail=f"Audio file not found: {filename}")
+    return candidate
+
+
+def _get_word_align_model():
+    """Lazy-load alignment model once (fast startup, lower memory spikes)."""
+    global _word_align_model
+    if _word_align_model is not None:
+        return _word_align_model
+    with _word_align_model_lock:
+        if _word_align_model is None:
+            try:
+                from faster_whisper import WhisperModel
+            except Exception as e:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Forced alignment backend unavailable. "
+                        "Install: pip install faster-whisper"
+                    ),
+                ) from e
+            _word_align_model = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+    return _word_align_model
+
+
+def _align_expected_words_to_observed(
+    expected_tokens: list[str],
+    observed_words: list[dict],
+) -> list[int]:
+    """Map expected tokens to observed ASR words using monotonic greedy match."""
+    starts_ms: list[int] = []
+    cursor = 0
+    last_ms = 0
+
+    for expected in expected_tokens:
+        matched_ms: Optional[int] = None
+        for i in range(cursor, len(observed_words)):
+            if observed_words[i]["token"] == expected:
+                matched_ms = observed_words[i]["start_ms"]
+                cursor = i + 1
+                last_ms = matched_ms
+                break
+
+        if matched_ms is None:
+            # Keep sequence length stable; fallback to previous boundary.
+            starts_ms.append(last_ms)
+        else:
+            starts_ms.append(matched_ms)
+
+    return starts_ms
 
 
 def _safe_read_text(path: Path) -> str:
@@ -248,8 +472,10 @@ def _sync_output_folder_runtime(path: str) -> Path:
     try:
         resolved.mkdir(parents=True, exist_ok=True)
     except OSError:
-        fallback = Path(__file__).parent / "outputs"
-        fallback.mkdir(parents=True, exist_ok=True)
+        fallback = _ensure_dir_with_fallback(
+            _runtime_home / "outputs",
+            Path("/tmp/mimikastudio-outputs"),
+        )
         logger.exception(
             "Failed to use output folder '%s', falling back to '%s'",
             configured or "<empty>",
@@ -296,19 +522,262 @@ def _normalize_pdf_text_for_tts(text: str) -> str:
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()
 
+
+def _cosyvoice3_alias_for_style(style_code: str) -> str:
+    return COSYVOICE3_STYLE_TO_ALIAS.get(style_code, style_code)
+
+
+def _cosyvoice3_style_for_voice(voice: str, available_styles: list[str]) -> str:
+    requested = (voice or "").strip()
+    if requested in COSYVOICE3_ALIAS_TO_STYLE:
+        candidate = COSYVOICE3_ALIAS_TO_STYLE[requested]
+        if candidate in available_styles:
+            return candidate
+    # Backward compatibility: allow direct style codes.
+    if requested in available_styles:
+        return requested
+    default_style = COSYVOICE3_ALIAS_TO_STYLE.get(COSYVOICE3_DEFAULT_VOICE, SUPERTONIC_DEFAULT_VOICE)
+    if default_style in available_styles:
+        return default_style
+    if SUPERTONIC_DEFAULT_VOICE in available_styles:
+        return SUPERTONIC_DEFAULT_VOICE
+    return available_styles[0] if available_styles else SUPERTONIC_DEFAULT_VOICE
+
+
+def _rename_output_prefix(path: Path, old_prefix: str, new_prefix: str) -> Path:
+    if not path.name.startswith(old_prefix):
+        return path
+    renamed = path.with_name(new_prefix + path.name[len(old_prefix):])
+    if renamed == path:
+        return path
+    if renamed.exists():
+        renamed.unlink()
+    path.replace(renamed)
+    return renamed
+
+
+def _ensure_supertonic_pregenerated_rows() -> None:
+    """Ensure Supertonic pregenerated sample rows exist in the database."""
+    pregen_dir = _bundled_data_dir / "pregenerated"
+    samples = [
+        {
+            "engine": "supertonic",
+            "voice": "F1",
+            "title": "Genesis 4 Preview (F1)",
+            "description": "Supertonic F1 English preview for instant playback",
+            "text": (
+                "Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, "
+                "Why art thou wroth? and why is thy countenance fallen? If thou doest well, "
+                "shalt thou not be accepted? and if thou doest not well, sin lieth at the door."
+            ),
+            "file_name": "supertonic-f1-genesis4-demo.wav",
+        },
+        {
+            "engine": "supertonic",
+            "voice": "M2",
+            "title": "Genesis 4 Preview (M2)",
+            "description": "Supertonic M2 English preview using Genesis 4:8-9",
+            "text": (
+                "Genesis chapter 4, verses 8 and 9: And Cain talked with Abel his brother: "
+                "and it came to pass, when they were in the field, that Cain rose up against Abel his brother, "
+                "and slew him. And the Lord said unto Cain, Where is Abel thy brother? "
+                "And he said, I know not: Am I my brother's keeper?"
+            ),
+            "file_name": "supertonic-m2-genesis4-demo.wav",
+        },
+    ]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM pregenerated_samples
+        WHERE engine = ?
+          AND (
+                title = ?
+                OR file_path LIKE ?
+          )
+        """,
+        ("supertonic", "Deterrence Brief (M2)", "%/supertonic-m2-geopolitics-demo.wav"),
+    )
+    removed = cursor.rowcount
+    inserted = 0
+    for sample in samples:
+        file_path = pregen_dir / sample["file_name"]
+        if not file_path.exists():
+            continue
+        cursor.execute(
+            "SELECT id FROM pregenerated_samples WHERE engine = ? AND file_path = ?",
+            (sample["engine"], str(file_path)),
+        )
+        existing = cursor.fetchone()
+        if existing is not None:
+            cursor.execute(
+                """
+                UPDATE pregenerated_samples
+                SET voice = ?, title = ?, description = ?, text = ?
+                WHERE id = ?
+                """,
+                (
+                    sample["voice"],
+                    sample["title"],
+                    sample["description"],
+                    sample["text"],
+                    existing[0],
+                ),
+            )
+            continue
+        cursor.execute(
+            """
+            INSERT INTO pregenerated_samples (engine, voice, title, description, text, file_path)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sample["engine"],
+                sample["voice"],
+                sample["title"],
+                sample["description"],
+                sample["text"],
+                str(file_path),
+            ),
+        )
+        inserted += 1
+
+    if inserted > 0 or removed > 0:
+        conn.commit()
+        logger.info(
+            "Reconciled Supertonic pregenerated rows (inserted=%s removed=%s)",
+            inserted,
+            removed,
+            extra={"request_id": "startup"},
+        )
+    conn.close()
+
+
+def _ensure_cosyvoice3_pregenerated_rows() -> None:
+    """Ensure CosyVoice3 pregenerated Bible sample rows/files exist."""
+    pregen_dir = _bundled_data_dir / "pregenerated"
+    if not pregen_dir.exists():
+        return
+
+    # CosyVoice3 currently uses the same synthesis backend; keep separate
+    # filenames/rows so the UI and filtering are engine-specific.
+    source_to_target = [
+        ("supertonic-f1-genesis4-demo.wav", "cosyvoice3-f1-genesis4-demo.wav"),
+        ("supertonic-m2-genesis4-demo.wav", "cosyvoice3-m2-genesis4-demo.wav"),
+    ]
+    for source_name, target_name in source_to_target:
+        source_path = pregen_dir / source_name
+        target_path = pregen_dir / target_name
+        if source_path.exists() and not target_path.exists():
+            shutil.copy2(source_path, target_path)
+
+    samples = [
+        {
+            "engine": "cosyvoice3",
+            "voice": "Eden",
+            "title": "Genesis 4 Preview (Eden)",
+            "description": "CosyVoice3 Eden English preview for instant playback",
+            "text": (
+                "Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, "
+                "Why art thou wroth? and why is thy countenance fallen? If thou doest well, "
+                "shalt thou not be accepted? and if thou doest not well, sin lieth at the door."
+            ),
+            "file_name": "cosyvoice3-f1-genesis4-demo.wav",
+        },
+        {
+            "engine": "cosyvoice3",
+            "voice": "Atlas",
+            "title": "Genesis 4 Preview (Atlas)",
+            "description": "CosyVoice3 Atlas English preview using Genesis 4:8-9",
+            "text": (
+                "Genesis chapter 4, verses 8 and 9: And Cain talked with Abel his brother: "
+                "and it came to pass, when they were in the field, that Cain rose up against Abel his brother, "
+                "and slew him. And the Lord said unto Cain, Where is Abel thy brother? "
+                "And he said, I know not: Am I my brother's keeper?"
+            ),
+            "file_name": "cosyvoice3-m2-genesis4-demo.wav",
+        },
+    ]
+
+    conn = get_connection()
+    cursor = conn.cursor()
+    removed = 0
+    inserted = 0
+    for sample in samples:
+        file_path = pregen_dir / sample["file_name"]
+        if not file_path.exists():
+            continue
+        cursor.execute(
+            "SELECT id FROM pregenerated_samples WHERE engine = ? AND file_path = ?",
+            (sample["engine"], str(file_path)),
+        )
+        if cursor.fetchone() is not None:
+            continue
+        cursor.execute(
+            """
+            INSERT INTO pregenerated_samples (engine, voice, title, description, text, file_path)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                sample["engine"],
+                sample["voice"],
+                sample["title"],
+                sample["description"],
+                sample["text"],
+                str(file_path),
+            ),
+        )
+        inserted += 1
+
+    expected_paths = {str((pregen_dir / sample["file_name"]).resolve()) for sample in samples}
+
+    # Remove stale CosyVoice3 rows if file is missing or not part of the expected set.
+    cursor.execute(
+        "SELECT id, file_path FROM pregenerated_samples WHERE engine = ?",
+        ("cosyvoice3",),
+    )
+    stale_ids = []
+    for row in cursor.fetchall():
+        sid, file_path = row
+        resolved_path = str(Path(file_path).resolve())
+        if (not Path(file_path).exists()) or (resolved_path not in expected_paths):
+            stale_ids.append((sid,))
+    if stale_ids:
+        cursor.executemany(
+            "DELETE FROM pregenerated_samples WHERE id = ?",
+            stale_ids,
+        )
+        removed = len(stale_ids)
+
+    if inserted > 0 or removed > 0:
+        conn.commit()
+        logger.info(
+            "Reconciled CosyVoice3 pregenerated rows (inserted=%s removed=%s)",
+            inserted,
+            removed,
+            extra={"request_id": "startup"},
+        )
+    conn.close()
+
 # Qwen3 voice storage locations
-SHARED_SAMPLE_VOICES_DIR = Path(__file__).parent / "data" / "samples" / "voices"
+SHARED_SAMPLE_VOICES_DIR = _bundled_data_dir / "samples" / "voices"
 QWEN3_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-QWEN3_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "qwen3"
+QWEN3_USER_VOICES_DIR = _runtime_data_dir / "user_voices" / "qwen3"
 
 # Chatterbox voice storage locations
 CHATTERBOX_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-CHATTERBOX_USER_VOICES_DIR = Path(__file__).parent / "data" / "user_voices" / "chatterbox"
+CHATTERBOX_USER_VOICES_DIR = _runtime_data_dir / "user_voices" / "chatterbox"
 
 # IndexTTS-2 voice storage locations
 INDEXTTS2_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
 INDEXTTS2_USER_VOICES_DIR = QWEN3_USER_VOICES_DIR
-DICTA_MODEL_DIR = Path(__file__).parent / "models" / "dicta-onnx"
+_bundled_dicta_model_dir = _backend_dir / "models" / "dicta-onnx"
+_runtime_dicta_model_dir = _runtime_data_dir / "models" / "dicta-onnx"
+if (_bundled_dicta_model_dir / "dicta-1.0.onnx").exists():
+    DICTA_MODEL_DIR = _bundled_dicta_model_dir
+else:
+    DICTA_MODEL_DIR = _runtime_dicta_model_dir
 DICTA_MODEL_PATH = DICTA_MODEL_DIR / "dicta-1.0.onnx"
 DICTA_MODEL_URL = (
     "https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx"
@@ -381,32 +850,44 @@ def _is_shared_default_voice(name: str) -> bool:
 
 def _migrate_legacy_voice_samples() -> None:
     """Consolidate legacy sample folders into the shared defaults folder."""
-    samples_root = Path(__file__).parent / "data" / "samples"
+    samples_root = _bundled_data_dir / "samples"
     shared_dir = SHARED_SAMPLE_VOICES_DIR
     legacy_qwen3_dir = samples_root / "qwen3_voices"
     legacy_chatterbox_dir = samples_root / "chatterbox_voices"
 
-    shared_dir.mkdir(parents=True, exist_ok=True)
     QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    INDEXTTS2_SAMPLE_VOICES_DIR.mkdir(parents=True, exist_ok=True)
     INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
     def move_voice(src_dir: Path, name: str, dest_dir: Path) -> None:
         src_wav = src_dir / f"{name}.wav"
         src_txt = src_dir / f"{name}.txt"
         if src_wav.exists():
-            dest_wav = dest_dir / src_wav.name
-            if dest_wav.exists():
-                src_wav.unlink()
-            else:
-                shutil.move(str(src_wav), str(dest_wav))
+            try:
+                dest_wav = dest_dir / src_wav.name
+                if dest_wav.exists():
+                    src_wav.unlink()
+                else:
+                    shutil.move(str(src_wav), str(dest_wav))
+            except OSError:
+                logger.warning(
+                    "Skipping voice migration for %s (read-only or permission issue)",
+                    src_wav,
+                    extra={"request_id": "startup"},
+                )
         if src_txt.exists():
-            dest_txt = dest_dir / src_txt.name
-            if dest_txt.exists():
-                src_txt.unlink()
-            else:
-                shutil.move(str(src_txt), str(dest_txt))
+            try:
+                dest_txt = dest_dir / src_txt.name
+                if dest_txt.exists():
+                    src_txt.unlink()
+                else:
+                    shutil.move(str(src_txt), str(dest_txt))
+            except OSError:
+                logger.warning(
+                    "Skipping transcript migration for %s (read-only or permission issue)",
+                    src_txt,
+                    extra={"request_id": "startup"},
+                )
 
     # Migrate deprecated engine-specific sample folders into shared defaults.
     for legacy_dir in (legacy_qwen3_dir, legacy_chatterbox_dir):
@@ -452,6 +933,115 @@ def _generate_chunked_audio(
     merged = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=crossfade_ms)
     return merged, sample_rate, len(chunks)
 
+
+def _cleanup_temp_file(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _write_diagnostics_bundle(zip_path: Path) -> int:
+    file_count = 0
+
+    with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        now = datetime.now().astimezone().isoformat()
+        archive.writestr(
+            "metadata.txt",
+            "\n".join(
+                [
+                    "MimikaStudio Diagnostics Bundle",
+                    f"Generated: {now}",
+                    f"Version: {VERSION} ({VERSION_NAME})",
+                    f"Repository Root: {_repo_root}",
+                ]
+            )
+            + "\n",
+        )
+
+        def add_directory(source_dir: Path, archive_prefix: str) -> None:
+            nonlocal file_count
+            if not source_dir.exists() or not source_dir.is_dir():
+                return
+            for file_path in sorted(source_dir.rglob("*")):
+                if not file_path.is_file():
+                    continue
+                relative = file_path.relative_to(source_dir).as_posix()
+                archive.write(file_path, arcname=f"{archive_prefix}/{relative}")
+                file_count += 1
+
+        add_directory(_repo_root / "runs" / "logs", "runs/logs")
+        add_directory(_repo_root / ".logs", ".logs")
+
+    return file_count
+
+
+def _collect_system_log_sources() -> list[Path]:
+    """Return known system-log files ordered from oldest to newest."""
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    base_files = [
+        _api_log_path,
+        _log_dir / "backend.log",
+        Path("/tmp/mimikastudio-backend.log"),
+        _repo_root / "runs" / "logs" / "backend_api.log",
+        _repo_root / ".logs" / "backend_api.log",
+    ]
+
+    for base in base_files:
+        parent = base.parent
+        if not parent.exists():
+            continue
+        pattern = f"{base.name}*"
+        matches = sorted(parent.glob(pattern), key=lambda p: p.stat().st_mtime if p.exists() else 0.0)
+        for path in matches:
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            if resolved in seen or not path.is_file():
+                continue
+            seen.add(resolved)
+            candidates.append(path)
+
+    if candidates:
+        return candidates
+
+    fallback_logs = sorted(_log_dir.glob("*.log*"), key=lambda p: p.stat().st_mtime if p.exists() else 0.0)
+    for path in fallback_logs:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not path.is_file():
+            continue
+        seen.add(resolved)
+        candidates.append(path)
+    return candidates
+
+
+def _read_system_log_lines(max_lines: int = 500) -> tuple[list[str], list[str]]:
+    """Read and merge backend log lines with a global tail limit."""
+    limit = max(50, min(max_lines, 5000))
+    merged: deque[str] = deque(maxlen=limit)
+    sources: list[str] = []
+
+    for source in _collect_system_log_sources():
+        source_label = source.name
+        sources.append(str(source))
+        try:
+            with source.open("r", encoding="utf-8", errors="replace") as handle:
+                for raw_line in handle:
+                    line = raw_line.rstrip("\n")
+                    if not line.strip():
+                        continue
+                    merged.append(f"[{source_label}] {line}")
+        except OSError:
+            continue
+
+    return list(merged), sources
+
+
 # Health check
 @app.get("/api/health")
 async def health():
@@ -493,6 +1083,11 @@ async def system_info():
         "backend": "mlx-audio",
         "features": "voice clone",
     }
+    supertonic_info = {
+        "model": "Supertone/supertonic-2",
+        "backend": "onnxruntime",
+        "features": "multilingual on-device synthesis",
+    }
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -506,6 +1101,7 @@ async def system_info():
             "kokoro": kokoro_info,
             "qwen3": qwen3_info,
             "chatterbox": chatterbox_info,
+            "supertonic": supertonic_info,
         }
     }
 
@@ -550,6 +1146,96 @@ async def system_stats():
         }
 
     return result
+
+
+@app.get("/api/system/diagnostics/export")
+async def export_system_diagnostics(background_tasks: BackgroundTasks):
+    """Create and download a ZIP bundle of diagnostic logs."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fd, temp_path = tempfile.mkstemp(prefix=f"mimika_diagnostics_{timestamp}_", suffix=".zip")
+    os.close(fd)
+    zip_path = Path(temp_path)
+
+    try:
+        file_count = _write_diagnostics_bundle(zip_path)
+        if file_count == 0:
+            raise HTTPException(status_code=404, detail="No diagnostic logs found to export")
+
+        background_tasks.add_task(_cleanup_temp_file, zip_path)
+        return FileResponse(
+            path=str(zip_path),
+            media_type="application/zip",
+            filename=f"mimika_diagnostics_{timestamp}.zip",
+        )
+    except HTTPException:
+        _cleanup_temp_file(zip_path)
+        raise
+    except Exception as exc:
+        _cleanup_temp_file(zip_path)
+        logger.exception(
+            "Failed to export diagnostics bundle: %s",
+            exc,
+            extra={"request_id": "diagnostics"},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to export diagnostic logs: {exc}",
+        ) from exc
+
+
+@app.get("/api/system/logs")
+async def system_logs(max_lines: int = 500):
+    """Return tail lines from available backend/system log files."""
+    lines, sources = _read_system_log_lines(max_lines=max_lines)
+    return {
+        "lines": lines,
+        "line_count": len(lines),
+        "sources": sources,
+        "generated_at": datetime.now().astimezone().isoformat(),
+    }
+
+
+@app.get("/api/system/logs/export")
+async def export_system_logs(background_tasks: BackgroundTasks, max_lines: int = 2000):
+    """Export merged backend/system logs as a plain text file."""
+    lines, sources = _read_system_log_lines(max_lines=max_lines)
+    if not lines:
+        raise HTTPException(status_code=404, detail="No system logs available")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    fd, temp_path = tempfile.mkstemp(prefix=f"mimika_system_logs_{timestamp}_", suffix=".log")
+    os.close(fd)
+    log_path = Path(temp_path)
+
+    try:
+        with log_path.open("w", encoding="utf-8") as handle:
+            handle.write("MimikaStudio System Logs\n")
+            handle.write(f"Generated: {datetime.now().astimezone().isoformat()}\n")
+            if sources:
+                handle.write("Sources:\n")
+                for source in sources:
+                    handle.write(f"- {source}\n")
+            handle.write("\n")
+            handle.write("\n".join(lines))
+            handle.write("\n")
+
+        background_tasks.add_task(_cleanup_temp_file, log_path)
+        return FileResponse(
+            path=str(log_path),
+            media_type="text/plain; charset=utf-8",
+            filename=f"mimika_system_logs_{timestamp}.log",
+        )
+    except Exception as exc:
+        _cleanup_temp_file(log_path)
+        logger.exception(
+            "Failed to export system logs: %s",
+            exc,
+            extra={"request_id": "system-logs"},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to export system logs: {exc}",
+        ) from exc
 
 
 # ============== Unified Custom Voices Endpoint ==============
@@ -623,6 +1309,7 @@ async def list_all_custom_voices():
 async def kokoro_generate(request: KokoroRequest):
     """Generate speech using Kokoro with predefined British voice."""
     try:
+        _ensure_named_model_ready("Kokoro", engine_label="Kokoro")
         engine = get_kokoro_engine()
         voice = request.voice if request.voice in BRITISH_VOICES else DEFAULT_VOICE
 
@@ -642,11 +1329,70 @@ async def kokoro_generate(request: KokoroRequest):
             "audio_url": f"/audio/{output_path.name}",
             "filename": output_path.name
         }
+    except ModuleNotFoundError as e:
+        if getattr(e, "name", "") == "torch":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Kokoro backend dependency mismatch in this build. "
+                    "Kokoro is MLX-based, but an optional spaCy plugin tried to import torch. "
+                    "Please update to the latest DMG build. "
+                    f"Error: {e}"
+                ),
+            )
+        raise
     except ImportError as e:
         raise HTTPException(
             status_code=503,
             detail=f"Kokoro backend unavailable. Run: pip install -U mlx-audio. Error: {e}",
         )
+
+
+@app.post("/api/tts/align-words")
+async def tts_align_words(request: WordAlignmentRequest):
+    """Forced word alignment via faster-whisper word timestamps."""
+    expected_tokens = _tokenize_alignment_text(request.text)
+    if not expected_tokens:
+        return {
+            "timings_ms": [],
+            "expected_count": 0,
+            "matched_count": 0,
+            "engine": "faster-whisper",
+        }
+
+    audio_path = _resolve_audio_path_from_url(request.audio_url)
+    model = _get_word_align_model()
+
+    segments, _ = model.transcribe(
+        str(audio_path),
+        language=(request.language or "en"),
+        word_timestamps=True,
+        beam_size=1,
+        condition_on_previous_text=False,
+        vad_filter=False,
+    )
+
+    observed_words: list[dict] = []
+    for seg in segments:
+        words = getattr(seg, "words", None) or []
+        for word in words:
+            token = _normalize_alignment_token(getattr(word, "word", "") or "")
+            if len(token) < 2:
+                continue
+            start = int(round((getattr(word, "start", 0.0) or 0.0) * 1000))
+            end = int(round((getattr(word, "end", 0.0) or 0.0) * 1000))
+            observed_words.append(
+                {"token": token, "start_ms": max(0, start), "end_ms": max(0, end)}
+            )
+
+    starts_ms = _align_expected_words_to_observed(expected_tokens, observed_words)
+    matched_count = sum(1 for ms in starts_ms if ms > 0)
+    return {
+        "timings_ms": starts_ms,
+        "expected_count": len(expected_tokens),
+        "matched_count": matched_count,
+        "engine": "faster-whisper",
+    }
 
 @app.get("/api/kokoro/voices")
 async def kokoro_list_voices():
@@ -664,7 +1410,205 @@ async def kokoro_list_voices():
     voices.sort(key=lambda v: v["grade"])
     return {"voices": voices, "default": DEFAULT_VOICE}
 
+
+# ============== Supertonic Endpoints ==============
+
+@app.post("/api/supertonic/generate")
+async def supertonic_generate(request: SupertonicRequest):
+    """Generate speech using Supertonic-2 ONNX model."""
+    try:
+        snapshot_path = _ensure_named_model_ready("Supertonic-2", engine_label="Supertonic")
+        engine = get_supertonic_engine()
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        params = SupertonicParams(
+            speed=request.speed,
+            total_steps=request.total_steps,
+            max_chunk_length=request.max_chars_per_chunk if request.smart_chunking else None,
+            silence_duration=max(0.0, float(request.silence_ms) / 1000.0),
+            language=request.language,
+        )
+        output_path = engine.generate(
+            text=request.text,
+            voice=request.voice,
+            params=params,
+            model_name="supertonic-2",
+            model_dir=snapshot_path,
+        )
+        return {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "voice": request.voice,
+            "language": request.language,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Supertonic backend unavailable. Run: pip install supertonic. Error: {e}",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/supertonic/voices")
+async def supertonic_list_voices():
+    """List available Supertonic preset voice styles."""
+    engine = get_supertonic_engine()
+    voices = engine.get_voices()
+    return {"voices": voices, "default": SUPERTONIC_DEFAULT_VOICE}
+
+
+@app.get("/api/supertonic/languages")
+async def supertonic_list_languages():
+    return {"languages": list(SUPERTONIC_LANGUAGES), "default": "en"}
+
+
+@app.get("/api/supertonic/info")
+async def supertonic_info():
+    engine = get_supertonic_engine()
+    info = engine.get_model_info()
+    try:
+        import supertonic  # noqa: F401
+        info["installed"] = True
+    except Exception:
+        info["installed"] = False
+    return info
+
+
+# ============== CosyVoice3 Endpoints (Isolated from Supertonic UI namespace) ==============
+
+@app.get("/api/cosyvoice3/voices")
+async def cosyvoice3_list_voices():
+    """List CosyVoice3 voices (aliases mapped to internal style codes)."""
+    engine = get_supertonic_engine()
+    style_codes = [str(v.get("code", "")).strip() for v in engine.get_voices()]
+    style_codes = [s for s in style_codes if s]
+    voices = []
+    for alias, style_code in COSYVOICE3_ALIAS_TO_STYLE.items():
+        if style_code not in style_codes:
+            continue
+        voices.append(
+            {
+                "code": alias,
+                "name": alias,
+                "gender": "female" if style_code.startswith("F") else "male",
+                "is_default": alias == COSYVOICE3_DEFAULT_VOICE,
+                "backend_style": style_code,
+            }
+        )
+
+    if not voices:
+        for style_code in style_codes:
+            alias = _cosyvoice3_alias_for_style(style_code)
+            voices.append(
+                {
+                    "code": alias,
+                    "name": alias,
+                    "gender": "female" if style_code.startswith("F") else "male",
+                    "is_default": False,
+                    "backend_style": style_code,
+                }
+            )
+
+    default_voice = COSYVOICE3_DEFAULT_VOICE if any(v["code"] == COSYVOICE3_DEFAULT_VOICE for v in voices) else (voices[0]["code"] if voices else COSYVOICE3_DEFAULT_VOICE)
+    return {"voices": voices, "default": default_voice}
+
+
+@app.get("/api/cosyvoice3/languages")
+async def cosyvoice3_list_languages():
+    """List languages supported by CosyVoice3 backend."""
+    return {"languages": list(SUPERTONIC_LANGUAGES), "default": "en"}
+
+
+@app.get("/api/cosyvoice3/info")
+async def cosyvoice3_info():
+    engine = get_supertonic_engine()
+    info = engine.get_model_info()
+    style_codes = [str(v.get("code", "")).strip() for v in engine.get_voices()]
+    aliases = [alias for alias, style_code in COSYVOICE3_ALIAS_TO_STYLE.items() if style_code in style_codes]
+    info.update(
+        {
+            "name": "CosyVoice3",
+            "backend": "onnxruntime (supertonic core)",
+            "voices": aliases,
+        }
+    )
+    return info
+
+
+@app.post("/api/cosyvoice3/generate")
+async def cosyvoice3_generate(request: SupertonicRequest):
+    """Generate speech via CosyVoice3 namespace (isolated output prefix)."""
+    try:
+        snapshot_path = _ensure_named_model_ready("Supertonic-2", engine_label="CosyVoice3")
+        engine = get_supertonic_engine()
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        available_styles = [str(v.get("code", "")).strip() for v in engine.get_voices()]
+        available_styles = [s for s in available_styles if s]
+        style_code = _cosyvoice3_style_for_voice(request.voice, available_styles)
+        params = SupertonicParams(
+            speed=request.speed,
+            total_steps=request.total_steps,
+            max_chunk_length=request.max_chars_per_chunk if request.smart_chunking else None,
+            silence_duration=max(0.0, float(request.silence_ms) / 1000.0),
+            language=request.language,
+        )
+        output_path = engine.generate(
+            text=request.text,
+            voice=style_code,
+            params=params,
+            model_name="supertonic-2",
+            model_dir=snapshot_path,
+        )
+        output_path = _rename_output_prefix(output_path, "supertonic-", "cosyvoice3-")
+        return {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "voice": _cosyvoice3_alias_for_style(style_code),
+            "language": request.language,
+        }
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"CosyVoice3 backend unavailable. Run: pip install supertonic. Error: {e}",
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 # ============== Qwen3-TTS Endpoints (Voice Clone + Custom Voice) ==============
+
+def _qwen3_model_name_for_request(mode: str, model_size: str, model_quantization: str) -> str:
+    suffix = "Base" if mode == "clone" else "CustomVoice"
+    quant_suffix = "-8bit" if model_quantization == "8bit" else ""
+    return f"Qwen3-TTS-12Hz-{model_size}-{suffix}{quant_suffix}"
+
+
+def _ensure_named_model_ready(model_name: str, engine_label: Optional[str] = None) -> Path:
+    """Validate a registry model is fully downloaded before inference."""
+    registry = ModelRegistry()
+    model = registry.get_model(model_name)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
+
+    snapshot_path = registry.get_downloaded_snapshot_path(model)
+    if snapshot_path is None:
+        cache_dir = registry.get_model_cache_dir(model)
+        label = engine_label or model.engine
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{label} model '{model_name}' is not fully downloaded yet. "
+                f"Download target: {cache_dir}"
+            ),
+        )
+    return snapshot_path
+
+
+def _ensure_qwen3_model_ready(mode: str, model_size: str, model_quantization: str) -> Path:
+    """Validate required Qwen3 model is fully downloaded before inference."""
+    model_name = _qwen3_model_name_for_request(mode, model_size, model_quantization)
+    return _ensure_named_model_ready(model_name, engine_label="Qwen3")
 
 @app.post("/api/qwen3/generate")
 async def qwen3_generate(request: Qwen3Request):
@@ -680,6 +1624,11 @@ async def qwen3_generate(request: Qwen3Request):
                 status_code=400,
                 detail="model_quantization must be 'bf16' or '8bit'",
             )
+        _ensure_qwen3_model_ready(
+            mode=request.mode,
+            model_size=request.model_size,
+            model_quantization=request.model_quantization,
+        )
 
         # Build generation parameters
         params = GenerationParams(
@@ -810,6 +1759,11 @@ async def qwen3_generate_stream(request: Qwen3Request):
                 status_code=400,
                 detail="model_quantization must be 'bf16' or '8bit'",
             )
+        _ensure_qwen3_model_ready(
+            mode=request.mode,
+            model_size=request.model_size,
+            model_quantization=request.model_quantization,
+        )
 
         params = GenerationParams(
             temperature=request.temperature,
@@ -1180,6 +2134,7 @@ async def qwen3_clear_cache():
 async def chatterbox_generate(request: ChatterboxRequest):
     """Generate speech using Chatterbox voice cloning."""
     try:
+        _ensure_named_model_ready("Chatterbox Multilingual", engine_label="Chatterbox")
         engine = get_chatterbox_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -1631,7 +2586,8 @@ async def indextts2_info():
 
 # ============== Model Management Endpoints ==============
 
-# Track active downloads: model_name -> {"status": "downloading"/"completed"/"failed", "error": str}
+# Track active downloads:
+# model_name -> {"status": "downloading"/"completed"/"failed", "error": str|None, "path": str|None}
 _download_status: dict[str, dict] = {}
 _download_status_lock = threading.Lock()
 
@@ -1642,9 +2598,12 @@ async def models_status():
     registry = ModelRegistry()
     models = []
     for m in registry.list_all_models():
-        downloaded = registry.is_model_downloaded(m)
+        snapshot_path = registry.get_downloaded_snapshot_path(m)
+        downloaded = snapshot_path is not None
+        cache_dir = registry.get_model_cache_dir(m)
         with _download_status_lock:
             status_info = _download_status.get(m.name)
+        status_path = status_info.get("path") if status_info else None
         models.append({
             "name": m.name,
             "engine": m.engine,
@@ -1656,6 +2615,8 @@ async def models_status():
             "downloaded": downloaded,
             "download_status": status_info.get("status") if status_info else None,
             "download_error": status_info.get("error") if status_info else None,
+            "cache_dir": str(cache_dir),
+            "downloaded_path": status_path or (str(snapshot_path) if snapshot_path else None),
         })
     return {"models": models}
 
@@ -1681,20 +2642,33 @@ async def model_download(model_name: str):
     with _download_status_lock:
         current = _download_status.get(model_name)
     if current and current.get("status") == "downloading":
-        return {"message": "Download already in progress", "model": model_name}
+        return {
+            "message": "Download already in progress",
+            "model": model_name,
+            "cache_dir": str(registry.get_model_cache_dir(model)),
+            "downloaded_path": current.get("path"),
+        }
 
     with _download_status_lock:
-        _download_status[model_name] = {"status": "downloading", "error": None}
+        _download_status[model_name] = {"status": "downloading", "error": None, "path": None}
 
     def _do_download():
         try:
             from huggingface_hub import snapshot_download
-            snapshot_download(model.hf_repo)
+            snapshot_path = snapshot_download(model.hf_repo)
             with _download_status_lock:
-                _download_status[model_name] = {"status": "completed", "error": None}
+                _download_status[model_name] = {
+                    "status": "completed",
+                    "error": None,
+                    "path": str(snapshot_path),
+                }
         except Exception as e:
             with _download_status_lock:
-                _download_status[model_name] = {"status": "failed", "error": str(e)}
+                _download_status[model_name] = {
+                    "status": "failed",
+                    "error": str(e),
+                    "path": None,
+                }
 
     thread = threading.Thread(target=_do_download, daemon=True)
     thread.start()
@@ -1704,6 +2678,7 @@ async def model_download(model_name: str):
         "model": model_name,
         "hf_repo": model.hf_repo,
         "size_gb": model.size_gb,
+        "cache_dir": str(registry.get_model_cache_dir(model)),
     }
 
 
@@ -1729,7 +2704,7 @@ async def model_delete(model_name: str):
         raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not downloaded")
 
     # Delete the model cache directory
-    cache_dir = registry.models_dir / f"models--{model.hf_repo.replace('/', '--')}"
+    cache_dir = registry.get_model_cache_dir(model)
     if cache_dir.exists():
         import shutil
         try:
@@ -2173,6 +3148,111 @@ async def kokoro_audio_delete(filename: str):
     return {"message": "Audio file deleted", "filename": filename}
 
 
+# ============== Supertonic Audio Library Endpoints ==============
+
+@app.get("/api/supertonic/audio/list")
+async def supertonic_audio_list():
+    """List all generated Supertonic audio files."""
+    from datetime import datetime
+
+    audio_files = []
+    for file in outputs_dir.glob("supertonic-*.wav"):
+        stat = file.stat()
+        stem = file.stem
+        parts = stem.split("-")
+        voice = parts[1] if len(parts) > 2 else "unknown"
+
+        try:
+            info = sf.info(str(file))
+            duration_seconds = info.duration
+        except Exception:
+            duration_seconds = 0
+
+        audio_files.append(
+            {
+                "id": stem,
+                "filename": file.name,
+                "engine": "supertonic",
+                "voice": voice,
+                "label": f"Supertonic {voice}",
+                "audio_url": f"/audio/{file.name}",
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "duration_seconds": round(duration_seconds, 1),
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            }
+        )
+
+    audio_files.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"audio_files": audio_files, "total": len(audio_files)}
+
+
+@app.delete("/api/supertonic/audio/{filename}")
+async def supertonic_audio_delete(filename: str):
+    """Delete a Supertonic audio file."""
+    if not filename.startswith("supertonic-") or not filename.endswith(".wav"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    file_path = outputs_dir / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
+
+    file_path.unlink()
+    return {"message": "Audio file deleted", "filename": filename}
+
+
+# ============== CosyVoice3 Audio Library Endpoints ==============
+
+@app.get("/api/cosyvoice3/audio/list")
+async def cosyvoice3_audio_list():
+    """List all generated CosyVoice3 audio files."""
+    from datetime import datetime
+
+    audio_files = []
+    for file in outputs_dir.glob("cosyvoice3-*.wav"):
+        stat = file.stat()
+        stem = file.stem
+        parts = stem.split("-")
+        style_code = parts[1] if len(parts) > 2 else "unknown"
+        alias = _cosyvoice3_alias_for_style(style_code)
+
+        try:
+            info = sf.info(str(file))
+            duration_seconds = info.duration
+        except Exception:
+            duration_seconds = 0
+
+        audio_files.append(
+            {
+                "id": stem,
+                "filename": file.name,
+                "engine": "cosyvoice3",
+                "voice": alias,
+                "label": f"CosyVoice3 {alias}",
+                "audio_url": f"/audio/{file.name}",
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "duration_seconds": round(duration_seconds, 1),
+                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            }
+        )
+
+    audio_files.sort(key=lambda x: x["created_at"], reverse=True)
+    return {"audio_files": audio_files, "total": len(audio_files)}
+
+
+@app.delete("/api/cosyvoice3/audio/{filename}")
+async def cosyvoice3_audio_delete(filename: str):
+    """Delete a CosyVoice3 audio file."""
+    if not filename.startswith("cosyvoice3-") or not filename.endswith(".wav"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    file_path = outputs_dir / filename
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
+
+    file_path.unlink()
+    return {"message": "Audio file deleted", "filename": filename}
+
+
 # ============== Voice Clone Audio Library Endpoints ==============
 
 @app.get("/api/voice-clone/audio/list")
@@ -2310,19 +3390,37 @@ async def list_pregenerated_samples(engine: Optional[str] = None):
     return {"samples": samples}
 
 # Mount pregenerated directory for serving audio files
-pregen_dir = Path(__file__).parent / "data" / "pregenerated"
-pregen_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/pregenerated", StaticFiles(directory=str(pregen_dir)), name="pregenerated")
+pregen_dir = _bundled_data_dir / "pregenerated"
+if not pregen_dir.exists():
+    pregen_dir = _ensure_dir_with_fallback(
+        _runtime_data_dir / "pregenerated",
+        _runtime_home / "pregenerated",
+    )
+app.mount(
+    "/pregenerated",
+    SafeStaticFiles(directory=str(pregen_dir)),
+    name="pregenerated",
+)
 
 # Mount samples directory for pre-recorded voice samples
-samples_dir = Path(__file__).parent / "data" / "samples"
-samples_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/samples", StaticFiles(directory=str(samples_dir)), name="samples")
+samples_dir = _bundled_data_dir / "samples"
+if not samples_dir.exists():
+    samples_dir = _ensure_dir_with_fallback(
+        _runtime_data_dir / "samples",
+        _runtime_home / "samples",
+    )
+app.mount("/samples", SafeStaticFiles(directory=str(samples_dir)), name="samples")
 
 # Mount PDF directory for serving documents
-pdf_dir = Path(__file__).parent / "data" / "pdf"
-pdf_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/pdf", StaticFiles(directory=str(pdf_dir)), name="pdf")
+pdf_dir = _env_path("MIMIKA_PDF_DIR")
+if pdf_dir is None:
+    pdf_dir = _bundled_data_dir / "pdf"
+if not pdf_dir.exists():
+    pdf_dir = _ensure_dir_with_fallback(
+        pdf_dir,
+        _runtime_data_dir / "pdf",
+    )
+app.mount("/pdf", SafeStaticFiles(directory=str(pdf_dir)), name="pdf")
 
 
 @app.get("/api/pdf/list")
@@ -2462,4 +3560,4 @@ async def api_update_setting(request: SettingsUpdateRequest):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=BACKEND_HOST, port=BACKEND_PORT)

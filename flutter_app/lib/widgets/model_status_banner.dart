@@ -219,6 +219,14 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
     final isDownloading = _downloadingModels.contains(name);
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
+    final downloadedPath = (model['downloaded_path'] as String?)?.trim();
+    final cacheDir = (model['cache_dir'] as String?)?.trim();
+    final modelPath = (downloadedPath != null && downloadedPath.isNotEmpty)
+        ? downloadedPath
+        : ((cacheDir != null && cacheDir.isNotEmpty) ? cacheDir : null);
+    final pathLabel = (downloadedPath != null && downloadedPath.isNotEmpty)
+        ? 'Path'
+        : 'Target';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -263,25 +271,46 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
             ),
           ),
           const SizedBox(width: 8),
-          if (isDownloading || downloadStatus == 'downloading')
-            const SizedBox(
-              width: 24,
-              height: 24,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          else
-            FilledButton.tonalIcon(
-              onPressed: () => _downloadModel(name),
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Download'),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 4,
-                ),
-                textStyle: const TextStyle(fontSize: 11),
-              ),
+          SizedBox(
+            width: 320,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (isDownloading || downloadStatus == 'downloading')
+                  const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  FilledButton.tonalIcon(
+                    onPressed: () => _downloadModel(name),
+                    icon: const Icon(Icons.download, size: 16),
+                    label: const Text('Download'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      textStyle: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                if (modelPath != null) ...[
+                  const SizedBox(height: 4),
+                  SelectableText(
+                    '$pathLabel: $modelPath',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 10,
+                      height: 1.2,
+                      color: Colors.amber.shade900,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
+              ],
             ),
+          ),
         ],
       ),
     );

@@ -20,15 +20,23 @@ class _ModelsScreenState extends State<ModelsScreen> {
   Timer? _pollTimer;
 
   // Engine order and labels
-  static const List<String> _engineOrder = ['kokoro', 'qwen3', 'chatterbox', 'indextts2'];
+  static const List<String> _engineOrder = [
+    'kokoro',
+    'supertonic',
+    'qwen3',
+    'chatterbox',
+    'indextts2',
+  ];
   static const Map<String, String> _engineLabels = {
     'kokoro': 'Kokoro',
+    'supertonic': 'Supertonic',
     'qwen3': 'Qwen3-TTS',
     'chatterbox': 'Chatterbox',
     'indextts2': 'IndexTTS-2',
   };
   static const Map<String, String> _engineDescriptions = {
     'kokoro': 'High-quality British English TTS with multiple voices',
+    'supertonic': 'Lightning-fast multilingual ONNX text-to-speech',
     'qwen3': 'Voice cloning and custom voice synthesis',
     'chatterbox': 'Expressive voice cloning with emotion control',
     'indextts2': 'Fast voice cloning with natural prosody',
@@ -39,7 +47,10 @@ class _ModelsScreenState extends State<ModelsScreen> {
     super.initState();
     _loadModels();
     // Poll for status updates every 3 seconds
-    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadModels());
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _loadModels(),
+    );
   }
 
   @override
@@ -156,6 +167,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
         return Icons.record_voice_over;
       case 'chatterbox':
         return Icons.mic;
+      case 'supertonic':
+        return Icons.bolt;
       case 'indextts2':
         return Icons.auto_awesome;
       default:
@@ -171,6 +184,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
         return Colors.teal;
       case 'chatterbox':
         return Colors.orange;
+      case 'supertonic':
+        return Colors.deepPurple;
       case 'indextts2':
         return Colors.deepPurple;
       default:
@@ -188,6 +203,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final hfRepo = model['hf_repo'] as String? ?? '';
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
+    final downloadedPath = (model['downloaded_path'] as String?)?.trim();
+    final cacheDir = (model['cache_dir'] as String?)?.trim();
+    final resolvedPath = (downloadedPath != null && downloadedPath.isNotEmpty)
+        ? downloadedPath
+        : ((cacheDir != null && cacheDir.isNotEmpty) ? cacheDir : null);
 
     final isDownloading = downloadStatus == 'downloading';
     final downloadFailed = downloadStatus == 'failed';
@@ -231,7 +251,10 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ),
                       if (sizeGb != null)
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.grey.shade200,
                             borderRadius: BorderRadius.circular(12),
@@ -265,7 +288,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.link, size: 14, color: Colors.blue.shade600),
+                          Icon(
+                            Icons.link,
+                            size: 14,
+                            color: Colors.blue.shade600,
+                          ),
                           const SizedBox(width: 4),
                           Flexible(
                             child: Text(
@@ -293,7 +320,11 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.error_outline, size: 16, color: Colors.red.shade700),
+                          Icon(
+                            Icons.error_outline,
+                            size: 16,
+                            color: Colors.red.shade700,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -314,7 +345,13 @@ class _ModelsScreenState extends State<ModelsScreen> {
                   // Status and actions row
                   Row(
                     children: [
-                      _buildStatusWidget(downloaded, isDownloading, downloadFailed, modelType, name),
+                      _buildStatusWidget(
+                        downloaded,
+                        isDownloading,
+                        downloadFailed,
+                        modelType,
+                        name,
+                      ),
                       if (downloaded && modelType != 'pip') ...[
                         const SizedBox(width: 12),
                         IconButton.outlined(
@@ -329,6 +366,17 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ],
                     ],
                   ),
+                  if (resolvedPath != null && modelType != 'pip') ...[
+                    const SizedBox(height: 8),
+                    SelectableText(
+                      '${downloaded ? 'Path' : 'Target'}: $resolvedPath',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -390,10 +438,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
             SizedBox(width: 8),
             Text(
               'Downloading...',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-              ),
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
             ),
           ],
         ),
@@ -494,7 +539,10 @@ class _ModelsScreenState extends State<ModelsScreen> {
               ),
               // Models count badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.2),
                   borderRadius: BorderRadius.circular(12),
@@ -528,7 +576,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
       grouped.putIfAbsent(engine, () => []).add(model);
     }
 
-    final downloadedCount = _models.where((m) => m['downloaded'] == true).length;
+    final downloadedCount = _models
+        .where((m) => m['downloaded'] == true)
+        .length;
     final totalCount = _models.length;
     final allDownloaded = downloadedCount == totalCount && totalCount > 0;
 
@@ -584,7 +634,10 @@ class _ModelsScreenState extends State<ModelsScreen> {
                 ),
                 // Download count badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: allDownloaded
                         ? Colors.green.withValues(alpha: 0.15)
@@ -643,77 +696,77 @@ class _ModelsScreenState extends State<ModelsScreen> {
                     ),
                   )
                 : _error != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.error_outline,
-                                size: 64,
-                                color: Colors.red.shade300,
-                              ),
-                              const SizedBox(height: 16),
-                              Text(
-                                'Failed to load models',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red.shade700,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _error!,
-                                style: TextStyle(color: Colors.grey.shade600),
-                                textAlign: TextAlign.center,
-                              ),
-                              const SizedBox(height: 24),
-                              FilledButton.icon(
-                                onPressed: () {
-                                  setState(() => _isLoading = true);
-                                  _loadModels();
-                                },
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('Retry'),
-                              ),
-                            ],
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.error_outline,
+                            size: 64,
+                            color: Colors.red.shade300,
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Failed to load models',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red.shade700,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            _error!,
+                            style: TextStyle(color: Colors.grey.shade600),
+                            textAlign: TextAlign.center,
+                          ),
+                          const SizedBox(height: 24),
+                          FilledButton.icon(
+                            onPressed: () {
+                              setState(() => _isLoading = true);
+                              _loadModels();
+                            },
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : _models.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.inbox,
+                          size: 64,
+                          color: Colors.grey.shade400,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No models available',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Colors.grey.shade600,
                           ),
                         ),
-                      )
-                    : _models.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.inbox,
-                                  size: 64,
-                                  color: Colors.grey.shade400,
-                                ),
-                                const SizedBox(height: 16),
-                                Text(
-                                  'No models available',
-                                  style: TextStyle(
-                                    fontSize: 18,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                        : SingleChildScrollView(
-                            padding: const EdgeInsets.all(24),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (final engine in _engineOrder)
-                                  if (grouped.containsKey(engine))
-                                    _buildEngineSection(engine, grouped[engine]!),
-                              ],
-                            ),
-                          ),
+                      ],
+                    ),
+                  )
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (final engine in _engineOrder)
+                          if (grouped.containsKey(engine))
+                            _buildEngineSection(engine, grouped[engine]!),
+                      ],
+                    ),
+                  ),
           ),
         ],
       ),

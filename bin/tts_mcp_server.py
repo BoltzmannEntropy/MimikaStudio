@@ -65,7 +65,7 @@ def _setup_logging():
 LOGGER = _setup_logging()
 
 # Backend API URL
-BACKEND_URL = os.environ.get("MIMIKASTUDIO_BACKEND_URL", "http://localhost:8000")
+BACKEND_URL = os.environ.get("MIMIKASTUDIO_BACKEND_URL", "http://localhost:7693")
 
 def _call_backend(endpoint: str, method: str = "GET", data: dict = None, timeout: int = 60) -> dict:
     """Call the MimikaStudio backend API."""

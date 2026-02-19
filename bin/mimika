@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 # Backend API URL
-API_BASE = os.environ.get("MIMIKA_API_URL", "http://localhost:8000")
+API_BASE = os.environ.get("MIMIKA_API_URL", "http://localhost:7693")
 
 
 # =============================================================================

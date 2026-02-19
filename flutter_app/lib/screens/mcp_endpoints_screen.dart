@@ -45,54 +45,259 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
   // Static REST API endpoint definitions
   static const List<Map<String, dynamic>> _restEndpoints = [
     // System & Health
-    {'method': 'GET', 'path': '/api/health', 'description': 'Health check', 'category': 'System & Health'},
-    {'method': 'GET', 'path': '/api/system/info', 'description': 'System information (device, models, versions)', 'category': 'System & Health'},
-    {'method': 'GET', 'path': '/api/system/stats', 'description': 'Real-time CPU, RAM, GPU stats', 'category': 'System & Health'},
+    {
+      'method': 'GET',
+      'path': '/api/health',
+      'description': 'Health check',
+      'category': 'System & Health',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/system/info',
+      'description': 'System information (device, models, versions)',
+      'category': 'System & Health',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/system/stats',
+      'description': 'Real-time CPU, RAM, GPU stats',
+      'category': 'System & Health',
+    },
     // Kokoro
-    {'method': 'POST', 'path': '/api/kokoro/generate', 'description': 'Generate speech with Kokoro TTS', 'category': 'Kokoro TTS'},
-    {'method': 'GET', 'path': '/api/kokoro/voices', 'description': 'List British Kokoro voices', 'category': 'Kokoro TTS'},
-    {'method': 'GET', 'path': '/api/kokoro/audio/list', 'description': 'List generated Kokoro audio files', 'category': 'Kokoro TTS'},
-    {'method': 'DELETE', 'path': '/api/kokoro/audio/{filename}', 'description': 'Delete a Kokoro audio file', 'category': 'Kokoro TTS'},
+    {
+      'method': 'POST',
+      'path': '/api/kokoro/generate',
+      'description': 'Generate speech with Kokoro TTS',
+      'category': 'Kokoro TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/kokoro/voices',
+      'description': 'List British Kokoro voices',
+      'category': 'Kokoro TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/kokoro/audio/list',
+      'description': 'List generated Kokoro audio files',
+      'category': 'Kokoro TTS',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/kokoro/audio/{filename}',
+      'description': 'Delete a Kokoro audio file',
+      'category': 'Kokoro TTS',
+    },
     // Qwen3
-    {'method': 'POST', 'path': '/api/qwen3/generate', 'description': 'Generate speech (clone or custom mode)', 'category': 'Qwen3 TTS'},
-    {'method': 'POST', 'path': '/api/qwen3/generate/stream', 'description': 'Generate with streaming response', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/voices', 'description': 'List saved voice samples', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/voices/{name}/audio', 'description': 'Serve voice preview audio', 'category': 'Qwen3 TTS'},
-    {'method': 'POST', 'path': '/api/qwen3/voices', 'description': 'Upload voice sample', 'category': 'Qwen3 TTS'},
-    {'method': 'DELETE', 'path': '/api/qwen3/voices/{name}', 'description': 'Delete a voice sample', 'category': 'Qwen3 TTS'},
-    {'method': 'PUT', 'path': '/api/qwen3/voices/{name}', 'description': 'Update voice sample', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/speakers', 'description': 'List preset speakers', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/models', 'description': 'List available models', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/languages', 'description': 'List supported languages', 'category': 'Qwen3 TTS'},
-    {'method': 'GET', 'path': '/api/qwen3/info', 'description': 'Model information', 'category': 'Qwen3 TTS'},
-    {'method': 'POST', 'path': '/api/qwen3/clear-cache', 'description': 'Clear voice prompt cache', 'category': 'Qwen3 TTS'},
+    {
+      'method': 'POST',
+      'path': '/api/qwen3/generate',
+      'description': 'Generate speech (clone or custom mode)',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/qwen3/generate/stream',
+      'description': 'Generate with streaming response',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/voices',
+      'description': 'List saved voice samples',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/voices/{name}/audio',
+      'description': 'Serve voice preview audio',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/qwen3/voices',
+      'description': 'Upload voice sample',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/qwen3/voices/{name}',
+      'description': 'Delete a voice sample',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'PUT',
+      'path': '/api/qwen3/voices/{name}',
+      'description': 'Update voice sample',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/speakers',
+      'description': 'List preset speakers',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/models',
+      'description': 'List available models',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/languages',
+      'description': 'List supported languages',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/qwen3/info',
+      'description': 'Model information',
+      'category': 'Qwen3 TTS',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/qwen3/clear-cache',
+      'description': 'Clear voice prompt cache',
+      'category': 'Qwen3 TTS',
+    },
     // Chatterbox
-    {'method': 'POST', 'path': '/api/chatterbox/generate', 'description': 'Generate speech with Chatterbox', 'category': 'Chatterbox TTS'},
-    {'method': 'GET', 'path': '/api/chatterbox/voices', 'description': 'List voice samples', 'category': 'Chatterbox TTS'},
-    {'method': 'GET', 'path': '/api/chatterbox/voices/{name}/audio', 'description': 'Serve voice preview audio', 'category': 'Chatterbox TTS'},
-    {'method': 'POST', 'path': '/api/chatterbox/voices', 'description': 'Upload voice sample', 'category': 'Chatterbox TTS'},
-    {'method': 'DELETE', 'path': '/api/chatterbox/voices/{name}', 'description': 'Delete a voice sample', 'category': 'Chatterbox TTS'},
-    {'method': 'PUT', 'path': '/api/chatterbox/voices/{name}', 'description': 'Update voice sample', 'category': 'Chatterbox TTS'},
-    {'method': 'GET', 'path': '/api/chatterbox/languages', 'description': 'List supported languages', 'category': 'Chatterbox TTS'},
-    {'method': 'GET', 'path': '/api/chatterbox/info', 'description': 'Model information', 'category': 'Chatterbox TTS'},
+    {
+      'method': 'POST',
+      'path': '/api/chatterbox/generate',
+      'description': 'Generate speech with Chatterbox',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/chatterbox/voices',
+      'description': 'List voice samples',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/chatterbox/voices/{name}/audio',
+      'description': 'Serve voice preview audio',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/chatterbox/voices',
+      'description': 'Upload voice sample',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/chatterbox/voices/{name}',
+      'description': 'Delete a voice sample',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'PUT',
+      'path': '/api/chatterbox/voices/{name}',
+      'description': 'Update voice sample',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/chatterbox/languages',
+      'description': 'List supported languages',
+      'category': 'Chatterbox TTS',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/chatterbox/info',
+      'description': 'Model information',
+      'category': 'Chatterbox TTS',
+    },
     // Unified voices
-    {'method': 'GET', 'path': '/api/voices/custom', 'description': 'List all custom voice samples across engines', 'category': 'Voice Management'},
+    {
+      'method': 'GET',
+      'path': '/api/voices/custom',
+      'description': 'List all custom voice samples across engines',
+      'category': 'Voice Management',
+    },
     // Audiobook
-    {'method': 'POST', 'path': '/api/audiobook/generate', 'description': 'Start audiobook generation from text', 'category': 'Audiobook'},
-    {'method': 'POST', 'path': '/api/audiobook/generate-from-file', 'description': 'Start from uploaded file (PDF, EPUB, TXT)', 'category': 'Audiobook'},
-    {'method': 'GET', 'path': '/api/audiobook/status/{job_id}', 'description': 'Get job status with progress', 'category': 'Audiobook'},
-    {'method': 'POST', 'path': '/api/audiobook/cancel/{job_id}', 'description': 'Cancel generation job', 'category': 'Audiobook'},
-    {'method': 'GET', 'path': '/api/audiobook/list', 'description': 'List all audiobooks', 'category': 'Audiobook'},
-    {'method': 'DELETE', 'path': '/api/audiobook/{job_id}', 'description': 'Delete an audiobook', 'category': 'Audiobook'},
+    {
+      'method': 'POST',
+      'path': '/api/audiobook/generate',
+      'description': 'Start audiobook generation from text',
+      'category': 'Audiobook',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/audiobook/generate-from-file',
+      'description': 'Start from uploaded file (PDF, EPUB, TXT)',
+      'category': 'Audiobook',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/audiobook/status/{job_id}',
+      'description': 'Get job status with progress',
+      'category': 'Audiobook',
+    },
+    {
+      'method': 'POST',
+      'path': '/api/audiobook/cancel/{job_id}',
+      'description': 'Cancel generation job',
+      'category': 'Audiobook',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/audiobook/list',
+      'description': 'List all audiobooks',
+      'category': 'Audiobook',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/audiobook/{job_id}',
+      'description': 'Delete an audiobook',
+      'category': 'Audiobook',
+    },
     // Audio Library
-    {'method': 'GET', 'path': '/api/tts/audio/list', 'description': 'List generated TTS audio files', 'category': 'Audio Library'},
-    {'method': 'DELETE', 'path': '/api/tts/audio/{filename}', 'description': 'Delete TTS audio file', 'category': 'Audio Library'},
-    {'method': 'GET', 'path': '/api/voice-clone/audio/list', 'description': 'List voice clone audio files', 'category': 'Audio Library'},
-    {'method': 'DELETE', 'path': '/api/voice-clone/audio/{filename}', 'description': 'Delete voice clone audio file', 'category': 'Audio Library'},
+    {
+      'method': 'GET',
+      'path': '/api/tts/audio/list',
+      'description': 'List generated TTS audio files',
+      'category': 'Audio Library',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/tts/audio/{filename}',
+      'description': 'Delete TTS audio file',
+      'category': 'Audio Library',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/voice-clone/audio/list',
+      'description': 'List voice clone audio files',
+      'category': 'Audio Library',
+    },
+    {
+      'method': 'DELETE',
+      'path': '/api/voice-clone/audio/{filename}',
+      'description': 'Delete voice clone audio file',
+      'category': 'Audio Library',
+    },
     // Samples
-    {'method': 'GET', 'path': '/api/samples/{engine}', 'description': 'Get sample texts for engine', 'category': 'Samples'},
-    {'method': 'GET', 'path': '/api/pregenerated', 'description': 'List pregenerated audio samples', 'category': 'Samples'},
-    {'method': 'GET', 'path': '/api/voice-samples', 'description': 'List voice sample sentences', 'category': 'Samples'},
+    {
+      'method': 'GET',
+      'path': '/api/samples/{engine}',
+      'description': 'Get sample texts for engine',
+      'category': 'Samples',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/pregenerated',
+      'description': 'List pregenerated audio samples',
+      'category': 'Samples',
+    },
+    {
+      'method': 'GET',
+      'path': '/api/voice-samples',
+      'description': 'List voice sample sentences',
+      'category': 'Samples',
+    },
   ];
 
   List<Map<String, dynamic>> _filteredTools() {
@@ -142,10 +347,15 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
               decoration: InputDecoration(
                 hintText: 'Search tools and endpoints...',
                 prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 filled: true,
                 fillColor: colorScheme.surfaceContainerLow,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
               ),
               onChanged: (v) => setState(() => _searchQuery = v),
             ),
@@ -181,36 +391,40 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
   Widget _buildServerStatusRow(ColorScheme colorScheme) {
     return Row(
       children: [
-        Expanded(child: _buildServerCard(
-          'Backend API',
-          'http://localhost:8000',
-          _backendOnline,
-          Icons.dns,
-          colorScheme,
-          subtitle: _systemInfo != null
-              ? '${_systemInfo!['device'] ?? 'Unknown device'}'
-              : null,
-        )),
+        Expanded(
+          child: _buildServerCard(
+            'Backend API',
+            ApiService.baseUrl,
+            _backendOnline,
+            Icons.dns,
+            colorScheme,
+            subtitle: _systemInfo != null
+                ? '${_systemInfo!['device'] ?? 'Unknown device'}'
+                : null,
+          ),
+        ),
         const SizedBox(width: 12),
-        Expanded(child: _buildServerCard(
-          'MCP Server',
-          'http://localhost:8010',
-          _mcpOnline,
-          Icons.hub,
-          colorScheme,
-          subtitle: _mcpOnline
-              ? 'mimikastudio-mcp v2.0.0'
-              : null,
-        )),
+        Expanded(
+          child: _buildServerCard(
+            'MCP Server',
+            'http://localhost:8010',
+            _mcpOnline,
+            Icons.hub,
+            colorScheme,
+            subtitle: _mcpOnline ? 'mimikastudio-mcp v2.0.0' : null,
+          ),
+        ),
         const SizedBox(width: 12),
-        Expanded(child: _buildServerCard(
-          'API Docs',
-          'http://localhost:8000/docs',
-          _backendOnline,
-          Icons.description,
-          colorScheme,
-          subtitle: 'Swagger / OpenAPI',
-        )),
+        Expanded(
+          child: _buildServerCard(
+            'API Docs',
+            '${ApiService.baseUrl}/docs',
+            _backendOnline,
+            Icons.description,
+            colorScheme,
+            subtitle: 'Swagger / OpenAPI',
+          ),
+        ),
       ],
     );
   }
@@ -240,7 +454,13 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                 Icon(icon, size: 20, color: colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
                 ),
                 Container(
                   width: 10,
@@ -248,7 +468,12 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                   decoration: BoxDecoration(
                     color: statusColor,
                     shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: statusColor.withValues(alpha: 0.4), blurRadius: 6)],
+                    boxShadow: [
+                      BoxShadow(
+                        color: statusColor.withValues(alpha: 0.4),
+                        blurRadius: 6,
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -256,11 +481,21 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
             const SizedBox(height: 6),
             Text(
               url,
-              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant, fontFamily: 'monospace'),
+              style: TextStyle(
+                fontSize: 11,
+                color: colorScheme.onSurfaceVariant,
+                fontFamily: 'monospace',
+              ),
             ),
             if (subtitle != null) ...[
               const SizedBox(height: 4),
-              Text(subtitle, style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant)),
+              Text(
+                subtitle,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ],
         ),
@@ -268,12 +503,24 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
     );
   }
 
-  Widget _buildSectionHeader(String title, IconData icon, String badge, Color color) {
+  Widget _buildSectionHeader(
+    String title,
+    IconData icon,
+    String badge,
+    Color color,
+  ) {
     return Row(
       children: [
         Icon(icon, color: color, size: 22),
         const SizedBox(width: 8),
-        Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: color)),
+        Text(
+          title,
+          style: TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+            color: color,
+          ),
+        ),
         const SizedBox(width: 10),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
@@ -281,7 +528,14 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
             color: color.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: Text(badge, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color)),
+          child: Text(
+            badge,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: color,
+            ),
+          ),
         ),
       ],
     );
@@ -295,7 +549,11 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
           child: Center(
             child: Column(
               children: [
-                Icon(Icons.cloud_off, size: 40, color: colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.cloud_off,
+                  size: 40,
+                  color: colorScheme.onSurfaceVariant,
+                ),
                 const SizedBox(height: 8),
                 Text(
                   _mcpOnline ? 'No tools found' : 'MCP server not connected',
@@ -305,7 +563,11 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                   const SizedBox(height: 4),
                   Text(
                     'Start with: ./bin/mimikactl up',
-                    style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant, fontFamily: 'monospace'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colorScheme.onSurfaceVariant,
+                      fontFamily: 'monospace',
+                    ),
                   ),
                 ],
               ],
@@ -334,7 +596,8 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
         category = 'Chatterbox TTS';
       } else if (name.startsWith('audiobook')) {
         category = 'Audiobook';
-      } else if (name.startsWith('voice_clone') || name == 'list_all_custom_voices') {
+      } else if (name.startsWith('voice_clone') ||
+          name == 'list_all_custom_voices') {
         category = 'Voice Management';
       } else if (name.startsWith('list_samples') ||
           name.startsWith('list_pregenerated') ||
@@ -348,11 +611,19 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
     }
 
     final categoryOrder = [
-      'System & Health', 'Kokoro TTS', 'Qwen3 TTS', 'Chatterbox TTS',
-      'Voice Management', 'Audiobook', 'Samples', 'Other',
+      'System & Health',
+      'Kokoro TTS',
+      'Qwen3 TTS',
+      'Chatterbox TTS',
+      'Voice Management',
+      'Audiobook',
+      'Samples',
+      'Other',
     ];
     final sortedKeys = groups.keys.toList()
-      ..sort((a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)));
+      ..sort(
+        (a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)),
+      );
 
     final categoryIcons = {
       'System & Health': Icons.monitor_heart,
@@ -381,7 +652,13 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
         final tools = groups[category]!;
         final icon = categoryIcons[category] ?? Icons.extension;
         final color = categoryColors[category] ?? colorScheme.primary;
-        return _buildCategoryExpansionTile(category, icon, color, tools, colorScheme);
+        return _buildCategoryExpansionTile(
+          category,
+          icon,
+          color,
+          tools,
+          colorScheme,
+        );
       }).toList(),
     );
   }
@@ -398,14 +675,23 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       margin: const EdgeInsets.only(bottom: 6),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
         leading: Icon(icon, color: color, size: 20),
         title: Row(
           children: [
-            Text(category, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: color)),
+            Text(
+              category,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: color,
+              ),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -413,11 +699,20 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text('${tools.length}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+              child: Text(
+                '${tools.length}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
             ),
           ],
         ),
-        children: tools.map((tool) => _buildMcpToolTile(tool, colorScheme)).toList(),
+        children: tools
+            .map((tool) => _buildMcpToolTile(tool, colorScheme))
+            .toList(),
       ),
     );
   }
@@ -426,7 +721,8 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
     final name = tool['name'] as String? ?? '';
     final desc = tool['description'] as String? ?? '';
     final inputSchema = tool['inputSchema'] as Map<String, dynamic>?;
-    final properties = inputSchema?['properties'] as Map<String, dynamic>? ?? {};
+    final properties =
+        inputSchema?['properties'] as Map<String, dynamic>? ?? {};
     final required = List<String>.from(inputSchema?['required'] ?? []);
 
     return ExpansionTile(
@@ -442,21 +738,45 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
             ),
             child: Text(
               'TOOL',
-              style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: colorScheme.onPrimaryContainer, letterSpacing: 0.5),
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                color: colorScheme.onPrimaryContainer,
+                letterSpacing: 0.5,
+              ),
             ),
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(name, style: const TextStyle(fontSize: 13, fontFamily: 'monospace', fontWeight: FontWeight.w500)),
+            child: Text(
+              name,
+              style: const TextStyle(
+                fontSize: 13,
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ),
         ],
       ),
-      subtitle: Text(desc, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant), maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(
+        desc,
+        style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+      ),
       children: [
         if (properties.isNotEmpty) ...[
           Align(
             alignment: Alignment.centerLeft,
-            child: Text('Parameters:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: colorScheme.onSurface)),
+            child: Text(
+              'Parameters:',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: colorScheme.onSurface,
+              ),
+            ),
           ),
           const SizedBox(height: 4),
           ...properties.entries.map((entry) {
@@ -477,31 +797,62 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                       children: [
                         Text(
                           paramName,
-                          style: TextStyle(fontSize: 12, fontFamily: 'monospace', color: colorScheme.primary, fontWeight: FontWeight.w500),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                            color: colorScheme.primary,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
                         if (isRequired)
-                          Text(' *', style: TextStyle(fontSize: 12, color: Colors.red.shade400, fontWeight: FontWeight.bold)),
+                          Text(
+                            ' *',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.red.shade400,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                       ],
                     ),
                   ),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: colorScheme.surfaceContainerHighest,
                       borderRadius: BorderRadius.circular(3),
                     ),
-                    child: Text(paramType, style: TextStyle(fontSize: 10, color: colorScheme.onSurfaceVariant, fontFamily: 'monospace')),
+                    child: Text(
+                      paramType,
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: colorScheme.onSurfaceVariant,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(paramDesc, style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant)),
+                    child: Text(
+                      paramDesc,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ),
                 ],
               ),
             );
           }),
         ] else
-          Text('No parameters', style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+          Text(
+            'No parameters',
+            style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+          ),
       ],
     );
   }
@@ -516,11 +867,19 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
     }
 
     final categoryOrder = [
-      'System & Health', 'Kokoro TTS', 'Qwen3 TTS', 'Chatterbox TTS',
-      'Voice Management', 'Audiobook', 'Audio Library', 'Samples',
+      'System & Health',
+      'Kokoro TTS',
+      'Qwen3 TTS',
+      'Chatterbox TTS',
+      'Voice Management',
+      'Audiobook',
+      'Audio Library',
+      'Samples',
     ];
     final sortedKeys = groups.keys.toList()
-      ..sort((a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)));
+      ..sort(
+        (a, b) => categoryOrder.indexOf(a).compareTo(categoryOrder.indexOf(b)),
+      );
 
     final categoryIcons = {
       'System & Health': Icons.monitor_heart,
@@ -549,7 +908,13 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
         final endpoints = groups[category]!;
         final icon = categoryIcons[category] ?? Icons.api;
         final color = categoryColors[category] ?? colorScheme.tertiary;
-        return _buildRestCategoryTile(category, icon, color, endpoints, colorScheme);
+        return _buildRestCategoryTile(
+          category,
+          icon,
+          color,
+          endpoints,
+          colorScheme,
+        );
       }).toList(),
     );
   }
@@ -566,14 +931,23 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
       margin: const EdgeInsets.only(bottom: 6),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+        side: BorderSide(
+          color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+        ),
       ),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
         leading: Icon(icon, color: color, size: 20),
         title: Row(
           children: [
-            Text(category, style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: color)),
+            Text(
+              category,
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: color,
+              ),
+            ),
             const SizedBox(width: 8),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -581,11 +955,20 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
                 color: color.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Text('${endpoints.length}', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+              child: Text(
+                '${endpoints.length}',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: color,
+                ),
+              ),
             ),
           ],
         ),
-        children: endpoints.map((ep) => _buildEndpointRow(ep, colorScheme)).toList(),
+        children: endpoints
+            .map((ep) => _buildEndpointRow(ep, colorScheme))
+            .toList(),
       ),
     );
   }
@@ -617,18 +1000,32 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
             child: Text(
               method,
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: mColor, fontFamily: 'monospace'),
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: mColor,
+                fontFamily: 'monospace',
+              ),
             ),
           ),
           const SizedBox(width: 10),
           Expanded(
             flex: 2,
-            child: Text(path, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+            child: Text(
+              path,
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+            ),
           ),
           const SizedBox(width: 10),
           Expanded(
             flex: 3,
-            child: Text(desc, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+            child: Text(
+              desc,
+              style: TextStyle(
+                fontSize: 12,
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
           ),
         ],
       ),

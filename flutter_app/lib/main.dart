@@ -1,16 +1,25 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:ui';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'screens/cosyvoice3_screen.dart';
 import 'screens/quick_tts_screen.dart';
+import 'screens/supertonic_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
 import 'screens/chatterbox_clone_screen.dart';
 import 'screens/pdf_reader_screen.dart';
 import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/mcp_endpoints_screen.dart';
+import 'screens/pro_screen.dart';
 import 'screens/about_screen.dart';
 import 'services/api_service.dart';
+import 'services/backend_service.dart';
 import 'version.dart';
+import 'widgets/system_log_view.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -49,13 +58,13 @@ void main() {
     );
   };
 
-  runZonedGuarded(
-    () => runApp(const MimikaStudioApp()),
-    (Object error, StackTrace stack) {
-      debugPrint('Uncaught zoned error: $error');
-      debugPrintStack(stackTrace: stack);
-    },
-  );
+  runZonedGuarded(() => runApp(const MimikaStudioApp()), (
+    Object error,
+    StackTrace stack,
+  ) {
+    debugPrint('Uncaught zoned error: $error');
+    debugPrintStack(stackTrace: stack);
+  });
 }
 
 class MimikaStudioApp extends StatelessWidget {
@@ -95,25 +104,229 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   final ApiService _api = ApiService();
+  final BackendService _backendService = BackendService();
   bool _isBackendConnected = false;
   bool _isChecking = true;
+  String _backendStatus = 'Connecting to backend...';
+  StreamSubscription<String>? _backendStatusSubscription;
   Map<String, dynamic>? _systemStats;
+  final List<String> _startupLogs = <String>[];
+  bool _isLogFooterCollapsed = true;
+  double _logFooterHeight = 210;
+  bool _isExportingSystemLog = false;
+  bool _isResolvingPortConflict = false;
+  AppLifecycleListener? _appLifecycleListener;
+  bool _isShuttingDown = false;
+  bool _allowImmediateExit = false;
+  bool _isShutdownDialogVisible = false;
 
   @override
   void initState() {
     super.initState();
-    _checkBackend();
+    _recordStartupLog('App launched');
+    _backendStatusSubscription = _backendService.statusStream.listen((status) {
+      if (!mounted) return;
+      setState(() {
+        _backendStatus = status;
+        _recordStartupLog(status);
+      });
+    });
+    _ensureBackend();
     _startStatsPolling();
+    if (Platform.isMacOS || Platform.isLinux || Platform.isWindows) {
+      _appLifecycleListener = AppLifecycleListener(
+        onExitRequested: _handleExitRequested,
+      );
+    }
   }
 
-  Future<void> _checkBackend() async {
-    setState(() => _isChecking = true);
-    final connected = await _api.checkHealth();
+  Future<AppExitResponse> _handleExitRequested() async {
+    if (_allowImmediateExit) {
+      return AppExitResponse.exit;
+    }
+    if (_isShuttingDown) {
+      return AppExitResponse.cancel;
+    }
+    _isShuttingDown = true;
+    unawaited(_shutdownBackendThenExit());
+    return AppExitResponse.cancel;
+  }
+
+  Future<void> _shutdownBackendThenExit() async {
+    _showShutdownDialog();
+    try {
+      await _backendService.stopBackend().timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {},
+      );
+    } catch (e) {
+      debugPrint('Error stopping backend during exit: $e');
+    } finally {
+      _dismissShutdownDialog();
+      _allowImmediateExit = true;
+      await SystemNavigator.pop();
+    }
+  }
+
+  void _showShutdownDialog() {
+    if (!mounted || _isShutdownDialogVisible) {
+      return;
+    }
+    _isShutdownDialogVisible = true;
+    unawaited(
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        useRootNavigator: true,
+        builder: (dialogContext) {
+          return const AlertDialog(
+            title: Text('Stopping Server'),
+            content: Row(
+              children: [
+                SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                ),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'MimikaStudio is stopping the backend before exit...',
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ).whenComplete(() {
+        _isShutdownDialogVisible = false;
+      }),
+    );
+  }
+
+  void _dismissShutdownDialog() {
+    if (!mounted || !_isShutdownDialogVisible) {
+      return;
+    }
+    final navigator = Navigator.of(context, rootNavigator: true);
+    if (navigator.canPop()) {
+      navigator.pop();
+    }
+  }
+
+  Future<void> _ensureBackend({
+    bool userInitiated = false,
+    bool allowPortConflictPrompt = true,
+  }) async {
+    setState(() {
+      _isChecking = true;
+      _recordStartupLog('Checking backend health...');
+    });
+
+    final alreadyConnected = await _api.checkHealth();
+    if (alreadyConnected) {
+      if (!mounted) return;
+      setState(() {
+        _isBackendConnected = true;
+        _isChecking = false;
+        _backendStatus = userInitiated
+            ? 'Backend already connected'
+            : 'Backend connected';
+        _recordStartupLog('Backend is already running');
+      });
+      return;
+    }
+
+    if (_backendService.hasBundledBackend) {
+      setState(() {
+        _backendStatus = 'Starting bundled backend...';
+        _recordStartupLog('Bundled backend found, launching...');
+      });
+      final started = await _backendService.startBackend();
+      final connected = started ? await _api.checkHealth() : false;
+      if (!mounted) return;
+      setState(() {
+        _isBackendConnected = connected;
+        _isChecking = false;
+        _backendStatus = connected
+            ? 'Backend connected'
+            : (_backendService.currentStatus.isNotEmpty
+                  ? _backendService.currentStatus
+                  : 'Failed to start bundled backend');
+        _recordStartupLog(_backendStatus);
+      });
+      if (!connected && allowPortConflictPrompt) {
+        await _promptToResolvePortConflict();
+      }
+      return;
+    }
+
     if (!mounted) return;
     setState(() {
-      _isBackendConnected = connected;
+      _isBackendConnected = false;
       _isChecking = false;
+      _backendStatus = 'No bundled backend found (development mode)';
+      _recordStartupLog(_backendStatus);
     });
+  }
+
+  Future<void> _promptToResolvePortConflict() async {
+    if (_isResolvingPortConflict) return;
+    final conflict =
+        _backendService.portConflict ??
+        await _backendService.detectPortConflict();
+    if (!mounted || conflict == null) return;
+
+    _isResolvingPortConflict = true;
+    final shouldStop = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Port 7693 is already in use'),
+          content: Text(
+            'Another process is blocking MimikaStudio backend startup:\n\n'
+            '${conflict.summary}\n\n'
+            'Do you want MimikaStudio to stop it and restart our backend?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Stop & Restart'),
+            ),
+          ],
+        );
+      },
+    );
+    _isResolvingPortConflict = false;
+
+    if (shouldStop != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _isChecking = true;
+      _backendStatus = 'Stopping ${conflict.summary}...';
+      _recordStartupLog(_backendStatus);
+    });
+
+    final stopped = await _backendService.stopPortConflictProcess();
+    if (!mounted) return;
+    if (!stopped) {
+      setState(() {
+        _isChecking = false;
+        _isBackendConnected = false;
+        _backendStatus = _backendService.currentStatus;
+        _recordStartupLog(_backendStatus);
+      });
+      return;
+    }
+
+    await _ensureBackend(userInitiated: true, allowPortConflictPrompt: false);
   }
 
   void _startStatsPolling() {
@@ -138,6 +351,280 @@ class _MainScreenState extends State<MainScreen> {
     } catch (e) {
       // Ignore errors
     }
+  }
+
+  @override
+  void dispose() {
+    _appLifecycleListener?.dispose();
+    _backendStatusSubscription?.cancel();
+    unawaited(_backendService.stopBackend());
+    super.dispose();
+  }
+
+  void _recordStartupLog(String message) {
+    final trimmed = message.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+    final now = DateTime.now();
+    final hh = now.hour.toString().padLeft(2, '0');
+    final mm = now.minute.toString().padLeft(2, '0');
+    final ss = now.second.toString().padLeft(2, '0');
+    _startupLogs.add('[$hh:$mm:$ss] $trimmed');
+    const maxLines = 80;
+    if (_startupLogs.length > maxLines) {
+      _startupLogs.removeRange(0, _startupLogs.length - maxLines);
+    }
+  }
+
+  void _resizeLogFooter(double deltaY) {
+    setState(() {
+      _logFooterHeight = (_logFooterHeight - deltaY).clamp(130.0, 420.0);
+    });
+  }
+
+  Future<void> _copySystemLogQuick() async {
+    try {
+      final payload = await _api.getSystemLogs(maxLines: 1500);
+      final lines = List<String>.from(
+        payload['lines'] as List<dynamic>? ?? const <String>[],
+      );
+      final text = lines.join('\n').trim();
+      if (text.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('System log is empty')));
+        return;
+      }
+      await Clipboard.setData(ClipboardData(text: text));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Copied ${lines.length} log lines')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to copy system log: $e')));
+    }
+  }
+
+  Future<void> _exportSystemLogQuick() async {
+    if (_isExportingSystemLog) return;
+    setState(() => _isExportingSystemLog = true);
+    try {
+      final bundle = await _api.exportSystemLogs(maxLines: 2500);
+      final fileName =
+          (bundle['fileName'] as String?) ?? 'mimika_system_logs.log';
+      final bytes = bundle['bytes'] as List<int>;
+
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save System Log',
+        fileName: fileName,
+        type: FileType.custom,
+        allowedExtensions: const ['log', 'txt'],
+      );
+      if (savePath == null) {
+        return;
+      }
+
+      final destinationPath = savePath.toLowerCase().endsWith('.log')
+          ? savePath
+          : '$savePath.log';
+      final destination = File(destinationPath);
+      await destination.writeAsBytes(bytes, flush: true);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('System log exported to $destinationPath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to export system log: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isExportingSystemLog = false);
+      }
+    }
+  }
+
+  Future<void> _openSystemLogDialog() async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 20,
+          ),
+          child: SizedBox(
+            width: 980,
+            height: 620,
+            child: const Padding(
+              padding: EdgeInsets.all(10),
+              child: SystemLogView(
+                title: 'System Log Inspector',
+                maxLines: 1600,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSystemLogFooter() {
+    final targetHeight = _isLogFooterCollapsed ? 44.0 : _logFooterHeight;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      height: targetHeight,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border(
+          top: BorderSide(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.5),
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          GestureDetector(
+            onVerticalDragUpdate: _isLogFooterCollapsed
+                ? null
+                : (details) => _resizeLogFooter(details.delta.dy),
+            child: Container(
+              height: 44,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.terminal_rounded, size: 16),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isLogFooterCollapsed
+                        ? 'System Log (collapsed)'
+                        : 'System Log',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (!_isLogFooterCollapsed) ...[
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.drag_handle,
+                      size: 16,
+                      color: Colors.grey.shade600,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Drag to resize',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ],
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Copy logs',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _copySystemLogQuick,
+                    icon: const Icon(Icons.copy_rounded, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: 'Export logs',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _isExportingSystemLog
+                        ? null
+                        : _exportSystemLogQuick,
+                    icon: _isExportingSystemLog
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download_rounded, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: 'Open log inspector',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _openSystemLogDialog,
+                    icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                  ),
+                  IconButton(
+                    tooltip: _isLogFooterCollapsed ? 'Expand' : 'Collapse',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(
+                      () => _isLogFooterCollapsed = !_isLogFooterCollapsed,
+                    ),
+                    icon: Icon(
+                      _isLogFooterCollapsed
+                          ? Icons.unfold_less_rounded
+                          : Icons.unfold_more_rounded,
+                      size: 18,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (!_isLogFooterCollapsed)
+            const Expanded(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(8, 0, 8, 8),
+                child: SystemLogView(title: 'System Log Footer', maxLines: 900),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStartupLogsPanel() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 620),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Startup log',
+            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: 140,
+            child: ListView.builder(
+              reverse: true,
+              itemCount: _startupLogs.length,
+              itemBuilder: (context, index) {
+                final line = _startupLogs[_startupLogs.length - 1 - index];
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    line,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.25,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildSystemStatsBar() {
@@ -226,14 +713,16 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isChecking) {
-      return const Scaffold(
+      return Scaffold(
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('Connecting to backend...'),
+              const CircularProgressIndicator(),
+              const SizedBox(height: 16),
+              Text(_backendStatus),
+              const SizedBox(height: 16),
+              _buildStartupLogsPanel(),
             ],
           ),
         ),
@@ -253,13 +742,27 @@ class _MainScreenState extends State<MainScreen> {
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
-              const Text('Run: tssctl up'),
+              Text(_backendStatus, textAlign: TextAlign.center),
+              const SizedBox(height: 16),
+              _buildStartupLogsPanel(),
               const SizedBox(height: 16),
               ElevatedButton.icon(
-                onPressed: _checkBackend,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Retry'),
+                onPressed: () => _ensureBackend(userInitiated: true),
+                icon: Icon(
+                  _backendService.hasBundledBackend
+                      ? Icons.restart_alt_rounded
+                      : Icons.refresh,
+                ),
+                label: Text(
+                  _backendService.hasBundledBackend
+                      ? 'Restart Server'
+                      : 'Retry',
+                ),
               ),
+              if (!_backendService.hasBundledBackend) ...[
+                const SizedBox(height: 10),
+                const Text('Dev mode: run `bin/mimikactl up`'),
+              ],
             ],
           ),
         ),
@@ -267,19 +770,24 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 7,
+      length: 11,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
           title: _buildSystemStatsBar(),
           actions: [
+            IconButton(
+              tooltip: 'System Log',
+              onPressed: _openSystemLogDialog,
+              icon: const Icon(Icons.terminal_rounded),
+            ),
             Padding(
               padding: const EdgeInsets.only(right: 16),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    Icons.graphic_eq,
+                    Icons.multitrack_audio_rounded,
                     size: 18,
                     color: Theme.of(context).colorScheme.primary,
                   ),
@@ -320,28 +828,61 @@ class _MainScreenState extends State<MainScreen> {
             labelStyle: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             unselectedLabelStyle: TextStyle(fontSize: 14),
             tabs: [
-              Tab(icon: Icon(Icons.model_training, size: 28), text: 'Models'),
-              Tab(icon: Icon(Icons.volume_up, size: 28), text: 'TTS (Kokoro)'),
               Tab(
-                icon: Icon(Icons.record_voice_over, size: 28),
+                icon: Icon(Icons.psychology_alt_rounded, size: 26),
+                text: 'Models',
+              ),
+              Tab(
+                icon: Icon(Icons.graphic_eq_rounded, size: 26),
+                text: 'TTS (Kokoro)',
+              ),
+              Tab(icon: Icon(Icons.bolt_rounded, size: 26), text: 'Supertonic'),
+              Tab(
+                icon: Icon(Icons.auto_awesome_rounded, size: 26),
+                text: 'CosyVoice3',
+              ),
+              Tab(
+                icon: Icon(Icons.record_voice_over_rounded, size: 26),
                 text: 'Qwen3 Clone',
               ),
-              Tab(icon: Icon(Icons.mic, size: 28), text: 'Chatterbox'),
-              Tab(icon: Icon(Icons.menu_book, size: 28), text: 'PDF Reader'),
-              Tab(icon: Icon(Icons.settings, size: 28), text: 'Settings'),
-              Tab(icon: Icon(Icons.info_outline, size: 28), text: 'About'),
+              Tab(
+                icon: Icon(Icons.mic_external_on_rounded, size: 26),
+                text: 'Chatterbox',
+              ),
+              Tab(
+                icon: Icon(Icons.description_rounded, size: 26),
+                text: 'PDF Reader',
+              ),
+              Tab(icon: Icon(Icons.tune_rounded, size: 26), text: 'Settings'),
+              Tab(icon: Icon(Icons.hub_rounded, size: 26), text: 'MCP'),
+              Tab(
+                icon: Icon(Icons.workspace_premium_rounded, size: 26),
+                text: 'Pro',
+              ),
+              Tab(icon: Icon(Icons.info_rounded, size: 26), text: 'About'),
             ],
           ),
         ),
-        body: const TabBarView(
+        body: Column(
           children: [
-            ModelsScreen(),
-            QuickTtsScreen(),
-            Qwen3CloneScreen(),
-            ChatterboxCloneScreen(),
-            PdfReaderScreen(),
-            SettingsScreen(),
-            AboutScreen(),
+            const Expanded(
+              child: TabBarView(
+                children: [
+                  ModelsScreen(),
+                  QuickTtsScreen(),
+                  SupertonicScreen(),
+                  CosyVoice3Screen(),
+                  Qwen3CloneScreen(),
+                  ChatterboxCloneScreen(),
+                  PdfReaderScreen(),
+                  SettingsScreen(),
+                  McpEndpointsScreen(),
+                  ProScreen(),
+                  AboutScreen(),
+                ],
+              ),
+            ),
+            _buildSystemLogFooter(),
           ],
         ),
       ),

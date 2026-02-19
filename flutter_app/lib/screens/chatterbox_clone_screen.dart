@@ -7,18 +7,136 @@ import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
 import '../widgets/model_status_banner.dart';
 
-const Map<String, String> kChatterboxLanguageNames = {
-  'en': 'English',
-  'zh': 'Chinese',
-  'ja': 'Japanese',
-  'ko': 'Korean',
-  'de': 'German',
-  'fr': 'French',
-  'ru': 'Russian',
-  'pt': 'Portuguese',
-  'es': 'Spanish',
-  'it': 'Italian',
-  'he': 'Hebrew',
+class ChatterboxLanguageOption {
+  final String code;
+  final String name;
+  final String flag;
+  final Color color;
+
+  const ChatterboxLanguageOption(this.code, this.name, this.flag, this.color);
+}
+
+const Map<String, ChatterboxLanguageOption> kChatterboxLanguageOptions = {
+  'en': ChatterboxLanguageOption(
+    'en',
+    'English',
+    '\u{1F1FA}\u{1F1F8}',
+    Color(0xFF2196F3),
+  ),
+  'zh': ChatterboxLanguageOption(
+    'zh',
+    'Chinese',
+    '\u{1F1E8}\u{1F1F3}',
+    Color(0xFFE91E63),
+  ),
+  'ja': ChatterboxLanguageOption(
+    'ja',
+    'Japanese',
+    '\u{1F1EF}\u{1F1F5}',
+    Color(0xFF9C27B0),
+  ),
+  'ko': ChatterboxLanguageOption(
+    'ko',
+    'Korean',
+    '\u{1F1F0}\u{1F1F7}',
+    Color(0xFFFF5722),
+  ),
+  'de': ChatterboxLanguageOption(
+    'de',
+    'German',
+    '\u{1F1E9}\u{1F1EA}',
+    Color(0xFF795548),
+  ),
+  'fr': ChatterboxLanguageOption(
+    'fr',
+    'French',
+    '\u{1F1EB}\u{1F1F7}',
+    Color(0xFF3F51B5),
+  ),
+  'ru': ChatterboxLanguageOption(
+    'ru',
+    'Russian',
+    '\u{1F1F7}\u{1F1FA}',
+    Color(0xFF9C27B0),
+  ),
+  'pt': ChatterboxLanguageOption(
+    'pt',
+    'Portuguese',
+    '\u{1F1F5}\u{1F1F9}',
+    Color(0xFF4CAF50),
+  ),
+  'es': ChatterboxLanguageOption(
+    'es',
+    'Spanish',
+    '\u{1F1EA}\u{1F1F8}',
+    Color(0xFFF57C00),
+  ),
+  'it': ChatterboxLanguageOption(
+    'it',
+    'Italian',
+    '\u{1F1EE}\u{1F1F9}',
+    Color(0xFF009688),
+  ),
+  'he': ChatterboxLanguageOption(
+    'he',
+    'Hebrew',
+    '\u{1F1EE}\u{1F1F1}',
+    Color(0xFF6A1B9A),
+  ),
+  'ar': ChatterboxLanguageOption(
+    'ar',
+    'Arabic',
+    '\u{1F1F8}\u{1F1E6}',
+    Color(0xFF8E24AA),
+  ),
+  'da': ChatterboxLanguageOption(
+    'da',
+    'Danish',
+    '\u{1F1E9}\u{1F1F0}',
+    Color(0xFF546E7A),
+  ),
+  'el': ChatterboxLanguageOption(
+    'el',
+    'Greek',
+    '\u{1F1EC}\u{1F1F7}',
+    Color(0xFF3949AB),
+  ),
+  'fi': ChatterboxLanguageOption(
+    'fi',
+    'Finnish',
+    '\u{1F1EB}\u{1F1EE}',
+    Color(0xFF5C6BC0),
+  ),
+  'hi': ChatterboxLanguageOption(
+    'hi',
+    'Hindi',
+    '\u{1F1EE}\u{1F1F3}',
+    Color(0xFFEF6C00),
+  ),
+  'ms': ChatterboxLanguageOption(
+    'ms',
+    'Malay',
+    '\u{1F1F2}\u{1F1FE}',
+    Color(0xFF00897B),
+  ),
+  'nl': ChatterboxLanguageOption(
+    'nl',
+    'Dutch',
+    '\u{1F1F3}\u{1F1F1}',
+    Color(0xFF00ACC1),
+  ),
+  'no': ChatterboxLanguageOption(
+    'no',
+    'Norwegian',
+    '\u{1F1F3}\u{1F1F4}',
+    Color(0xFF1E88E5),
+  ),
+  'pl': ChatterboxLanguageOption(
+    'pl',
+    'Polish',
+    '\u{1F1F5}\u{1F1F1}',
+    Color(0xFFE53935),
+  ),
 };
 
 class ChatterboxCloneScreen extends StatefulWidget {
@@ -29,10 +147,11 @@ class ChatterboxCloneScreen extends StatefulWidget {
 }
 
 class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
+  static const int _maxChars = 300;
   static const String _defaultChatterboxText =
-      'Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? '
-      'and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? '
-      'and if thou doest not well, sin lieth at the door.';
+      'Genesis chapter 5, verses 1 through 3: This is the book of the generations of Adam. '
+      'In the day that God created man, in the likeness of God made he him; male and female '
+      'created he them. And Adam lived an hundred and thirty years, and begat a son.';
 
   final ApiService _api = ApiService();
   final SettingsService _settingsService = SettingsService();
@@ -53,7 +172,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   bool _showAdvanced = false;
   double _chatterboxTemperature = 0.8;
   double _chatterboxCfgWeight = 1.0;
-  double _chatterboxExaggeration = 0.5;
   int _chatterboxSeed = -1;
   bool _unloadAfter = false;
 
@@ -149,15 +267,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         debugPrint('Chatterbox not available: $e');
       }
 
-      List<Map<String, dynamic>> chatterboxVoices = [];
-      try {
-        final chatterboxVoiceResponse = await _api.getChatterboxVoices();
-        chatterboxVoices = List<Map<String, dynamic>>.from(
-          chatterboxVoiceResponse['voices'] as List<dynamic>? ?? [],
-        );
-      } catch (e) {
-        debugPrint('Chatterbox voices not available: $e');
-      }
+      final chatterboxVoices = await _fetchChatterboxVoices();
 
       List<Map<String, dynamic>> pregeneratedSamples = [];
       try {
@@ -175,9 +285,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         _chatterboxLanguages = chatterboxLanguages;
         _pregeneratedSamples = pregeneratedSamples;
         _chatterboxInfo = chatterboxInfo;
-        if (chatterboxVoices.isNotEmpty) {
-          _selectedChatterboxVoice = chatterboxVoices[0]['name'];
-        }
+        _selectedChatterboxVoice = _pickSelectedVoice(chatterboxVoices);
         if (chatterboxLanguages.isNotEmpty &&
             !chatterboxLanguages.contains(_selectedChatterboxLanguage)) {
           _selectedChatterboxLanguage = chatterboxLanguages[0];
@@ -191,6 +299,43 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         _isLoading = false;
       });
     }
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchChatterboxVoices() async {
+    try {
+      final chatterboxVoiceResponse = await _api.getChatterboxVoices();
+      return List<Map<String, dynamic>>.from(
+        chatterboxVoiceResponse['voices'] as List<dynamic>? ?? [],
+      );
+    } catch (e) {
+      debugPrint('Chatterbox voices not available: $e');
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  String? _pickSelectedVoice(
+    List<Map<String, dynamic>> voices, {
+    String? preferredName,
+  }) {
+    if (voices.isEmpty) return null;
+    final target = preferredName ?? _selectedChatterboxVoice;
+    if (target != null &&
+        voices.any((voice) => (voice['name'] as String?) == target)) {
+      return target;
+    }
+    return voices.first['name'] as String?;
+  }
+
+  Future<void> _refreshChatterboxVoices({String? preferredName}) async {
+    final voices = await _fetchChatterboxVoices();
+    if (!mounted) return;
+    setState(() {
+      _chatterboxVoices = voices;
+      _selectedChatterboxVoice = _pickSelectedVoice(
+        voices,
+        preferredName: preferredName,
+      );
+    });
   }
 
   Future<void> _loadDictaStatus() async {
@@ -258,7 +403,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         speed: _speed,
         temperature: _chatterboxTemperature,
         cfgWeight: _chatterboxCfgWeight,
-        exaggeration: _chatterboxExaggeration,
         seed: _chatterboxSeed,
         unloadAfter: _unloadAfter,
       );
@@ -436,9 +580,26 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       ),
     );
     if (confirmed == true) {
+      final previousVoices = List<Map<String, dynamic>>.from(_chatterboxVoices);
+      final previousSelectedVoice = _selectedChatterboxVoice;
+      if (_previewVoiceName == name) {
+        await _stopPreview();
+      }
+      if (mounted) {
+        setState(() {
+          final filtered = _chatterboxVoices
+              .where((voice) => (voice['name'] as String?) != name)
+              .toList();
+          _chatterboxVoices = filtered;
+          if (_selectedChatterboxVoice == name) {
+            _selectedChatterboxVoice = _pickSelectedVoice(filtered);
+          }
+        });
+      }
+
       try {
         await _api.deleteChatterboxVoice(name);
-        await _loadData();
+        await _refreshChatterboxVoices();
         if (mounted) {
           ScaffoldMessenger.of(
             context,
@@ -446,6 +607,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         }
       } catch (e) {
         if (mounted) {
+          setState(() {
+            _chatterboxVoices = previousVoices;
+            _selectedChatterboxVoice = previousSelectedVoice;
+          });
           ScaffoldMessenger.of(
             context,
           ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
@@ -710,8 +875,33 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
   }
 
-  String _formatLanguage(String code) {
-    return kChatterboxLanguageNames[code] ?? code;
+  MaterialColor _sampleCardColor(Map<String, dynamic> sample) {
+    final key = '${sample['title'] ?? ''} ${sample['description'] ?? ''}'
+        .toLowerCase();
+    if (key.contains('laugh') || key.contains('chuckle')) {
+      return Colors.amber;
+    }
+    if (key.contains('sigh') || key.contains('neutral')) {
+      return Colors.blueGrey;
+    }
+    if (key.contains('gasp') || key.contains('dramatic')) {
+      return Colors.deepOrange;
+    }
+    if (key.contains('subtle')) {
+      return Colors.lightGreen;
+    }
+    return Colors.orange;
+  }
+
+  ChatterboxLanguageOption _languageOption(String code) {
+    final key = code.trim().toLowerCase();
+    return kChatterboxLanguageOptions[key] ??
+        ChatterboxLanguageOption(
+          key,
+          key.toUpperCase(),
+          '\u{1F310}',
+          const Color(0xFF607D8B),
+        );
   }
 
   Widget _buildInfoChip(IconData icon, String text) {
@@ -764,10 +954,12 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: _textController,
+                  onChanged: (_) => setState(() {}),
+                  maxLength: _maxChars,
                   maxLines: 4,
                   decoration: const InputDecoration(
-                    labelText: 'Text to speak',
-                    hintText: 'Enter text to convert to speech...',
+                    labelText: 'Text to synthesize (max chars 300)',
+                    hintText: 'Enter text to convert to speech.',
                     border: OutlineInputBorder(),
                   ),
                 ),
@@ -903,6 +1095,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             const SizedBox(height: 8),
             ..._pregeneratedSamples.map((sample) {
               final voice = sample['voice'] as String? ?? 'Sample';
+              final title = sample['title'] as String? ?? voice;
+              final description = sample['description'] as String? ?? '';
+              final accent = _sampleCardColor(sample);
               final text =
                   (sample['text'] as String?) ??
                   (sample['description'] as String?) ??
@@ -916,11 +1111,8 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                   child: Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      border: Border.all(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.outline.withValues(alpha: 0.2),
-                      ),
+                      color: accent.withValues(alpha: 0.08),
+                      border: Border.all(color: accent.withValues(alpha: 0.35)),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Row(
@@ -931,9 +1123,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.tertiaryContainer,
+                            color: accent.withValues(alpha: 0.2),
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
@@ -941,19 +1131,41 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.bold,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onTertiaryContainer,
+                              color: accent.shade800,
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(
-                            text,
-                            style: const TextStyle(fontSize: 12),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              if (description.isNotEmpty)
+                                Text(
+                                  description,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.grey.shade700,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              Text(
+                                text,
+                                style: const TextStyle(fontSize: 11),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ],
                           ),
                         ),
                         const Icon(Icons.play_circle_outline, size: 20),
@@ -1093,7 +1305,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   Widget _buildLanguageSelector() {
     final languages = _chatterboxLanguages.isNotEmpty
         ? List<String>.from(_chatterboxLanguages)
-        : kChatterboxLanguageNames.keys.toList();
+        : kChatterboxLanguageOptions.keys.toList();
     if (!languages.contains('he')) {
       languages.add('he');
     }
@@ -1113,6 +1325,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: languages.map((lang) {
+                final option = _languageOption(lang);
                 final isSelected = _selectedChatterboxLanguage == lang;
                 return Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -1126,12 +1339,12 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                       ),
                       decoration: BoxDecoration(
                         color: isSelected
-                            ? Colors.orange.withValues(alpha: 0.15)
+                            ? option.color.withValues(alpha: 0.15)
                             : Colors.grey.shade100,
                         borderRadius: BorderRadius.circular(20),
                         border: Border.all(
                           color: isSelected
-                              ? Colors.orange
+                              ? option.color
                               : Colors.grey.shade300,
                           width: isSelected ? 2 : 1,
                         ),
@@ -1140,11 +1353,16 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Text(
-                            _formatLanguage(lang),
+                            option.flag,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            option.name,
                             style: TextStyle(
                               fontSize: 12,
                               color: isSelected
-                                  ? Colors.orange.shade700
+                                  ? option.color
                                   : Colors.grey.shade700,
                               fontWeight: isSelected
                                   ? FontWeight.w600
@@ -1450,13 +1668,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             0.1,
             3.0,
             (v) => setState(() => _chatterboxCfgWeight = v),
-          ),
-          _buildAdvancedSlider(
-            'Exaggeration',
-            _chatterboxExaggeration,
-            0.0,
-            1.5,
-            (v) => setState(() => _chatterboxExaggeration = v),
           ),
           Row(
             children: [

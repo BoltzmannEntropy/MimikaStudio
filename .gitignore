@@ -45,6 +45,9 @@ runs/
 
 # Local-only release tooling (do not publish in OSS repo)
 scripts/build_dmg.sh
+scripts/build-dmg.sh
+scripts/release.sh
+scripts/*dmg*.sh
 
 # Local release artifacts
 build/

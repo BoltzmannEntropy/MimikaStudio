@@ -22,8 +22,8 @@ else
 fi
 
 # Ports
-BACKEND_PORT=8000
-MCP_PORT=8010
+BACKEND_PORT="${MIMIKA_BACKEND_PORT:-7693}"
+MCP_PORT="${MIMIKA_MCP_PORT:-8010}"
 
 # Flutter app name
 FLUTTER_APP_NAME="mimika_studio"
@@ -71,7 +71,7 @@ wait_for_health() {
 
     echo -n "Waiting for $url "
     while [ $retry -lt $max_retries ]; do
-        if curl -s "$url" &>/dev/null; then
+        if curl -fsS "$url" &>/dev/null; then
             echo -e " ${GREEN}OK${NC}"
             return 0
         fi
@@ -131,10 +131,14 @@ PY
 
     # Start FastAPI
     cd "$BACKEND_DIR"
-    nohup python main.py > "$LOG_DIR/backend.log" 2>&1 &
+    nohup env MIMIKA_BACKEND_PORT="$BACKEND_PORT" python main.py > "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$PID_DIR/backend.pid"
 
-    wait_for_health "http://localhost:$BACKEND_PORT/api/health"
+    if ! wait_for_health "http://localhost:$BACKEND_PORT/api/health"; then
+        echo -e "${RED}Backend startup failed. Last backend log lines:${NC}"
+        tail -n 40 "$LOG_DIR/backend.log" 2>/dev/null || true
+        return 1
+    fi
 }
 
 stop_backend() {
@@ -243,7 +247,7 @@ start_mcp() {
     fi
 
     # Start MCP server
-    nohup python3 "$SCRIPT_DIR/tts_mcp_server.py" --host 127.0.0.1 --port $MCP_PORT > "$RUNS_LOG_DIR/mcp_server.log" 2>&1 &
+    nohup env MIMIKASTUDIO_BACKEND_URL="http://localhost:$BACKEND_PORT" python3 "$SCRIPT_DIR/tts_mcp_server.py" --host 127.0.0.1 --port $MCP_PORT > "$RUNS_LOG_DIR/mcp_server.log" 2>&1 &
     echo $! > "$PID_DIR/mcp.pid"
 
     sleep 1
