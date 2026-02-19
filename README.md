@@ -193,8 +193,7 @@ After installation, start MimikaStudio:
 
 ```bash
 source venv/bin/activate
-./bin/mimikactl up          # Backend + MCP + Flutter desktop
-./bin/mimikactl up --web    # Backend + MCP + Flutter web UI
+./bin/mimikactl up          # Backend + MCP + Desktop app
 ```
 
 ### Manual Install
@@ -220,7 +219,7 @@ pip install --no-deps chatterbox-tts==0.1.6
 # Initialize database
 cd backend && python3 database.py && cd ..
 
-# Flutter (optional, for desktop/web UI)
+# Flutter (optional, for desktop app UI)
 cd flutter_app && flutter pub get && cd ..
 
 # Start
@@ -260,14 +259,10 @@ python -c "import perth; print('Perth OK')"
 ## Quick Start
 
 ```bash
-# Start all services (Backend + MCP + Flutter UI)
+# Start all services (Backend + MCP + Desktop UI)
 ./bin/mimikactl up
 
-# Or: Backend + MCP + Flutter Web UI
-./bin/mimikactl up --web
-# Then open http://127.0.0.1:5173
-
-# Or: Backend + MCP only (no Flutter)
+# Or: Backend + MCP only (no Flutter UI)
 ./bin/mimikactl up --no-flutter
 
 # Check status
@@ -293,14 +288,9 @@ Starting Flutter UI (dev mode)...
 
 ## Platforms
 
-MimikaStudio ships two UIs backed by the same local FastAPI server:
+MimikaStudio ships a desktop UI backed by the same local FastAPI server:
 
 **macOS Desktop App** (default): `./bin/mimikactl up`
-
-**Web UI** (Flutter Web): `./bin/mimikactl up --web` then open http://127.0.0.1:5173
-
-> The web UI uses the same backend and voice library as the desktop app.
-> In web mode, use **Open Document** to upload PDFs from your machine.
 
 ![MimikaStudio App Running](assets/01-mimikastudio.png)
 
@@ -385,7 +375,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 # Service Commands
 ./bin/mimikactl up                    # Start all services
 ./bin/mimikactl up --no-flutter       # Backend + MCP only
-./bin/mimikactl up --web              # Backend + MCP + Flutter Web UI
 ./bin/mimikactl down                  # Stop all services
 ./bin/mimikactl restart               # Restart all
 ./bin/mimikactl status                # Check status
@@ -397,7 +386,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 # Flutter Commands
 ./bin/mimikactl flutter start         # Start Flutter (release mode)
 ./bin/mimikactl flutter start --dev   # Start in dev mode
-./bin/mimikactl flutter start --web   # Start Flutter Web UI
 ./bin/mimikactl flutter stop          # Stop Flutter
 ./bin/mimikactl flutter build         # Build macOS app
 
@@ -820,7 +808,7 @@ MimikaStudio/
 │
 ├── pdf/                      # Place PDFs here for the PDF Reader
 │
-├── flutter_app/              # Flutter desktop + web application (~10,100 lines Dart)
+├── flutter_app/              # Flutter desktop application (~10,100 lines Dart)
 │   ├── lib/
 │   │   ├── main.dart         # App entry, 6-tab navigation + Model Manager
 │   │   ├── screens/
