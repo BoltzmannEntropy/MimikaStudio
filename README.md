@@ -16,7 +16,7 @@
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first application for **macOS (Apple Silicon)**, with four core capabilities: **clone any voice** from just 3 seconds of audio using three voice cloning engines (Qwen3-TTS, Chatterbox, Kokoro), generate **high-quality text-to-speech** with multiple engines and premium voices, **read PDFs aloud** with sentence-by-sentence highlighting, and **convert PDFs to audiobooks** using Kokoro voices.
+A local-first application for **macOS (Apple Silicon)** with four integrated capabilities and production-oriented workflows: **clone any voice** from as little as 3 seconds of reference audio using multiple engines (Qwen3-TTS and Chatterbox), generate **high-quality text-to-speech** with fast and expressive model families (Kokoro, Supertonic, and CosyVoice3 namespace), **read PDFs aloud** with sentence-level highlighting and synchronized progression, and **convert full PDFs to audiobooks** with queueable chapter generation and reusable voice presets. MimikaStudio runs fully on-device, includes first-run model download management, and exposes both UI and API paths for advanced local automation.
 
 License: Source code is licensed under Business Source License 1.1 (BSL-1.1), and binary distributions are licensed under the MimikaStudio Binary Distribution License. See LICENSE, BINARY-LICENSE.txt, and the website License page.
 
@@ -47,7 +47,15 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 | [Qwen3-TTS 1.7B Base](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Voice Cloning | 10 languages |
 | [Qwen3-TTS 0.6B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 600M | Preset Speakers | 4 languages (en, zh, ja, ko) |
 | [Qwen3-TTS 1.7B CustomVoice](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers | 4 languages (en, zh, ja, ko) |
+| [Qwen3-TTS 0.6B Base-8bit](https://github.com/QwenLM/Qwen3-TTS) | 600M | Voice Cloning (8-bit) | 10 languages |
+| [Qwen3-TTS 1.7B Base-8bit](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Voice Cloning (8-bit) | 10 languages |
+| [Qwen3-TTS 0.6B CustomVoice-8bit](https://github.com/QwenLM/Qwen3-TTS) | 600M | Preset Speakers (8-bit) | 4 languages (en, zh, ja, ko) |
+| [Qwen3-TTS 1.7B CustomVoice-8bit](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers (8-bit) | 4 languages (en, zh, ja, ko) |
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
+| [Supertonic-2](https://huggingface.co/Supertone/supertonic-2) | — | Multilingual TTS (ONNX) | 5 languages (en, ko, es, pt, fr) |
+| CosyVoice3 (MimikaStudio namespace) | — | Expressive TTS (ONNX backend) | 5 languages (en, ko, es, pt, fr) |
+
+> **Note:** In this release, CosyVoice3 runs as a dedicated UI/API namespace backed by the same `Supertonic-2` model core.
 
 ![MimikaStudio](assets/01-mimikastudio.png)
 
@@ -94,6 +102,33 @@ Expressive voice cloning with emotion control. Natural, emotive speech synthesis
 |-------|--------|
 | **Female (F1)** (Genesis4 Style) | [supertonic-f1-genesis4-demo.wav](backend/data/pregenerated/supertonic-f1-genesis4-demo.wav) |
 | **Male (M2)** (Genesis4 Style) | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) |
+
+### CosyVoice3 TTS
+
+| Voice | Sample |
+|-------|--------|
+| **Female (F1 / Eden Alias)** (Genesis4 Style) | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) |
+| **Male (M2 / Atlas Alias)** (Genesis4 Style) | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) |
+
+### Complete Pregenerated Example Index
+
+All shipped pregenerated demo files in `backend/data/pregenerated`:
+
+| Engine | File | Purpose |
+|--------|------|---------|
+| Qwen3-TTS | [qwen3-natasha-genesis4-demo.wav](backend/data/pregenerated/qwen3-natasha-genesis4-demo.wav) | Voice clone demo (Natasha, Genesis4 style) |
+| Qwen3-TTS | [qwen3-suzan-genesis4-demo.wav](backend/data/pregenerated/qwen3-suzan-genesis4-demo.wav) | Voice clone demo (Suzan, Genesis4 style) |
+| Qwen3-TTS | [qwen3-ryan-genesis4-demo.wav](backend/data/pregenerated/qwen3-ryan-genesis4-demo.wav) | Preset speaker demo (Ryan) |
+| Qwen3-TTS | [qwen3-natasha-hebrew-demo.wav](backend/data/pregenerated/qwen3-natasha-hebrew-demo.wav) | Cross-language clone demo (Hebrew) |
+| Qwen3-TTS | [qwen3-natasha-hebrew-demo.txt](backend/data/pregenerated/qwen3-natasha-hebrew-demo.txt) | Source text for Hebrew demo |
+| Chatterbox | [chatterbox-natasha-demo-1770830814.wav](backend/data/pregenerated/chatterbox-natasha-demo-1770830814.wav) | Emotional clone demo (Natasha) |
+| Chatterbox | [chatterbox-suzan-demo-1770830815.wav](backend/data/pregenerated/chatterbox-suzan-demo-1770830815.wav) | Emotional clone demo (Suzan) |
+| Supertonic | [supertonic-f1-genesis4-demo.wav](backend/data/pregenerated/supertonic-f1-genesis4-demo.wav) | Preset F1 multilingual ONNX demo |
+| Supertonic | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) | Preset M2 multilingual ONNX demo |
+| CosyVoice3 | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) | CosyVoice3 F1/Eden namespace demo |
+| CosyVoice3 | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) | CosyVoice3 M2/Atlas namespace demo |
+
+Kokoro examples are bundled under `backend/data/samples/kokoro/` and listed above in the Kokoro section.
 
 ---
 
@@ -299,7 +334,10 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 | **[Kokoro-82M](https://github.com/hexgrad/kokoro)** | Fast TTS | Sub-200ms latency, British RP & American accents |
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B Base** | Voice Cloning | 3-second cloning, 10 languages |
 | **[Qwen3-TTS](https://github.com/QwenLM/Qwen3-TTS) 0.6B/1.7B CustomVoice** | Preset Speakers | 9 premium voices, style control |
+| **Qwen3-TTS 8-bit variants (0.6B/1.7B Base + CustomVoice)** | Low-memory mode | Smaller footprint with strong quality/speed tradeoff |
 | **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
+| **[Supertonic-2](https://huggingface.co/Supertone/supertonic-2)** | Multilingual ONNX TTS | Low-latency local synthesis across 5 languages |
+| **CosyVoice3 (MimikaStudio namespace)** | Expressive preset TTS | CosyVoice3-style voices with dedicated UI/API surface |
 
 ![Qwen3-TTS Voice Clone](assets/03-mimikastudio.png)
 

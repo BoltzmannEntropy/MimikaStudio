@@ -36,8 +36,17 @@
 
 ## Distribution Notes
 
-- DMG remains unsigned/not notarized as of February 19, 2026.
-- First launch may require Gatekeeper approval via right-click `Open`, then `Open Anyway` in Privacy & Security.
+### Unsigned DMG (Apple Gatekeeper)
+
+As of February 19, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.
+macOS may block first launch until you explicitly allow it in security settings.
+
+1. Open the DMG and drag MimikaStudio.app to Applications.
+2. In Applications, right-click MimikaStudio.app and select Open.
+3. Click Open in the warning dialog.
+4. If macOS still blocks launch, go to: System Settings -> Privacy & Security -> Open Anyway (for MimikaStudio), then confirm with password/Touch ID.
+5. On first launch, wait for the bundled backend to start. The startup log screen below is expected for a few seconds.
+6. On first use, click Download for the required model in the in-app model card.
 
 ---
 
