@@ -8,7 +8,7 @@
     PowerShell port of bin/mimikactl for Windows service orchestration.
 
 .EXAMPLE
-    .\bin\mimikactl.ps1 up --web
+    .\bin\mimikactl.ps1 up
     .\bin\mimikactl.ps1 status
     .\bin\mimikactl.ps1 down
 #>
@@ -52,8 +52,6 @@ $McpPort = if ($env:MIMIKA_MCP_PORT) { [int]$env:MIMIKA_MCP_PORT } else { 8010 }
 
 # Flutter
 $FlutterAppName = "mimika_studio"
-$FlutterWebPort = 5173
-$FlutterWebHost = "127.0.0.1"
 
 # Ensure directories exist
 foreach ($dir in @($PidDir, $LogDir, $RunsLogDir)) {
@@ -298,8 +296,7 @@ function Stop-Backend {
 
 function Start-Flutter {
     param(
-        [string]$Mode = "dev",
-        [string]$Target = "web"
+        [string]$Mode = "dev"
     )
 
     $flutter = Get-FlutterExe
@@ -309,44 +306,18 @@ function Start-Flutter {
         return
     }
 
-    Write-Host "Starting Flutter UI ($Target, $Mode mode)..." -ForegroundColor Blue
+    Write-Host "Starting Flutter UI (Windows, $Mode mode)..." -ForegroundColor Blue
 
-    if ($Target -eq "web") {
-        # Build and serve a static web bundle
-        Stop-Port $FlutterWebPort
-
-        Write-Host "Building Flutter web bundle..."
-        Push-Location $FlutterDir
-        try {
-            & $flutter build web --release
-        } finally {
-            Pop-Location
-        }
-
-        $webBuildDir = Join-Path (Join-Path $FlutterDir "build") "web"
-        $python = Get-VenvPython
-        $flutterLog = Join-Path $LogDir "flutter.log"
-
-        $proc = Start-Process -FilePath $python `
-            -ArgumentList "-m", "http.server", $FlutterWebPort, "--bind", $FlutterWebHost `
-            -WorkingDirectory $webBuildDir `
-            -RedirectStandardOutput $flutterLog `
-            -RedirectStandardError (Join-Path $LogDir "flutter_err.log") `
-            -NoNewWindow `
-            -PassThru
-
-        Save-Pid "flutter" $proc.Id
-        Write-Host "Flutter web serving at http://${FlutterWebHost}:$FlutterWebPort" -ForegroundColor Green
-        return
+    $runArgs = @("run", "-d", "windows")
+    if ($Mode -eq "release") {
+        $runArgs += "--release"
     }
 
-    # Fallback: dev mode with flutter run -d chrome (Windows doesn't have macOS desktop)
-    Write-Host "Running Flutter in dev mode (Chrome)..." -ForegroundColor Blue
     Push-Location $FlutterDir
     try {
         $flutterLog = Join-Path $LogDir "flutter.log"
         $proc = Start-Process -FilePath $flutter `
-            -ArgumentList "run", "-d", "chrome" `
+            -ArgumentList $runArgs `
             -WorkingDirectory $FlutterDir `
             -RedirectStandardOutput $flutterLog `
             -RedirectStandardError (Join-Path $LogDir "flutter_err.log") `
@@ -369,9 +340,6 @@ function Stop-Flutter {
         Remove-PidFile "flutter"
     }
 
-    # Ensure web port is released
-    Stop-Port $FlutterWebPort
-
     Write-Host "Flutter stopped" -ForegroundColor Green
 }
 
@@ -385,7 +353,7 @@ function Build-Flutter {
     Push-Location $FlutterDir
     try {
         & $flutter pub get
-        & $flutter build web --release
+        & $flutter build windows --release
     } finally {
         Pop-Location
     }
@@ -487,14 +455,12 @@ function Invoke-Up {
     $skipFlutter = $false
     $skipMcp = $false
     $flutterMode = "dev"
-    $flutterTarget = "web"   # Default to web on Windows (no macOS desktop)
 
     foreach ($a in $Args) {
         switch ($a) {
             "--no-flutter"       { $skipFlutter = $true }
             "--no-mcp"           { $skipMcp = $true }
             "--flutter-release"  { $flutterMode = "release" }
-            "--web"              { $flutterTarget = "web" }
             default              { Write-Host "Unknown option: $a" -ForegroundColor Yellow }
         }
     }
@@ -507,7 +473,7 @@ function Invoke-Up {
     }
 
     if (-not $skipFlutter) {
-        Start-Flutter -Mode $flutterMode -Target $flutterTarget
+        Start-Flutter -Mode $flutterMode
     }
 
     Write-Host ""
@@ -515,9 +481,6 @@ function Invoke-Up {
     Write-Host "Backend:    http://localhost:$BackendPort"
     Write-Host "API Docs:   http://localhost:$BackendPort/docs"
     Write-Host "MCP Server: http://localhost:$McpPort"
-    if ($flutterTarget -eq "web" -and -not $skipFlutter) {
-        Write-Host "Web UI:     http://${FlutterWebHost}:$FlutterWebPort"
-    }
 }
 
 function Invoke-Down {
@@ -549,25 +512,9 @@ function Invoke-Status {
         }
     }
     if (-not $flutterRunning) {
-        # Also check web port
-        $webListening = $false
-        try {
-            $conn = Get-NetTCPConnection -LocalPort $FlutterWebPort -State Listen -ErrorAction SilentlyContinue
-            if ($conn) {
-                $webListening = $true
-                $wpid = ($conn | Select-Object -First 1).OwningProcess
-                Write-Host "$([char]0x25CF) " -ForegroundColor Green -NoNewline
-                Write-Host "Flutter UI: " -NoNewline
-                Write-Host "RUNNING" -ForegroundColor Green -NoNewline
-                Write-Host " [PID: $wpid, Port: $FlutterWebPort]"
-            }
-        } catch {}
-
-        if (-not $webListening) {
-            Write-Host "$([char]0x25CB) " -ForegroundColor Red -NoNewline
-            Write-Host "Flutter UI: " -NoNewline
-            Write-Host "STOPPED" -ForegroundColor Red
-        }
+        Write-Host "$([char]0x25CB) " -ForegroundColor Red -NoNewline
+        Write-Host "Flutter UI: " -NoNewline
+        Write-Host "STOPPED" -ForegroundColor Red
     }
 
     Write-Host ""
@@ -650,18 +597,16 @@ function Invoke-FlutterStart {
     param([string[]]$Args)
 
     $mode = "dev"
-    $target = "web"  # Default to web on Windows
 
     foreach ($a in $Args) {
         switch ($a) {
             "--dev"     { $mode = "dev" }
             "--release" { $mode = "release" }
-            "--web"     { $target = "web" }
             default     { Write-Host "Unknown option: $a" -ForegroundColor Yellow }
         }
     }
 
-    Start-Flutter -Mode $mode -Target $target
+    Start-Flutter -Mode $mode
 }
 
 function Show-Version {
@@ -692,7 +637,6 @@ function Show-Usage {
     Write-Host "        --no-flutter            Skip Flutter UI"
     Write-Host "        --no-mcp                Skip MCP server"
     Write-Host "        --flutter-release       Run Flutter in release mode (default: dev)"
-    Write-Host "        --web                   Start Flutter in web mode"
     Write-Host "    down                        Stop all services"
     Write-Host "    restart                     Restart all services"
     Write-Host "    status                      Show service status"
@@ -702,9 +646,9 @@ function Show-Usage {
     Write-Host "    backend stop                Stop backend"
     Write-Host ""
     Write-Host "Flutter Commands:" -ForegroundColor Green
-    Write-Host "    flutter start [--dev] [--web]   Start Flutter UI (web mode)"
+    Write-Host "    flutter start [--dev|--release] Start Flutter UI (Windows desktop)"
     Write-Host "    flutter stop                    Stop Flutter UI"
-    Write-Host "    flutter build                   Build Flutter web app"
+    Write-Host "    flutter build                   Build Flutter Windows app"
     Write-Host ""
     Write-Host "MCP Server Commands:" -ForegroundColor Green
     Write-Host "    mcp start                   Start MCP server (for Codex CLI)"
@@ -726,7 +670,6 @@ function Show-Usage {
     Write-Host "Examples:" -ForegroundColor Green
     Write-Host "    .\bin\mimikactl.ps1 up                   # Start everything"
     Write-Host "    .\bin\mimikactl.ps1 up --no-flutter      # Backend + MCP only"
-    Write-Host "    .\bin\mimikactl.ps1 up --web             # Backend + MCP + Flutter web"
     Write-Host "    .\bin\mimikactl.ps1 status               # Check what's running"
     Write-Host "    .\bin\mimikactl.ps1 logs backend         # Tail backend logs"
     Write-Host "    .\bin\mimikactl.ps1 mcp start            # Start MCP for Codex CLI"

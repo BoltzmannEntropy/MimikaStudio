@@ -2,12 +2,12 @@
 # MimikaStudio - Windows Installer Build Script
 # =============================================================================
 # Builds the complete installer:
-#   1. Flutter web app
+#   1. Flutter Windows app
 #   2. Python backend (PyInstaller)
 #   3. Inno Setup installer (.exe)
 #
 # Prerequisites:
-#   - Flutter SDK (for web build)
+#   - Flutter SDK (for Windows desktop build)
 #   - Python venv at .\venv with all dependencies
 #   - PyInstaller (pip install pyinstaller)
 #   - Inno Setup 6 (https://jrsoftware.org/isinfo.php)
@@ -77,7 +77,7 @@ try {
 } catch {}
 
 if (-not $FlutterAvailable) {
-    Write-Host "[WARN] Flutter not found - will skip web build" -ForegroundColor Yellow
+    Write-Host "[WARN] Flutter not found - will skip Windows UI build" -ForegroundColor Yellow
 } else {
     Write-Host "  [OK] Flutter available"
 }
@@ -90,21 +90,21 @@ if (-not $InnoSetup) {
 }
 
 # =============================================================================
-# 2. Build Flutter web app
+# 2. Build Flutter Windows app
 # =============================================================================
 Write-Host ""
-Write-Host "[2/4] Building Flutter web app..." -ForegroundColor Yellow
+Write-Host "[2/4] Building Flutter Windows app..." -ForegroundColor Yellow
 
 if ($FlutterAvailable) {
     Push-Location $FlutterDir
     try {
         flutter pub get
-        flutter build web --release
+        flutter build windows --release
         if ($LASTEXITCODE -ne 0) {
-            Write-Host "[ERROR] Flutter web build failed" -ForegroundColor Red
+            Write-Host "[ERROR] Flutter Windows build failed" -ForegroundColor Red
             exit 1
         }
-        Write-Host "  [OK] Flutter web build complete"
+        Write-Host "  [OK] Flutter Windows build complete"
     } finally {
         Pop-Location
     }
@@ -163,19 +163,19 @@ if ($LASTEXITCODE -ne 0) {
 }
 Write-Host "  [OK] PyInstaller build complete"
 
-# Copy Flutter web build into dist
-$FlutterBuildDir = Join-Path $FlutterDir "build\web"
-$DistWebDir = Join-Path $DistDir "MimikaStudio\web"
+# Copy Flutter Windows build into dist
+$FlutterBuildDir = Join-Path $FlutterDir "build\windows\x64\runner\Release"
+$DistUiDir = Join-Path $DistDir "MimikaStudio\flutter_windows"
 
 if (Test-Path $FlutterBuildDir) {
-    Write-Host "  Copying Flutter web build to dist..."
-    if (Test-Path $DistWebDir) {
-        Remove-Item -Recurse -Force $DistWebDir
+    Write-Host "  Copying Flutter Windows build to dist..."
+    if (Test-Path $DistUiDir) {
+        Remove-Item -Recurse -Force $DistUiDir
     }
-    Copy-Item -Recurse $FlutterBuildDir $DistWebDir
-    Write-Host "  [OK] Flutter web files copied"
+    Copy-Item -Recurse $FlutterBuildDir $DistUiDir
+    Write-Host "  [OK] Flutter Windows files copied"
 } else {
-    Write-Host "  [SKIP] No Flutter web build found"
+    Write-Host "  [SKIP] No Flutter Windows build found"
 }
 
 # =============================================================================

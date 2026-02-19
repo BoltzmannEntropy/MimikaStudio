@@ -28,8 +28,6 @@ MCP_PORT="${MIMIKA_MCP_PORT:-8010}"
 # Flutter app name
 FLUTTER_APP_NAME="mimika_studio"
 FLUTTER_APP_BUNDLE_ID="com.mimikastudio.app"
-FLUTTER_WEB_PORT=5173
-FLUTTER_WEB_HOST="127.0.0.1"
 
 # Colors
 RED='\033[0;31m'
@@ -152,21 +150,9 @@ stop_backend() {
 
 start_flutter() {
     local mode="${1:-release}"
-    local target="${2:-macos}"
-    echo -e "${BLUE}Starting Flutter UI ($target, $mode mode)...${NC}"
+    echo -e "${BLUE}Starting Flutter UI (macOS, $mode mode)...${NC}"
 
     cd "$FLUTTER_DIR"
-
-    if [ "$target" = "web" ]; then
-        # Build and serve a static web bundle
-        kill_port "$FLUTTER_WEB_PORT"
-        echo "Building Flutter web bundle..."
-        flutter build web --release
-        cd "$FLUTTER_DIR/build/web"
-        python3 -m http.server "$FLUTTER_WEB_PORT" --bind "$FLUTTER_WEB_HOST" > "$LOG_DIR/flutter.log" 2>&1 &
-        echo $! > "$PID_DIR/flutter.pid"
-        return
-    fi
 
     if [ "$mode" = "dev" ]; then
         flutter run -d macos > "$LOG_DIR/flutter.log" 2>&1 &
@@ -199,9 +185,6 @@ stop_flutter() {
 
     # Kill app by bundle ID
     osascript -e 'quit app "MimikaStudio"' 2>/dev/null || true
-
-    # Ensure web port is released
-    kill_port "$FLUTTER_WEB_PORT"
 
     echo -e "${GREEN}Flutter stopped${NC}"
 }
@@ -286,20 +269,17 @@ run_tests() {
 
 cmd_flutter_start() {
     local mode="dev"
-    local target="macos"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --dev) mode="dev" ;;
             --release) mode="release" ;;
-            --web) target="web" ;;
-            --macos) target="macos" ;;
             *) echo "Unknown option: $1" ;;
         esac
         shift
     done
 
-    start_flutter "$mode" "$target"
+    start_flutter "$mode"
 }
 
 # ============== Main Commands ==============
@@ -308,14 +288,12 @@ cmd_up() {
     local skip_flutter=false
     local skip_mcp=false
     local flutter_mode="dev"
-    local flutter_target="macos"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --no-flutter) skip_flutter=true ;;
             --no-mcp) skip_mcp=true ;;
             --flutter-release) flutter_mode="release" ;;
-            --web) flutter_target="web" ;;
             *) echo "Unknown option: $1" ;;
         esac
         shift
@@ -329,7 +307,7 @@ cmd_up() {
     fi
 
     if [ "$skip_flutter" = false ]; then
-        start_flutter "$flutter_mode" "$flutter_target"
+        start_flutter "$flutter_mode"
     fi
 
     echo ""
@@ -337,9 +315,6 @@ cmd_up() {
     echo -e "Backend:    http://localhost:$BACKEND_PORT"
     echo -e "API Docs:   http://localhost:$BACKEND_PORT/docs"
     echo -e "MCP Server: http://localhost:$MCP_PORT"
-    if [ "$flutter_target" = "web" ] && [ "$skip_flutter" = false ]; then
-        echo -e "Web UI:     http://$FLUTTER_WEB_HOST:$FLUTTER_WEB_PORT"
-    fi
 }
 
 cmd_down() {
@@ -439,7 +414,6 @@ ${GREEN}Service Commands:${NC}
         --no-flutter            Skip Flutter UI
         --no-mcp                Skip MCP server
         --flutter-release       Run Flutter in release mode (default: dev)
-        --web                   Start Flutter in web mode
     down                        Stop all services
     restart                     Restart all services
     status                      Show service status
@@ -449,7 +423,7 @@ ${GREEN}Backend Commands:${NC}
     backend stop                Stop backend
 
 ${GREEN}Flutter Commands:${NC}
-    flutter start [--dev] [--web]       Start Flutter UI (macOS or web)
+    flutter start [--dev|--release]     Start Flutter UI (macOS)
     flutter stop                Stop Flutter UI
     flutter build               Build Flutter macOS app
 
@@ -473,7 +447,6 @@ ${GREEN}Utility Commands:${NC}
 ${GREEN}Examples:${NC}
     mimikactl up                   # Start everything
     mimikactl up --no-flutter      # Backend + MCP only
-    mimikactl up --web             # Backend + MCP + Flutter web
     mimikactl status               # Check what's running
     mimikactl logs backend         # Tail backend logs
     mimikactl mcp start            # Start MCP for Codex CLI
