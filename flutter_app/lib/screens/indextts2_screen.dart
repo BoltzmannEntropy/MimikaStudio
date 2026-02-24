@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -555,6 +556,37 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
         }
       }
+    }
+  }
+
+  Future<void> _downloadAudioFile(Map<String, dynamic> file) async {
+    final audioUrl = file['audio_url'] as String?;
+    final filename = file['filename'] as String? ?? 'indextts2-audio.wav';
+    if (audioUrl == null || audioUrl.isEmpty) return;
+
+    try {
+      final bytes = await _api.downloadAudioBytes(audioUrl);
+      final ext = filename.contains('.') ? filename.split('.').last : 'wav';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save audio file',
+        fileName: filename,
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+      if (savePath == null) return;
+
+      final destination = File(savePath);
+      await destination.create(recursive: true);
+      await destination.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to $savePath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
     }
   }
 
@@ -1138,11 +1170,25 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
               ),
             ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, size: 16),
-              onPressed: () => _deleteAudioFile(filename),
-              tooltip: 'Delete',
-              visualDensity: VisualDensity.compact,
+            trailing: SizedBox(
+              width: 72,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    onPressed: () => _downloadAudioFile(file),
+                    tooltip: 'Download',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    onPressed: () => _deleteAudioFile(filename),
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
             ),
           ),
           Padding(

@@ -16,10 +16,9 @@ import numpy as np
 import soundfile as sf
 from scipy import signal
 
-try:
-    import mlx.core as mx
-except Exception:  # pragma: no cover - fallback for non-MLX systems
-    mx = None
+# Keep MLX import lazy to avoid backend startup aborts on machines without a
+# usable Metal device context.
+mx = None
 
 # Supported languages
 LANGUAGES = {

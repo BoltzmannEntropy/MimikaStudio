@@ -6,6 +6,9 @@ pydantic>=2.0.0
 
 # TTS Engines
 mlx-audio>=0.3.1                  # MLX backend for Kokoro, Qwen3-TTS, Chatterbox
+onnxruntime==1.18.0               # CosyVoice3 standalone ONNX runtime
+transformers>=4.51.3              # Tokenizer for CosyVoice3 ONNX script
+librosa>=0.10.0                   # Prompt audio preprocessing for CosyVoice3 ONNX script
 
 # Audio processing
 soundfile>=0.12.1

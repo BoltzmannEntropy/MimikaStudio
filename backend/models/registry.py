@@ -187,6 +187,17 @@ class ModelRegistry:
                 model_type="huggingface",
                 description="Lightning-fast multilingual ONNX TTS",
             ),
+            # CosyVoice3 standalone ONNX model pack
+            ModelInfo(
+                name="CosyVoice3",
+                engine="cosyvoice3",
+                hf_repo="ayousanz/cosy-voice3-onnx",
+                local_dir=self.models_dir / "models--ayousanz--cosy-voice3-onnx",
+                size_gb=3.8,
+                mode="tts",
+                model_type="huggingface",
+                description="CosyVoice3 standalone ONNX runtime (preset expressive voices, no PyTorch)",
+            ),
         ]
 
     def get_model(self, name: str) -> Optional[ModelInfo]:

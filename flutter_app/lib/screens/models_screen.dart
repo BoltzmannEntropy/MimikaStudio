@@ -23,6 +23,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   static const List<String> _engineOrder = [
     'kokoro',
     'supertonic',
+    'cosyvoice3',
     'qwen3',
     'chatterbox',
     'indextts2',
@@ -30,6 +31,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   static const Map<String, String> _engineLabels = {
     'kokoro': 'Kokoro',
     'supertonic': 'Supertonic',
+    'cosyvoice3': 'CosyVoice3',
     'qwen3': 'Qwen3-TTS',
     'chatterbox': 'Chatterbox',
     'indextts2': 'IndexTTS-2',
@@ -37,6 +39,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   static const Map<String, String> _engineDescriptions = {
     'kokoro': 'High-quality British English TTS with multiple voices',
     'supertonic': 'Lightning-fast multilingual ONNX text-to-speech',
+    'cosyvoice3': 'CosyVoice3 standalone ONNX multilingual voice-cloning model',
     'qwen3': 'Voice cloning and custom voice synthesis',
     'chatterbox': 'Expressive voice cloning with emotion control',
     'indextts2': 'Fast voice cloning with natural prosody',
@@ -169,6 +172,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
         return Icons.mic;
       case 'supertonic':
         return Icons.bolt;
+      case 'cosyvoice3':
+        return Icons.auto_awesome;
       case 'indextts2':
         return Icons.auto_awesome;
       default:
@@ -186,6 +191,8 @@ class _ModelsScreenState extends State<ModelsScreen> {
         return Colors.orange;
       case 'supertonic':
         return Colors.deepPurple;
+      case 'cosyvoice3':
+        return Colors.indigo;
       case 'indextts2':
         return Colors.deepPurple;
       default:

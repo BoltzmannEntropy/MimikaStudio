@@ -15,6 +15,7 @@ pydantic>=2.0.0
 kokoro>=0.9.4                     # Kokoro TTS (British/American voices)
 qwen-tts>=0.0.5                   # Qwen3-TTS (voice cloning & custom voices)
 supertonic>=1.1.2                 # Supertonic-2 ONNX TTS
+onnxruntime==1.18.0               # CosyVoice3 standalone ONNX runtime
 transformers==4.57.3              # Required by qwen-tts (pinned)
 accelerate>=1.12.0                # Required by qwen-tts
 
@@ -33,9 +34,7 @@ librosa>=0.10.0                   # Audio utilities
 resampy>=0.4.3                    # Audio resampling
 s3tokenizer>=0.3.0                # Tokenizer
 
-# --- PyTorch (CPU for macOS) ---
-torch>=2.1.0
-torchaudio>=2.1.0
+# --- Alignment runtime (no PyTorch dependency required) ---
 faster-whisper>=1.1.0            # Forced word alignment timestamps for read-aloud sync
 
 # --- Chatterbox TTS dependencies ---

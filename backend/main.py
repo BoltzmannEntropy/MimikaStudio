@@ -41,6 +41,12 @@ from tts.supertonic_engine import (
     SUPPORTED_LANGUAGES as SUPERTONIC_LANGUAGES,
     DEFAULT_VOICE_NAME as SUPERTONIC_DEFAULT_VOICE,
 )
+from tts.cosyvoice3_engine import (
+    get_cosyvoice3_engine,
+    CosyVoice3Params,
+    SUPPORTED_LANGUAGES as COSYVOICE3_LANGUAGES,
+    DEFAULT_VOICE_NAME as COSYVOICE3_DEFAULT_VOICE,
+)
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
 from models.registry import ModelRegistry
@@ -90,21 +96,6 @@ _log_dir = _ensure_dir_with_fallback(
     Path("/tmp/mimikastudio-logs"),
 )
 _api_log_path = _log_dir / "backend_api.log"
-
-COSYVOICE3_ALIAS_TO_STYLE = {
-    "Eden": "F1",
-    "Astra": "F2",
-    "Lyra": "F3",
-    "Nova": "F4",
-    "Iris": "F5",
-    "Orion": "M1",
-    "Atlas": "M2",
-    "Silas": "M3",
-    "Kai": "M4",
-    "Noah": "M5",
-}
-COSYVOICE3_STYLE_TO_ALIAS = {v: k for k, v in COSYVOICE3_ALIAS_TO_STYLE.items()}
-COSYVOICE3_DEFAULT_VOICE = "Eden"
 
 logger = logging.getLogger("mimika.backend.api")
 
@@ -272,7 +263,9 @@ async def lifespan(app: FastAPI):
     seed_db()
     _ensure_supertonic_pregenerated_rows()
     _ensure_cosyvoice3_pregenerated_rows()
-    _sync_output_folder_runtime(get_output_folder())
+    env_output_override = _env_path("MIMIKA_OUTPUT_DIR")
+    configured_output = str(env_output_override) if env_output_override else get_output_folder()
+    _sync_output_folder_runtime(configured_output)
     _migrate_legacy_voice_samples()
     logger.info("Database ready.", extra={"request_id": "startup"})
     yield
@@ -374,6 +367,102 @@ app.mount("/audio", SafeStaticFiles(directory=str(outputs_dir)), name="audio")
 
 _word_align_model = None
 _word_align_model_lock = threading.Lock()
+_job_history: deque[dict] = deque(maxlen=2000)
+_job_history_lock = threading.Lock()
+
+
+def _record_job_history_entry(entry: dict) -> None:
+    with _job_history_lock:
+        _job_history.appendleft(entry)
+
+
+def _record_job_event(
+    http_request: Request,
+    *,
+    engine: str,
+    mode: str,
+    status: str,
+    text: str = "",
+    output_path: Optional[Path] = None,
+    streamed: bool = False,
+    voice: Optional[str] = None,
+    speaker: Optional[str] = None,
+    language: Optional[str] = None,
+    model_name: Optional[str] = None,
+    job_type: Optional[str] = None,
+    job_id: Optional[str] = None,
+    title: Optional[str] = None,
+) -> None:
+    request_id = getattr(http_request.state, "request_id", "-")
+    resolved_type = job_type or ("voice_clone" if mode == "clone" else "tts")
+    if streamed and resolved_type == "tts":
+        resolved_type = "tts_stream"
+    _record_job_history_entry(
+        {
+            "id": job_id or str(uuid.uuid4())[:12],
+            "type": resolved_type,
+            "engine": engine,
+            "mode": mode,
+            "status": status,
+            "title": title or f"{engine} {mode}",
+            "chars": len((text or "").strip()),
+            "voice": voice,
+            "speaker": speaker,
+            "language": language,
+            "model": model_name,
+            "streamed": streamed,
+            "output_path": str(output_path) if output_path else None,
+            "audio_url": f"/audio/{output_path.name}" if output_path else None,
+            "request_id": request_id,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+        }
+    )
+
+
+def _log_generation_event(
+    http_request: Request,
+    *,
+    engine: str,
+    mode: str,
+    text: str,
+    output_path: Optional[Path] = None,
+    streamed: bool = False,
+    voice: Optional[str] = None,
+    speaker: Optional[str] = None,
+    language: Optional[str] = None,
+    model_name: Optional[str] = None,
+) -> None:
+    """Emit a consistent log line for TTS/voice-clone generation requests."""
+    _record_job_event(
+        http_request,
+        engine=engine,
+        mode=mode,
+        status="completed",
+        text=text,
+        output_path=output_path,
+        streamed=streamed,
+        voice=voice,
+        speaker=speaker,
+        language=language,
+        model_name=model_name,
+    )
+    request_id = getattr(http_request.state, "request_id", "-")
+    logger.info(
+        (
+            "generation engine=%s mode=%s streamed=%s chars=%s voice=%s "
+            "speaker=%s language=%s model=%s output=%s"
+        ),
+        engine,
+        mode,
+        "yes" if streamed else "no",
+        len((text or "").strip()),
+        voice or "-",
+        speaker or "-",
+        language or "-",
+        model_name or "-",
+        str(output_path) if output_path else "-",
+        extra={"request_id": request_id},
+    )
 
 
 def _normalize_alignment_token(token: str) -> str:
@@ -503,6 +592,13 @@ def _sync_output_folder_runtime(path: str) -> Path:
     return resolved
 
 
+def _output_folder_from_env_or_settings() -> str:
+    env_output_override = _env_path("MIMIKA_OUTPUT_DIR")
+    if env_output_override is not None:
+        return str(env_output_override)
+    return get_output_folder()
+
+
 def _normalize_pdf_text_for_tts(text: str) -> str:
     """Normalize extracted PDF text for sentence parsing and read-aloud."""
     if not text:
@@ -521,39 +617,6 @@ def _normalize_pdf_text_for_tts(text: str) -> str:
     normalized = re.sub(r"[ \t]+", " ", normalized)
     normalized = re.sub(r"\n{3,}", "\n\n", normalized)
     return normalized.strip()
-
-
-def _cosyvoice3_alias_for_style(style_code: str) -> str:
-    return COSYVOICE3_STYLE_TO_ALIAS.get(style_code, style_code)
-
-
-def _cosyvoice3_style_for_voice(voice: str, available_styles: list[str]) -> str:
-    requested = (voice or "").strip()
-    if requested in COSYVOICE3_ALIAS_TO_STYLE:
-        candidate = COSYVOICE3_ALIAS_TO_STYLE[requested]
-        if candidate in available_styles:
-            return candidate
-    # Backward compatibility: allow direct style codes.
-    if requested in available_styles:
-        return requested
-    default_style = COSYVOICE3_ALIAS_TO_STYLE.get(COSYVOICE3_DEFAULT_VOICE, SUPERTONIC_DEFAULT_VOICE)
-    if default_style in available_styles:
-        return default_style
-    if SUPERTONIC_DEFAULT_VOICE in available_styles:
-        return SUPERTONIC_DEFAULT_VOICE
-    return available_styles[0] if available_styles else SUPERTONIC_DEFAULT_VOICE
-
-
-def _rename_output_prefix(path: Path, old_prefix: str, new_prefix: str) -> Path:
-    if not path.name.startswith(old_prefix):
-        return path
-    renamed = path.with_name(new_prefix + path.name[len(old_prefix):])
-    if renamed == path:
-        return path
-    if renamed.exists():
-        renamed.unlink()
-    path.replace(renamed)
-    return renamed
 
 
 def _ensure_supertonic_pregenerated_rows() -> None:
@@ -660,8 +723,7 @@ def _ensure_cosyvoice3_pregenerated_rows() -> None:
     if not pregen_dir.exists():
         return
 
-    # CosyVoice3 currently uses the same synthesis backend; keep separate
-    # filenames/rows so the UI and filtering are engine-specific.
+    # Keep separate filenames/rows so the UI and filtering are engine-specific.
     source_to_target = [
         ("supertonic-f1-genesis4-demo.wav", "cosyvoice3-f1-genesis4-demo.wav"),
         ("supertonic-m2-genesis4-demo.wav", "cosyvoice3-m2-genesis4-demo.wav"),
@@ -1053,11 +1115,23 @@ async def system_info():
     """Get system information including Python version, device, and model versions."""
     import sys
     import platform
+    import subprocess
     from importlib import metadata
 
+    # Probe MLX in a subprocess to avoid hard interpreter aborts from native import failures.
+    probe_code = (
+        "import mlx.core as mx; "
+        "print('1' if bool(mx.metal.is_available()) else '0')"
+    )
     try:
-        import mlx.core as mx
-        mlx_available = bool(mx.metal.is_available())
+        probe = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        mlx_available = probe.returncode == 0 and probe.stdout.strip() == "1"
     except Exception:
         mlx_available = False
 
@@ -1088,6 +1162,11 @@ async def system_info():
         "backend": "onnxruntime",
         "features": "multilingual on-device synthesis",
     }
+    cosyvoice3_info = {
+        "model": "ayousanz/cosy-voice3-onnx",
+        "backend": "onnxruntime",
+        "features": "expressive preset multilingual TTS (separate ONNX stack)",
+    }
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -1102,6 +1181,7 @@ async def system_info():
             "qwen3": qwen3_info,
             "chatterbox": chatterbox_info,
             "supertonic": supertonic_info,
+            "cosyvoice3": cosyvoice3_info,
         }
     }
 
@@ -1109,11 +1189,10 @@ async def system_info():
 @app.get("/api/system/stats")
 async def system_stats():
     """Get real-time system stats: CPU, RAM, GPU memory."""
+    import json
     import psutil
-    try:
-        import mlx.core as mx
-    except Exception:
-        mx = None
+    import subprocess
+    import sys
 
     # CPU usage
     cpu_percent = psutil.cpu_percent(interval=0.1)
@@ -1132,18 +1211,43 @@ async def system_stats():
         "gpu": None,
     }
 
-    # GPU memory (if available on MLX)
-    if mx is not None and mx.metal.is_available():
-        active_mem = mx.get_active_memory() / (1024 ** 3)
-        peak_mem = mx.get_peak_memory() / (1024 ** 3)
-        result["gpu"] = {
-            "name": "Apple Silicon (MLX)",
-            "memory_used_gb": round(active_mem, 2),
-            "memory_total_gb": None,
-            "memory_percent": None,
-            "peak_memory_gb": round(peak_mem, 2),
-            "note": "MLX memory is shared with system RAM",
-        }
+    # GPU memory (if available on MLX). Probe in a subprocess to avoid hard aborts.
+    probe_code = """
+import json
+import mlx.core as mx
+if not mx.metal.is_available():
+    print("{}")
+else:
+    print(json.dumps({
+        "active": float(mx.get_active_memory()),
+        "peak": float(mx.get_peak_memory())
+    }))
+"""
+    try:
+        probe = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if probe.returncode == 0:
+            payload = json.loads(probe.stdout.strip() or "{}")
+            active_raw = payload.get("active")
+            peak_raw = payload.get("peak")
+            if active_raw is not None and peak_raw is not None:
+                active_mem = float(active_raw) / (1024 ** 3)
+                peak_mem = float(peak_raw) / (1024 ** 3)
+                result["gpu"] = {
+                    "name": "Apple Silicon (MLX)",
+                    "memory_used_gb": round(active_mem, 2),
+                    "memory_total_gb": None,
+                    "memory_percent": None,
+                    "peak_memory_gb": round(peak_mem, 2),
+                    "note": "MLX memory is shared with system RAM",
+                }
+    except Exception:
+        pass
 
     return result
 
@@ -1306,7 +1410,7 @@ async def list_all_custom_voices():
 # ============== Kokoro Endpoints ==============
 
 @app.post("/api/kokoro/generate")
-async def kokoro_generate(request: KokoroRequest):
+async def kokoro_generate(request: KokoroRequest, http_request: Request):
     """Generate speech using Kokoro with predefined British voice."""
     try:
         _ensure_named_model_ready("Kokoro", engine_label="Kokoro")
@@ -1324,6 +1428,15 @@ async def kokoro_generate(request: KokoroRequest):
         short_uuid = str(uuid.uuid4())[:8]
         output_path = outputs_dir / f"kokoro-{voice}-{short_uuid}.wav"
         sf.write(str(output_path), audio, sample_rate)
+        _log_generation_event(
+            http_request,
+            engine="kokoro",
+            mode="tts",
+            text=request.text,
+            output_path=output_path,
+            voice=voice,
+            model_name="Kokoro",
+        )
 
         return {
             "audio_url": f"/audio/{output_path.name}",
@@ -1414,7 +1527,7 @@ async def kokoro_list_voices():
 # ============== Supertonic Endpoints ==============
 
 @app.post("/api/supertonic/generate")
-async def supertonic_generate(request: SupertonicRequest):
+async def supertonic_generate(request: SupertonicRequest, http_request: Request):
     """Generate speech using Supertonic-2 ONNX model."""
     try:
         snapshot_path = _ensure_named_model_ready("Supertonic-2", engine_label="Supertonic")
@@ -1434,6 +1547,16 @@ async def supertonic_generate(request: SupertonicRequest):
             params=params,
             model_name="supertonic-2",
             model_dir=snapshot_path,
+        )
+        _log_generation_event(
+            http_request,
+            engine="supertonic",
+            mode="tts",
+            text=request.text,
+            output_path=output_path,
+            voice=request.voice,
+            language=request.language,
+            model_name="Supertonic-2",
         )
         return {
             "audio_url": f"/audio/{output_path.name}",
@@ -1479,102 +1602,73 @@ async def supertonic_info():
 
 @app.get("/api/cosyvoice3/voices")
 async def cosyvoice3_list_voices():
-    """List CosyVoice3 voices (aliases mapped to internal style codes)."""
-    engine = get_supertonic_engine()
-    style_codes = [str(v.get("code", "")).strip() for v in engine.get_voices()]
-    style_codes = [s for s in style_codes if s]
-    voices = []
-    for alias, style_code in COSYVOICE3_ALIAS_TO_STYLE.items():
-        if style_code not in style_codes:
-            continue
-        voices.append(
-            {
-                "code": alias,
-                "name": alias,
-                "gender": "female" if style_code.startswith("F") else "male",
-                "is_default": alias == COSYVOICE3_DEFAULT_VOICE,
-                "backend_style": style_code,
-            }
-        )
-
-    if not voices:
-        for style_code in style_codes:
-            alias = _cosyvoice3_alias_for_style(style_code)
-            voices.append(
-                {
-                    "code": alias,
-                    "name": alias,
-                    "gender": "female" if style_code.startswith("F") else "male",
-                    "is_default": False,
-                    "backend_style": style_code,
-                }
-            )
-
-    default_voice = COSYVOICE3_DEFAULT_VOICE if any(v["code"] == COSYVOICE3_DEFAULT_VOICE for v in voices) else (voices[0]["code"] if voices else COSYVOICE3_DEFAULT_VOICE)
-    return {"voices": voices, "default": default_voice}
+    """List available CosyVoice3 ONNX preset voices."""
+    engine = get_cosyvoice3_engine()
+    return {"voices": engine.get_voices(), "default": COSYVOICE3_DEFAULT_VOICE}
 
 
 @app.get("/api/cosyvoice3/languages")
 async def cosyvoice3_list_languages():
     """List languages supported by CosyVoice3 backend."""
-    return {"languages": list(SUPERTONIC_LANGUAGES), "default": "en"}
+    return {"languages": list(COSYVOICE3_LANGUAGES), "default": "Auto"}
 
 
 @app.get("/api/cosyvoice3/info")
 async def cosyvoice3_info():
-    engine = get_supertonic_engine()
+    engine = get_cosyvoice3_engine()
     info = engine.get_model_info()
-    style_codes = [str(v.get("code", "")).strip() for v in engine.get_voices()]
-    aliases = [alias for alias, style_code in COSYVOICE3_ALIAS_TO_STYLE.items() if style_code in style_codes]
-    info.update(
-        {
-            "name": "CosyVoice3",
-            "backend": "onnxruntime (supertonic core)",
-            "voices": aliases,
-        }
-    )
+    info["installed"] = bool(engine.is_runtime_available())
     return info
 
 
 @app.post("/api/cosyvoice3/generate")
-async def cosyvoice3_generate(request: SupertonicRequest):
-    """Generate speech via CosyVoice3 namespace (isolated output prefix)."""
+async def cosyvoice3_generate(request: SupertonicRequest, http_request: Request):
+    """Generate speech using the dedicated CosyVoice3 ONNX runtime."""
     try:
-        snapshot_path = _ensure_named_model_ready("Supertonic-2", engine_label="CosyVoice3")
-        engine = get_supertonic_engine()
+        snapshot_path = _ensure_named_model_ready("CosyVoice3", engine_label="CosyVoice3")
+        engine = get_cosyvoice3_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
-        available_styles = [str(v.get("code", "")).strip() for v in engine.get_voices()]
-        available_styles = [s for s in available_styles if s]
-        style_code = _cosyvoice3_style_for_voice(request.voice, available_styles)
-        params = SupertonicParams(
+        params = CosyVoice3Params(
             speed=request.speed,
-            total_steps=request.total_steps,
-            max_chunk_length=request.max_chars_per_chunk if request.smart_chunking else None,
-            silence_duration=max(0.0, float(request.silence_ms) / 1000.0),
             language=request.language,
         )
         output_path = engine.generate(
             text=request.text,
-            voice=style_code,
+            voice=request.voice,
             params=params,
-            model_name="supertonic-2",
-            model_dir=snapshot_path,
+            snapshot_dir=snapshot_path,
         )
-        output_path = _rename_output_prefix(output_path, "supertonic-", "cosyvoice3-")
+        resolved_voice = request.voice if request.voice else COSYVOICE3_DEFAULT_VOICE
+        _log_generation_event(
+            http_request,
+            engine="cosyvoice3",
+            mode="tts",
+            text=request.text,
+            output_path=output_path,
+            voice=resolved_voice,
+            language=request.language,
+            model_name="CosyVoice3",
+        )
         return {
             "audio_url": f"/audio/{output_path.name}",
             "filename": output_path.name,
-            "voice": _cosyvoice3_alias_for_style(style_code),
+            "voice": resolved_voice,
             "language": request.language,
         }
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail=f"CosyVoice3 backend unavailable. Run: pip install supertonic. Error: {e}",
+            detail=(
+                "CosyVoice3 ONNX runtime unavailable. Install dependencies: "
+                "onnxruntime==1.18.0 librosa transformers soundfile scipy. "
+                f"Error: {e}"
+            ),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 # ============== Qwen3-TTS Endpoints (Voice Clone + Custom Voice) ==============
 
@@ -1611,7 +1705,7 @@ def _ensure_qwen3_model_ready(mode: str, model_size: str, model_quantization: st
     return _ensure_named_model_ready(model_name, engine_label="Qwen3")
 
 @app.post("/api/qwen3/generate")
-async def qwen3_generate(request: Qwen3Request):
+async def qwen3_generate(request: Qwen3Request, http_request: Request):
     """Generate speech using Qwen3-TTS.
 
     Supports two modes:
@@ -1735,6 +1829,19 @@ async def qwen3_generate(request: Qwen3Request):
         if request.unload_after:
             engine.unload()
 
+        _log_generation_event(
+            http_request,
+            engine="qwen3",
+            mode=request.mode,
+            text=request.text,
+            output_path=output_path,
+            voice=request.voice_name if request.mode == "clone" else None,
+            speaker=request.speaker if request.mode == "custom" else None,
+            language=request.language,
+            model_name=_qwen3_model_name_for_request(
+                request.mode, request.model_size, request.model_quantization
+            ),
+        )
         return result
 
     except ImportError as e:
@@ -1749,7 +1856,7 @@ async def qwen3_generate(request: Qwen3Request):
 
 
 @app.post("/api/qwen3/generate/stream")
-async def qwen3_generate_stream(request: Qwen3Request):
+async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
     """Generate speech and stream raw PCM chunks as they are synthesized."""
     from fastapi.responses import StreamingResponse
 
@@ -1865,6 +1972,19 @@ async def qwen3_generate_stream(request: Qwen3Request):
             "X-Audio-Sample-Rate": "24000",
             "X-Audio-Channels": "1",
         }
+        _log_generation_event(
+            http_request,
+            engine="qwen3",
+            mode=request.mode,
+            text=request.text,
+            streamed=True,
+            voice=request.voice_name if request.mode == "clone" else None,
+            speaker=request.speaker if request.mode == "custom" else None,
+            language=request.language,
+            model_name=_qwen3_model_name_for_request(
+                request.mode, request.model_size, request.model_quantization
+            ),
+        )
         return StreamingResponse(
             iterator(),
             media_type="audio/L16; rate=24000; channels=1",
@@ -2131,7 +2251,7 @@ async def qwen3_clear_cache():
 # ============== Chatterbox Endpoints (Voice Clone) ==============
 
 @app.post("/api/chatterbox/generate")
-async def chatterbox_generate(request: ChatterboxRequest):
+async def chatterbox_generate(request: ChatterboxRequest, http_request: Request):
     """Generate speech using Chatterbox voice cloning."""
     try:
         _ensure_named_model_ready("Chatterbox Multilingual", engine_label="Chatterbox")
@@ -2171,6 +2291,16 @@ async def chatterbox_generate(request: ChatterboxRequest):
         if request.unload_after:
             engine.unload()
 
+        _log_generation_event(
+            http_request,
+            engine="chatterbox",
+            mode="clone",
+            text=request.text,
+            output_path=output_path,
+            voice=request.voice_name,
+            language=request.language,
+            model_name="Chatterbox Multilingual",
+        )
         return {
             "audio_url": f"/audio/{output_path.name}",
             "filename": output_path.name,
@@ -2410,7 +2540,7 @@ async def chatterbox_dicta_download():
 # ============== IndexTTS-2 Endpoints (Voice Clone) ==============
 
 @app.post("/api/indextts2/generate")
-async def indextts2_generate(request: IndexTTS2Request):
+async def indextts2_generate(request: IndexTTS2Request, http_request: Request):
     """Generate speech using IndexTTS-2 voice cloning."""
     try:
         engine = _get_indextts2_engine()
@@ -2440,6 +2570,15 @@ async def indextts2_generate(request: IndexTTS2Request):
         if request.unload_after:
             engine.unload()
 
+        _log_generation_event(
+            http_request,
+            engine="indextts2",
+            mode="clone",
+            text=request.text,
+            output_path=output_path,
+            voice=request.voice_name,
+            model_name="IndexTTS-2",
+        )
         return {
             "audio_url": f"/audio/{output_path.name}",
             "filename": output_path.name,
@@ -2587,9 +2726,28 @@ async def indextts2_info():
 # ============== Model Management Endpoints ==============
 
 # Track active downloads:
-# model_name -> {"status": "downloading"/"completed"/"failed", "error": str|None, "path": str|None}
+# key (repo/name) -> {"status": "downloading"/"completed"/"failed", "error": str|None, "path": str|None}
 _download_status: dict[str, dict] = {}
 _download_status_lock = threading.Lock()
+
+
+def _download_key_for_model(model) -> str:
+    """Use HuggingFace repo as the canonical download key when available."""
+    hf_repo = (getattr(model, "hf_repo", "") or "").strip()
+    if hf_repo:
+        return f"hf:{hf_repo}"
+    return f"name:{getattr(model, 'name', '')}"
+
+
+def _download_status_for_model(model) -> Optional[dict]:
+    """Return download status for a model, with backward compatibility for old keys."""
+    key = _download_key_for_model(model)
+    with _download_status_lock:
+        status_info = _download_status.get(key)
+        if status_info is None:
+            # Backward compatibility with old name-keyed status entries.
+            status_info = _download_status.get(getattr(model, "name", ""))
+    return status_info
 
 
 @app.get("/api/models/status")
@@ -2601,8 +2759,7 @@ async def models_status():
         snapshot_path = registry.get_downloaded_snapshot_path(m)
         downloaded = snapshot_path is not None
         cache_dir = registry.get_model_cache_dir(m)
-        with _download_status_lock:
-            status_info = _download_status.get(m.name)
+        status_info = _download_status_for_model(m)
         status_path = status_info.get("path") if status_info else None
         models.append({
             "name": m.name,
@@ -2638,9 +2795,11 @@ async def model_download(model_name: str):
     if not model.hf_repo:
         raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
 
+    download_key = _download_key_for_model(model)
+
     # Check if already downloading
     with _download_status_lock:
-        current = _download_status.get(model_name)
+        current = _download_status.get(download_key) or _download_status.get(model_name)
     if current and current.get("status") == "downloading":
         return {
             "message": "Download already in progress",
@@ -2650,21 +2809,24 @@ async def model_download(model_name: str):
         }
 
     with _download_status_lock:
-        _download_status[model_name] = {"status": "downloading", "error": None, "path": None}
+        _download_status[download_key] = {"status": "downloading", "error": None, "path": None}
+        # Keep legacy name-key in sync if present, but do not rely on it.
+        if model_name in _download_status:
+            del _download_status[model_name]
 
     def _do_download():
         try:
             from huggingface_hub import snapshot_download
             snapshot_path = snapshot_download(model.hf_repo)
             with _download_status_lock:
-                _download_status[model_name] = {
+                _download_status[download_key] = {
                     "status": "completed",
                     "error": None,
                     "path": str(snapshot_path),
                 }
         except Exception as e:
             with _download_status_lock:
-                _download_status[model_name] = {
+                _download_status[download_key] = {
                     "status": "failed",
                     "error": str(e),
                     "path": None,
@@ -2710,7 +2872,10 @@ async def model_delete(model_name: str):
         try:
             shutil.rmtree(cache_dir)
             # Clear download status if any
+            download_key = _download_key_for_model(model)
             with _download_status_lock:
+                if download_key in _download_status:
+                    del _download_status[download_key]
                 if model_name in _download_status:
                     del _download_status[model_name]
             return {
@@ -2722,6 +2887,63 @@ async def model_delete(model_name: str):
             raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
     else:
         raise HTTPException(status_code=404, detail=f"Model cache directory not found")
+
+
+@app.get("/api/jobs")
+async def jobs_list(limit: int = 200):
+    """List recent generation jobs across TTS, voice-clone, and audiobook flows."""
+    safe_limit = max(1, min(limit, 1000))
+    with _job_history_lock:
+        items = list(_job_history)
+
+    # Merge live audiobook job state so running/queued progress appears in Jobs UI.
+    try:
+        from tts.audiobook import list_jobs as _list_audiobook_jobs
+
+        for job in _list_audiobook_jobs():
+            timestamp = datetime.utcfromtimestamp(job.started_at).isoformat() + "Z"
+            items.insert(
+                0,
+                {
+                    "id": job.job_id,
+                    "type": "audiobook",
+                    "engine": "kokoro",
+                    "mode": "audiobook",
+                    "status": job.status.value,
+                    "title": job.title or f"Audiobook {job.job_id}",
+                    "chars": job.total_chars,
+                    "voice": job.voice,
+                    "speaker": None,
+                    "language": "en",
+                    "model": "Kokoro",
+                    "streamed": False,
+                    "output_path": str(job.audio_path) if job.audio_path else None,
+                    "audio_url": f"/audio/{job.audio_path.name}" if job.audio_path else None,
+                    "request_id": None,
+                    "timestamp": timestamp,
+                    "percent": job.percent,
+                    "current_chunk": job.current_chunk,
+                    "total_chunks": job.total_chunks,
+                    "eta_seconds": round(job.eta_seconds, 1),
+                },
+            )
+    except Exception:
+        # Jobs endpoint should still work even if audiobook runtime is unavailable.
+        pass
+
+    # Deduplicate by id (prefer latest inserted entry), then sort descending timestamp.
+    deduped: dict[str, dict] = {}
+    for item in items:
+        item_id = str(item.get("id") or "")
+        if item_id and item_id not in deduped:
+            deduped[item_id] = item
+
+    sorted_items = sorted(
+        deduped.values(),
+        key=lambda x: str(x.get("timestamp") or ""),
+        reverse=True,
+    )
+    return {"jobs": sorted_items[:safe_limit], "total": len(sorted_items)}
 
 
 # ============== Audiobook Generation Endpoints ==============
@@ -2740,7 +2962,7 @@ class AudiobookRequest(BaseModel):
 
 
 @app.post("/api/audiobook/generate")
-async def audiobook_generate(request: AudiobookRequest):
+async def audiobook_generate(request: AudiobookRequest, http_request: Request):
     """Start audiobook generation from text with optional timestamped subtitles.
 
     Returns a job_id that can be used to poll for status.
@@ -2797,6 +3019,18 @@ async def audiobook_generate(request: AudiobookRequest):
         max_chars_per_chunk=request.max_chars_per_chunk,
         crossfade_ms=request.crossfade_ms,
     )
+    _record_job_event(
+        http_request,
+        engine="kokoro",
+        mode="audiobook",
+        status=job.status.value,
+        text=request.text,
+        voice=request.voice,
+        model_name="Kokoro",
+        job_type="audiobook",
+        job_id=job.job_id,
+        title=request.title,
+    )
 
     return {
         "job_id": job.job_id,
@@ -2810,6 +3044,7 @@ async def audiobook_generate(request: AudiobookRequest):
 
 @app.post("/api/audiobook/generate-from-file")
 async def audiobook_generate_from_file(
+    http_request: Request,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     voice: str = Form("bf_emma"),
@@ -2876,6 +3111,18 @@ async def audiobook_generate_from_file(
             smart_chunking=smart_chunking,
             max_chars_per_chunk=max_chars_per_chunk,
             crossfade_ms=crossfade_ms,
+        )
+        _record_job_event(
+            http_request,
+            engine="kokoro",
+            mode="audiobook",
+            status=job.status.value,
+            text=f"Uploaded file: {file.filename or 'document'}",
+            voice=voice,
+            model_name="Kokoro",
+            job_type="audiobook",
+            job_id=job.job_id,
+            title=job.title,
         )
 
         return {
@@ -3212,8 +3459,7 @@ async def cosyvoice3_audio_list():
         stat = file.stat()
         stem = file.stem
         parts = stem.split("-")
-        style_code = parts[1] if len(parts) > 2 else "unknown"
-        alias = _cosyvoice3_alias_for_style(style_code)
+        alias = parts[1] if len(parts) > 2 else COSYVOICE3_DEFAULT_VOICE
 
         try:
             info = sf.info(str(file))
@@ -3425,9 +3671,9 @@ app.mount("/pdf", SafeStaticFiles(directory=str(pdf_dir)), name="pdf")
 
 @app.get("/api/pdf/list")
 async def list_pdfs():
-    """List available PDF/TXT/MD documents in the documents directory."""
+    """List available PDF/TXT/MD/DOCX/EPUB documents in the documents directory."""
     docs = []
-    for ext in ("*.pdf", "*.txt", "*.md"):
+    for ext in ("*.pdf", "*.txt", "*.md", "*.docx", "*.epub"):
         for f in pdf_dir.glob(ext):
             docs.append({
                 "name": f.name,
@@ -3440,35 +3686,62 @@ async def list_pdfs():
 
 @app.post("/api/pdf/extract-text")
 async def extract_pdf_text(file: UploadFile = File(...)):
-    """Extract normalized text from an uploaded PDF for read-aloud."""
+    """Extract normalized text from an uploaded document for read-aloud."""
     filename = (file.filename or "").lower()
-    if filename and not filename.endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    supported_extensions = (".pdf", ".txt", ".md", ".docx", ".epub")
+    ext = Path(filename).suffix.lower() if filename else ".pdf"
+    if ext not in supported_extensions:
+        raise HTTPException(
+            status_code=400,
+            detail="Supported files: PDF, TXT, MD, DOCX, EPUB",
+        )
 
     payload = await file.read()
     if not payload:
-        raise HTTPException(status_code=400, detail="Uploaded PDF is empty")
+        raise HTTPException(status_code=400, detail="Uploaded document is empty")
 
     temp_path: Optional[str] = None
     try:
-        from tts.audiobook import extract_pdf_with_toc
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as temp_file:
             temp_file.write(payload)
             temp_path = temp_file.name
 
-        text, _chapters = extract_pdf_with_toc(temp_path)
+        if ext == ".pdf":
+            from tts.audiobook import extract_pdf_with_toc
+
+            text, _chapters = extract_pdf_with_toc(temp_path)
+        elif ext == ".epub":
+            from tts.audiobook import extract_epub_chapters
+
+            text, _chapters = extract_epub_chapters(temp_path)
+        elif ext == ".docx":
+            try:
+                from docx import Document
+            except Exception as exc:  # pragma: no cover - runtime dependency path
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"DOCX support unavailable (python-docx not installed): {exc}",
+                ) from exc
+
+            doc = Document(temp_path)
+            text = "\n\n".join(
+                para.text.strip() for para in doc.paragraphs if para.text and para.text.strip()
+            )
+        else:  # .txt / .md
+            text = payload.decode("utf-8", errors="replace")
+
         normalized = _normalize_pdf_text_for_tts(text)
         return {
             "text": normalized,
             "chars": len(normalized),
+            "type": ext.lstrip("."),
         }
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to extract PDF text: {exc}",
+            detail=f"Failed to extract document text: {exc}",
         ) from exc
     finally:
         if temp_path:
@@ -3514,13 +3787,22 @@ async def api_get_settings():
 @app.get("/api/settings/output-folder")
 async def api_get_output_folder():
     """Get the output folder path."""
-    path = get_output_folder()
+    path = _output_folder_from_env_or_settings()
     active_path = str(_sync_output_folder_runtime(path))
     return {"path": active_path}
 
 @app.put("/api/settings/output-folder")
 async def api_set_output_folder(path: str):
     """Set the output folder path."""
+    env_output_override = _env_path("MIMIKA_OUTPUT_DIR")
+    if env_output_override is not None:
+        active_path = str(_sync_output_folder_runtime(str(env_output_override)))
+        return {
+            "success": False,
+            "path": active_path,
+            "message": "Output folder is fixed by MIMIKA_OUTPUT_DIR in this runtime.",
+        }
+
     normalized = (path or "").strip()
     if not normalized:
         raise HTTPException(status_code=400, detail="Output folder path cannot be empty")
@@ -3549,7 +3831,7 @@ async def api_update_setting(request: SettingsUpdateRequest):
         set_setting(request.key, request.value)
         response = {"key": request.key, "value": request.value}
         if request.key == "output_folder":
-            response["path"] = str(_sync_output_folder_runtime(request.value))
+            response["path"] = str(_sync_output_folder_runtime(_output_folder_from_env_or_settings()))
         return response
     except OSError as exc:
         raise HTTPException(

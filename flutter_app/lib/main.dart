@@ -11,6 +11,7 @@ import 'screens/supertonic_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
 import 'screens/chatterbox_clone_screen.dart';
 import 'screens/pdf_reader_screen.dart';
+import 'screens/jobs_screen.dart';
 import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/mcp_endpoints_screen.dart';
@@ -770,7 +771,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 11,
+      length: 12,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
@@ -853,6 +854,7 @@ class _MainScreenState extends State<MainScreen> {
                 icon: Icon(Icons.description_rounded, size: 26),
                 text: 'PDF Reader',
               ),
+              Tab(icon: Icon(Icons.work_history_rounded, size: 26), text: 'Jobs'),
               Tab(icon: Icon(Icons.tune_rounded, size: 26), text: 'Settings'),
               Tab(icon: Icon(Icons.hub_rounded, size: 26), text: 'MCP'),
               Tab(
@@ -875,6 +877,7 @@ class _MainScreenState extends State<MainScreen> {
                   Qwen3CloneScreen(),
                   ChatterboxCloneScreen(),
                   PdfReaderScreen(),
+                  JobsScreen(),
                   SettingsScreen(),
                   McpEndpointsScreen(),
                   ProScreen(),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
@@ -147,7 +148,6 @@ class ChatterboxCloneScreen extends StatefulWidget {
 }
 
 class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
-  static const int _maxChars = 300;
   static const String _defaultChatterboxText =
       'Genesis chapter 5, verses 1 through 3: This is the book of the generations of Adam. '
       'In the day that God created man, in the likeness of God made he him; male and female '
@@ -875,6 +875,37 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
   }
 
+  Future<void> _downloadAudioFile(Map<String, dynamic> file) async {
+    final audioUrl = file['audio_url'] as String?;
+    final filename = file['filename'] as String? ?? 'chatterbox-audio.wav';
+    if (audioUrl == null || audioUrl.isEmpty) return;
+
+    try {
+      final bytes = await _api.downloadAudioBytes(audioUrl);
+      final ext = filename.contains('.') ? filename.split('.').last : 'wav';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save audio file',
+        fileName: filename,
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+      if (savePath == null) return;
+
+      final destination = File(savePath);
+      await destination.create(recursive: true);
+      await destination.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to $savePath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
+    }
+  }
+
   MaterialColor _sampleCardColor(Map<String, dynamic> sample) {
     final key = '${sample['title'] ?? ''} ${sample['description'] ?? ''}'
         .toLowerCase();
@@ -955,10 +986,11 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 TextField(
                   controller: _textController,
                   onChanged: (_) => setState(() {}),
-                  maxLength: _maxChars,
-                  maxLines: 4,
+                  minLines: 4,
+                  maxLines: 10,
+                  keyboardType: TextInputType.multiline,
                   decoration: const InputDecoration(
-                    labelText: 'Text to synthesize (max chars 300)',
+                    labelText: 'Text to synthesize',
                     hintText: 'Enter text to convert to speech.',
                     border: OutlineInputBorder(),
                   ),
@@ -1883,11 +1915,25 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
               ),
             ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, size: 16),
-              onPressed: () => _deleteAudioFile(filename),
-              tooltip: 'Delete',
-              visualDensity: VisualDensity.compact,
+            trailing: SizedBox(
+              width: 72,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    onPressed: () => _downloadAudioFile(file),
+                    tooltip: 'Download',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    onPressed: () => _deleteAudioFile(filename),
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
             ),
           ),
           Padding(

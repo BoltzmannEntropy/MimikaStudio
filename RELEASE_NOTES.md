@@ -1,36 +1,30 @@
-# MimikaStudio v2026.02.3 Release Notes
+# MimikaStudio v2026.02.4 Release Notes
 
-**Release Date:** February 19, 2026
+**Release Date:** February 24, 2026
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.02.3
+## What's New In v2026.02.4
 
-- Hardened bundled backend startup for DMG distributions.
-- Added explicit app-exit shutdown flow so backend is stopped when the window is closed.
-- Added close-time "Stopping Server" UX to avoid silent orphaned backend processes.
-- Improved backend startup failure messaging to avoid stale log-based false errors.
-- Added stronger DMG build-time smoke checks for backend health and bundled PDF serving.
+- Split CosyVoice3 into a real standalone ONNX model (`ayousanz/cosy-voice3-onnx`) with independent download/status.
+- Removed Supertonic-core coupling from CosyVoice3 endpoints and model checks.
+- Added global Jobs tab in top navigation showing all TTS, voice-clone, and audiobook jobs.
+- Added audiobook visibility in Jobs with audio playback once completed.
+- Added generation-event job logging coverage for TTS and voice-clone flows.
+- Added DOCX and EPUB text extraction support in Read Aloud.
+- Removed fixed 300-character UI text-entry limits and preserved long-text editing with scrolling.
+- Added download controls for generated audio across library surfaces.
 
 ---
 
 ## Reliability Improvements
 
-### Backend startup and packaging
+### API and runtime stability
 
-- Runtime signature verification and retry now protect against partially signed native dependencies.
-- Build pipeline now fails fast if bundled backend import smoke test fails.
-- Build pipeline now starts the staged bundled backend and verifies:
-  - `GET /api/health`
-  - `GET /api/pdf/list`
-  - direct fetch of a bundled PDF from `/pdf/...`
-
-### Exit behavior
-
-- Desktop app close now intercepts exit requests.
-- Backend stop is triggered before final app termination.
-- Users see an explicit shutdown progress dialog while backend teardown runs.
+- `/api/system/info` now probes MLX availability using a subprocess-safe check to avoid hard interpreter abort paths.
+- Model registry metadata now reflects CosyVoice3 capability accurately (standalone ONNX preset-voice TTS).
+- Documentation and website model catalog now align with runtime behavior for CosyVoice3 vs Supertonic.
 
 ---
 
@@ -38,7 +32,7 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of February 19, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.
+As of February 24, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.
@@ -60,10 +54,10 @@ macOS may block first launch until you explicitly allow it in security settings.
 
 ## Checksums
 
-`MimikaStudio-2026.02.3-arm64.dmg` SHA256:
+`MimikaStudio-2026.02.4-arm64.dmg` SHA256 is published in:
 
-`b048327159689eacbe78a9f20d9becfa84f8725e9178c81c7254158539f1538d`
+`MimikaStudio-2026.02.4-arm64.dmg.sha256`
 
 ---
 
-**Full Changelog:** https://github.com/BoltzmannEntropy/MimikaStudio/compare/v2026.02.2...v2026.02.3
+**Full Changelog:** https://github.com/BoltzmannEntropy/MimikaStudio/compare/v2026.02.3...v2026.02.4

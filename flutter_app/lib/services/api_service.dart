@@ -1118,7 +1118,7 @@ class ApiService {
 
   // ============== PDF Documents ==============
 
-  /// List available PDF/TXT/MD documents from the backend.
+  /// List available documents from the backend.
   Future<List<Map<String, dynamic>>> listPdfDocuments() async {
     final response = await _get(Uri.parse('$baseUrl/api/pdf/list'));
     if (response.statusCode == 200) {
@@ -1128,7 +1128,7 @@ class ApiService {
     throw _apiError('Failed to list documents', response);
   }
 
-  /// Get the full URL for a PDF document served by the backend.
+  /// Get the full URL for a backend-served document.
   String getPdfUrl(String pdfPath) {
     return '$baseUrl$pdfPath';
   }
@@ -1142,14 +1142,15 @@ class ApiService {
     throw _apiError('Failed to fetch document', response);
   }
 
-  /// Extract text from PDF bytes using backend extraction (PyMuPDF fallback).
-  Future<String> extractPdfText(
+  /// Extract text from document bytes using backend extraction.
+  Future<String> extractDocumentText(
     Uint8List bytes, {
     String filename = 'document.pdf',
   }) async {
-    final safeFilename = filename.toLowerCase().endsWith('.pdf')
-        ? filename
-        : '$filename.pdf';
+    final lower = filename.toLowerCase();
+    final allowed = ['.pdf', '.txt', '.md', '.docx', '.epub'];
+    final hasKnownExt = allowed.any(lower.endsWith);
+    final safeFilename = hasKnownExt ? filename : '$filename.pdf';
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/pdf/extract-text'),
@@ -1164,7 +1165,36 @@ class ApiService {
       final data = _decodeJson(response.body) as Map<String, dynamic>;
       return (data['text'] as String?) ?? '';
     }
-    throw _apiError('Failed to extract PDF text', response);
+    throw _apiError('Failed to extract document text', response);
+  }
+
+  /// Backward-compatible PDF extraction wrapper.
+  Future<String> extractPdfText(
+    Uint8List bytes, {
+    String filename = 'document.pdf',
+  }) {
+    return extractDocumentText(bytes, filename: filename);
+  }
+
+  /// Download an audio file (for local save/share flows).
+  Future<Uint8List> downloadAudioBytes(String audioUrl) async {
+    final absolute = audioUrl.startsWith('http://') || audioUrl.startsWith('https://');
+    final uri = absolute ? Uri.parse(audioUrl) : Uri.parse('$baseUrl$audioUrl');
+    final response = await _get(uri);
+    if (response.statusCode == 200) {
+      return response.bodyBytes;
+    }
+    throw _apiError('Failed to download audio', response);
+  }
+
+  /// List recent generation jobs from backend history.
+  Future<List<Map<String, dynamic>>> getJobs({int limit = 200}) async {
+    final response = await _get(Uri.parse('$baseUrl/api/jobs?limit=$limit'));
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body);
+      return List<Map<String, dynamic>>.from(data['jobs'] as List<dynamic>);
+    }
+    throw _apiError('Failed to load jobs', response);
   }
 
   // ============== MCP Server ==============

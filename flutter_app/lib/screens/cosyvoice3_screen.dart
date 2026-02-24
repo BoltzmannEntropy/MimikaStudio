@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
@@ -418,8 +420,8 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
                               ),
                               _buildInfoChip(
                                 Icons.library_books,
-                                _systemInfo!['models']?['supertonic']?['model'] ??
-                                    'Supertone/supertonic-2 (CosyVoice3 UI)',
+                                _systemInfo!['models']?['cosyvoice3']?['model'] ??
+                                    'ayousanz/cosy-voice3-onnx',
                               ),
                             ],
                           ),
@@ -430,7 +432,7 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
                 ),
                 const SizedBox(height: 16),
                 const ModelStatusBanner(
-                  requiredModels: ['Supertonic-2'],
+                  requiredModels: ['CosyVoice3'],
                   engineName: 'CosyVoice3',
                   themeColor: Colors.teal,
                 ),
@@ -983,11 +985,25 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
               'COSYVOICE3 • $durationStr • ${sizeMb.toStringAsFixed(1)} MB',
               style: const TextStyle(fontSize: 10),
             ),
-            trailing: IconButton(
-              icon: const Icon(Icons.delete_outline, size: 16),
-              onPressed: () => _deleteAudioFile(filename),
-              tooltip: 'Delete',
-              visualDensity: VisualDensity.compact,
+            trailing: SizedBox(
+              width: 72,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.download_rounded, size: 16),
+                    onPressed: () => _downloadAudioFile(file),
+                    tooltip: 'Download',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 16),
+                    onPressed: () => _deleteAudioFile(filename),
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
             ),
           ),
           Padding(
@@ -1136,6 +1152,37 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
+    }
+  }
+
+  Future<void> _downloadAudioFile(Map<String, dynamic> file) async {
+    final audioUrl = file['audio_url'] as String?;
+    final filename = file['filename'] as String? ?? 'cosyvoice3-audio.wav';
+    if (audioUrl == null || audioUrl.isEmpty) return;
+
+    try {
+      final bytes = await _api.downloadAudioBytes(audioUrl);
+      final ext = filename.contains('.') ? filename.split('.').last : 'wav';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save audio file',
+        fileName: filename,
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+      if (savePath == null) return;
+
+      final destination = File(savePath);
+      await destination.create(recursive: true);
+      await destination.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to $savePath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
     }
   }
 }

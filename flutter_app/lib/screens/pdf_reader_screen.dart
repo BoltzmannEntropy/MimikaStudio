@@ -69,7 +69,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String? _selectedPdfName;
   Uint8List? _selectedPdfBytes;
   bool _isInitialized = false;
-  String? _textFileContent; // For .txt and .md files
+  String? _textFileContent; // For text-like docs (.txt/.md/.docx/.epub)
   String? _pdfExtractedText; // Extracted text from PDF
   bool _isExtractingText = false;
 
@@ -184,7 +184,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 final lowerPath = entity.path.toLowerCase();
                 if (lowerPath.endsWith('.pdf') ||
                     lowerPath.endsWith('.txt') ||
-                    lowerPath.endsWith('.md')) {
+                    lowerPath.endsWith('.md') ||
+                    lowerPath.endsWith('.docx') ||
+                    lowerPath.endsWith('.epub')) {
                   final name = p.basename(entity.path);
                   foundDocs.add({'path': entity.path, 'name': name});
                   debugPrint('Found document: $name');
@@ -332,6 +334,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           _loadTextFromBytes(bytes);
         } else if (lowerPath.endsWith('.pdf')) {
           _extractPdfTextFromBytes(bytes, filename: name);
+        } else if (lowerPath.endsWith('.docx') || lowerPath.endsWith('.epub')) {
+          _extractDocumentTextFromBytes(bytes, filename: name);
         }
       }
     } catch (e) {
@@ -355,7 +359,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Future<void> _openPdf() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: ['pdf', 'txt', 'md'],
+      allowedExtensions: ['pdf', 'txt', 'md', 'docx', 'epub'],
       withData: true, // Always request bytes for cross-platform compatibility
     );
 
@@ -408,6 +412,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _loadTextFromBytes(bytes);
       } else if (lowerPath.endsWith('.pdf')) {
         _extractPdfTextFromBytes(bytes, filename: name);
+      } else if (lowerPath.endsWith('.docx') || lowerPath.endsWith('.epub')) {
+        _extractDocumentTextFromBytes(bytes, filename: name);
       }
       return;
     }
@@ -418,6 +424,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _loadTextFile(path);
       } else if (lowerPath.endsWith('.pdf')) {
         _extractPdfText(path);
+      } else if (lowerPath.endsWith('.docx') || lowerPath.endsWith('.epub')) {
+        _extractDocumentText(path);
       }
     }
   }
@@ -487,7 +495,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
       // Prefer backend extraction (PyMuPDF + cleanup) for better spacing fidelity.
       try {
-        text = await _api.extractPdfText(
+        text = await _api.extractDocumentText(
           bytes,
           filename: filename ?? _selectedPdfName ?? 'document.pdf',
         );
@@ -513,6 +521,55 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       debugPrint('Error extracting PDF text: $e');
       if (mounted) {
         setState(() => _isExtractingText = false);
+      }
+    }
+  }
+
+  Future<void> _extractDocumentText(String path) async {
+    setState(() => _isExtractingText = true);
+
+    try {
+      final file = File(path);
+      final bytes = await file.readAsBytes();
+      await _extractDocumentTextFromBytes(bytes, filename: p.basename(path));
+    } catch (e) {
+      debugPrint('Error extracting document text: $e');
+      if (mounted) {
+        setState(() => _isExtractingText = false);
+      }
+    }
+  }
+
+  Future<void> _extractDocumentTextFromBytes(
+    Uint8List bytes, {
+    String? filename,
+  }) async {
+    try {
+      if (mounted) {
+        setState(() => _isExtractingText = true);
+      }
+
+      final text = await _api.extractDocumentText(
+        bytes,
+        filename: filename ?? _selectedPdfName ?? 'document.docx',
+      );
+      final normalized = _normalizeExtractedPdfText(text);
+
+      if (mounted) {
+        setState(() {
+          _textFileContent = normalized;
+          _selectedText = normalized;
+          _totalPages = 1;
+          _isExtractingText = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error extracting document text: $e');
+      if (mounted) {
+        setState(() => _isExtractingText = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to extract text: $e')));
       }
     }
   }
@@ -566,7 +623,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool get _isTextFile {
     if (_selectedPdfPath == null) return false;
     final lowerPath = _selectedPdfPath!.toLowerCase();
-    return lowerPath.endsWith('.txt') || lowerPath.endsWith('.md');
+    return lowerPath.endsWith('.txt') ||
+        lowerPath.endsWith('.md') ||
+        lowerPath.endsWith('.docx') ||
+        lowerPath.endsWith('.epub');
   }
 
   bool get _hasTextToRead {
@@ -618,7 +678,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       if (_isExtractingText) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Still extracting text from PDF, please wait...'),
+            content: Text('Still extracting text from document, please wait...'),
             duration: Duration(seconds: 2),
           ),
         );
@@ -1739,6 +1799,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                         icon = Icons.code;
                       } else if (lowerName.endsWith('.txt')) {
                         icon = Icons.article;
+                      } else if (lowerName.endsWith('.docx')) {
+                        icon = Icons.description_outlined;
+                      } else if (lowerName.endsWith('.epub')) {
+                        icon = Icons.menu_book_outlined;
                       } else {
                         icon = Icons.picture_as_pdf;
                       }
@@ -2244,16 +2308,35 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                                 '$durationStr • ${sizeMb.toStringAsFixed(1)} MB',
                                 style: const TextStyle(fontSize: 10),
                               ),
-                              trailing: IconButton(
-                                icon: const Icon(
-                                  Icons.delete_outline,
-                                  size: 16,
+                              trailing: SizedBox(
+                                width: 56,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.download_rounded,
+                                        size: 16,
+                                      ),
+                                      onPressed: () => _downloadAudiobook(book),
+                                      tooltip: 'Download',
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.delete_outline,
+                                        size: 16,
+                                      ),
+                                      onPressed: () => _deleteAudiobook(jobId),
+                                      tooltip: 'Delete',
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
+                                  ],
                                 ),
-                                onPressed: () => _deleteAudiobook(jobId),
-                                tooltip: 'Delete',
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
                               ),
                             ),
                             Padding(
@@ -2444,6 +2527,39 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
+  Future<void> _downloadAudiobook(Map<String, dynamic> book) async {
+    final audioUrl = book['audio_url'] as String?;
+    final jobId = book['job_id'] as String? ?? 'audiobook';
+    if (audioUrl == null || audioUrl.isEmpty) return;
+
+    final suggestedName = p.basename(Uri.parse(audioUrl).path);
+    try {
+      final bytes = await _api.downloadAudioBytes(audioUrl);
+      final ext = suggestedName.contains('.')
+          ? suggestedName.split('.').last
+          : 'wav';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save audiobook',
+        fileName: suggestedName.isNotEmpty ? suggestedName : 'audiobook-$jobId.wav',
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+      if (savePath == null) return;
+      final destination = File(savePath);
+      await destination.create(recursive: true);
+      await destination.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
+    }
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Column(
@@ -2457,7 +2573,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            'Supported: PDF, TXT, MD',
+            'Supported: PDF, TXT, MD, DOCX, EPUB',
             style: TextStyle(fontSize: 14, color: Colors.grey.shade500),
           ),
           const SizedBox(height: 16),
@@ -2704,13 +2820,21 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             avatar: Icon(
               _selectedPdfPath!.toLowerCase().endsWith('.md')
                   ? Icons.code
-                  : Icons.article,
+                  : (_selectedPdfPath!.toLowerCase().endsWith('.docx')
+                        ? Icons.description_outlined
+                        : (_selectedPdfPath!.toLowerCase().endsWith('.epub')
+                              ? Icons.menu_book_outlined
+                              : Icons.article)),
               size: 16,
             ),
             label: Text(
               _selectedPdfPath!.toLowerCase().endsWith('.md')
                   ? 'Markdown'
-                  : 'Text',
+                  : (_selectedPdfPath!.toLowerCase().endsWith('.docx')
+                        ? 'DOCX'
+                        : (_selectedPdfPath!.toLowerCase().endsWith('.epub')
+                              ? 'EPUB'
+                              : 'Text')),
               style: const TextStyle(fontSize: 12),
             ),
           ),

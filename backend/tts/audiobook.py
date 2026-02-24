@@ -304,6 +304,7 @@ def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
     """
     chapters = []
     full_text_parts = []
+    short_chapter_parts = []
 
     try:
         import ebooklib
@@ -335,6 +336,10 @@ def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
 
                 chapter_text = '\n'.join(text_parts)
 
+                # Keep short sections for fallback extraction so small EPUBs remain readable.
+                if chapter_text:
+                    short_chapter_parts.append((title, chapter_text))
+
                 # Filter by minimum length (like audiblez find_good_chapters)
                 if len(chapter_text) > 100:
                     chapters.append(Chapter(
@@ -351,6 +356,13 @@ def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
     except Exception as e:
         print(f"[Audiobook] EPUB error: {e}")
         return "", []
+
+    if not full_text_parts and short_chapter_parts:
+        merged = "\n\n".join(text for _, text in short_chapter_parts if text.strip())
+        if merged.strip():
+            title = short_chapter_parts[0][0] if short_chapter_parts else "Document"
+            chapters.append(Chapter(title=title, text=merged, level=1))
+            full_text_parts.append(f"## {title}\n\n{merged}")
 
     full_text = '\n\n'.join(full_text_parts)
     return full_text, chapters
@@ -782,6 +794,12 @@ def get_job(job_id: str) -> Optional[AudiobookJob]:
     """Get a job by ID."""
     with _jobs_lock:
         return _jobs.get(job_id)
+
+
+def list_jobs() -> list[AudiobookJob]:
+    """Return a snapshot list of all audiobook jobs."""
+    with _jobs_lock:
+        return list(_jobs.values())
 
 
 def cancel_job(job_id: str) -> bool:

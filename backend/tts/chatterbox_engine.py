@@ -14,10 +14,9 @@ from scipy import signal
 from .audio_utils import merge_audio_chunks
 from .text_chunking import smart_chunk_text
 
-try:
-    import mlx.core as mx
-except Exception:  # pragma: no cover - fallback for non-MLX systems
-    mx = None
+# Keep MLX import lazy to avoid backend startup aborts on machines without a
+# usable Metal device context.
+mx = None
 
 
 _EVENT_TAG_PATTERN = re.compile(

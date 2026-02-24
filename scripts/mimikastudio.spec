@@ -54,12 +54,8 @@ hiddenimports = [
     'qwen_tts',
     'chatterbox',
     'chatterbox.mtl_tts',
-    'indextts',
-    'indextts.infer',
 
-    # ML / Torch
-    'torch',
-    'torchaudio',
+    # ML / inference runtimes
     'transformers',
     'accelerate',
     'safetensors',
