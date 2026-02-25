@@ -148,7 +148,7 @@ class AboutScreen extends StatelessWidget {
                       Text(
                         '• Generates high-quality speech from text locally on Apple Silicon\n'
                         '• Supports few-shot voice cloning from short reference audio\n'
-                        '• Reads PDF documents aloud and exports audiobook-ready audio\n'
+                        '• Reads PDF, DOCX, EPUB, and Markdown aloud with audiobook export\n'
                         '• Keeps inference on-device for privacy-first workflows',
                         style: theme.textTheme.bodyMedium?.copyWith(
                           height: 1.45,

@@ -30,3 +30,23 @@ def test_audio_directory_mounted():
         response = client.get("/audio/nonexistent.wav")
         # 404 is expected for non-existent file, but not 500
         assert response.status_code in [404, 200]
+
+
+def test_voice_clone_audio_list_includes_file_path():
+    """Voice-clone audio list should expose absolute file paths for UI display."""
+    with TestClient(main.app) as client:
+        output_root = client.get("/api/settings/output-folder").json()["path"]
+        output_file = Path(output_root) / "qwen3-clone-testpath.wav"
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+        output_file.write_bytes(b"RIFF")
+
+        response = client.get("/api/voice-clone/audio/list")
+        assert response.status_code == 200
+        data = response.json()
+        items = data.get("audio_files", [])
+        row = next((item for item in items if item.get("filename") == output_file.name), None)
+        assert row is not None
+        assert isinstance(row.get("file_path"), str)
+        assert row["file_path"].endswith(output_file.name)
+
+        output_file.unlink(missing_ok=True)

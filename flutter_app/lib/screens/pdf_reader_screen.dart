@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart' as pdf;
 import 'package:file_picker/file_picker.dart';
@@ -114,9 +115,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String? _audiobookJobId;
   int _audiobookCurrentChunk = 0;
   int _audiobookTotalChunks = 0;
-  String _audiobookStatus = '';
   Timer? _audiobookPollTimer;
-  String? _audiobookUrl;
   String _audiobookOutputFormat = 'mp3'; // 'wav', 'mp3', or 'm4b'
   String _audiobookSubtitleFormat = 'none'; // 'none', 'srt', or 'vtt'
   bool _audiobookSmartChunking = true;
@@ -130,6 +129,17 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool _isAudiobookPaused = false;
   double _audiobookPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _audiobookPlayerSubscription;
+
+  static const int _optimizedChunkChars = 220;
+  static const int _optimizedCrossfadeMs = 60;
+  static const String _defaultManualMarkdown = '''
+# Read Aloud Draft
+
+Paste your long text here.
+
+- EPUB, DOCX, Markdown, and TXT are supported as imported documents.
+- This manual draft is stored as a local in-memory document for this session.
+''';
 
   // Kokoro British voices (supported by backend)
   final List<Map<String, String>> _voices = [
@@ -382,6 +392,99 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     }
   }
 
+  Future<void> _openManualTextInput() async {
+    final controller = TextEditingController(text: _defaultManualMarkdown);
+    String extension = 'md';
+
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Paste Text for Read Aloud'),
+              content: SizedBox(
+                width: 640,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('Format:'),
+                        const SizedBox(width: 12),
+                        SegmentedButton<String>(
+                          segments: const [
+                            ButtonSegment<String>(
+                              value: 'md',
+                              label: Text('Markdown'),
+                            ),
+                            ButtonSegment<String>(
+                              value: 'txt',
+                              label: Text('Text'),
+                            ),
+                          ],
+                          selected: {extension},
+                          showSelectedIcon: false,
+                          onSelectionChanged: (selection) {
+                            setStateDialog(() => extension = selection.first);
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: controller,
+                      maxLines: 14,
+                      minLines: 10,
+                      decoration: const InputDecoration(
+                        hintText: 'Paste or type text here...',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final text = controller.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.of(
+                      context,
+                    ).pop({'text': text, 'extension': extension});
+                  },
+                  child: const Text('Add'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+    final text = (result['text'] ?? '').trim();
+    final ext = (result['extension'] ?? 'md').toLowerCase();
+    if (text.isEmpty) return;
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final name = 'manual_read_aloud_$timestamp.$ext';
+    final path = 'manual://$name';
+    final bytes = Uint8List.fromList(utf8.encode(text));
+
+    if (mounted) {
+      setState(() {
+        _pdfLibrary.insert(0, {'path': path, 'name': name, 'bytes': bytes});
+      });
+      _selectPdf(path, name, bytes: bytes);
+    }
+  }
+
   void _selectPdf(String path, String name, {Uint8List? bytes}) {
     setState(() {
       _selectedPdfPath = path;
@@ -434,9 +537,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     try {
       final file = File(path);
       final content = await file.readAsString();
+      final readAloudText = _plainTextForReadAloud(content, path);
       setState(() {
         _textFileContent = content;
-        _selectedText = content; // Auto-select all text for reading
+        _selectedText = readAloudText; // Auto-select all text for reading
         _totalPages = 1;
       });
     } catch (e) {
@@ -452,9 +556,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Future<void> _loadTextFromBytes(Uint8List bytes) async {
     try {
       final content = utf8.decode(bytes);
+      final readAloudText = _plainTextForReadAloud(content, _selectedPdfPath);
       setState(() {
         _textFileContent = content;
-        _selectedText = content; // Auto-select all text for reading
+        _selectedText = readAloudText; // Auto-select all text for reading
         _totalPages = 1;
       });
     } catch (e) {
@@ -515,7 +620,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           _pdfExtractedText = text;
           _isExtractingText = false;
         });
-        print('Extracted ${text.length} characters from PDF');
+        debugPrint('Extracted ${text.length} characters from PDF');
       }
     } catch (e) {
       debugPrint('Error extracting PDF text: $e');
@@ -609,6 +714,33 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     return normalized.trim();
   }
 
+  String _plainTextForReadAloud(String text, String? path) {
+    final lowerPath = path?.toLowerCase() ?? '';
+    if (!lowerPath.endsWith('.md')) {
+      return text;
+    }
+    return _stripMarkdownForReadAloud(text);
+  }
+
+  String _stripMarkdownForReadAloud(String markdown) {
+    var text = markdown;
+    text = text.replaceAll(RegExp(r'```[\s\S]*?```'), ' ');
+    text = text.replaceAllMapped(RegExp(r'`([^`]+)`'), (m) => m.group(1) ?? '');
+    text = text.replaceAll(RegExp(r'!\[([^\]]*)\]\([^)]+\)'), '');
+    text = text.replaceAllMapped(
+      RegExp(r'\[([^\]]+)\]\([^)]+\)'),
+      (m) => m.group(1) ?? '',
+    );
+    text = text.replaceAll(RegExp(r'^#{1,6}\s+', multiLine: true), '');
+    text = text.replaceAll(RegExp(r'^>\s*', multiLine: true), '');
+    text = text.replaceAll(RegExp(r'^[-*_]{3,}\s*$', multiLine: true), '');
+    text = text.replaceAll(RegExp(r'(\*\*|__)(.*?)\1'), r'$2');
+    text = text.replaceAll(RegExp(r'(\*|_)(.*?)\1'), r'$2');
+    text = text.replaceAll(RegExp(r'[ \t]+'), ' ');
+    text = text.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return text.trim();
+  }
+
   bool _looksCorruptedPdfText(String text) {
     if (text.isEmpty) return true;
     final compact = text.replaceAll(RegExp(r'\s+'), '');
@@ -627,6 +759,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         lowerPath.endsWith('.md') ||
         lowerPath.endsWith('.docx') ||
         lowerPath.endsWith('.epub');
+  }
+
+  bool get _isMarkdownFile {
+    if (_selectedPdfPath == null) return false;
+    return _selectedPdfPath!.toLowerCase().endsWith('.md');
   }
 
   bool get _hasTextToRead {
@@ -1542,7 +1679,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       textToConvert = _pdfExtractedText!;
     }
     if (textToConvert.isEmpty && _textFileContent != null) {
-      textToConvert = _textFileContent!;
+      textToConvert = _plainTextForReadAloud(_textFileContent!, _selectedPdfPath);
     }
 
     if (textToConvert.isEmpty) {
@@ -1556,8 +1693,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _isGeneratingAudiobook = true;
       _audiobookCurrentChunk = 0;
       _audiobookTotalChunks = 0;
-      _audiobookStatus = 'Starting...';
-      _audiobookUrl = null;
     });
 
     try {
@@ -1576,12 +1711,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _audiobookJobId = result['job_id'] as String;
       _audiobookTotalChunks = result['total_chunks'] as int;
 
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Audiobook job ${_audiobookJobId!} queued in Jobs'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
       // Start polling for status
       _startAudiobookPolling();
     } catch (e) {
       setState(() {
         _isGeneratingAudiobook = false;
-        _audiobookStatus = '';
       });
       if (mounted) {
         ScaffoldMessenger.of(
@@ -1609,25 +1752,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       setState(() {
         _audiobookCurrentChunk = status['current_chunk'] as int;
         _audiobookTotalChunks = status['total_chunks'] as int;
-        _audiobookStatus =
-            'Processing chunk $_audiobookCurrentChunk/$_audiobookTotalChunks';
       });
 
       if (jobStatus == 'completed') {
         _audiobookPollTimer?.cancel();
-        final audioUrl = status['audio_url'] as String;
 
         setState(() {
           _isGeneratingAudiobook = false;
-          _audiobookUrl = _api.getAudiobookUrl(audioUrl);
-          _audiobookStatus = '';
         });
 
         if (mounted) {
           _loadAudiobooks(); // Refresh the audiobook list
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Audiobook ready!'),
+              content: Text('Audiobook ready. Job marked completed in Jobs.'),
               duration: Duration(seconds: 2),
             ),
           );
@@ -1637,7 +1775,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         final error = status['error'] ?? 'Unknown error';
         setState(() {
           _isGeneratingAudiobook = false;
-          _audiobookStatus = '';
         });
         if (mounted) {
           ScaffoldMessenger.of(
@@ -1648,7 +1785,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         _audiobookPollTimer?.cancel();
         setState(() {
           _isGeneratingAudiobook = false;
-          _audiobookStatus = '';
         });
       }
     } catch (e) {
@@ -1665,7 +1801,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       _audiobookPollTimer?.cancel();
       setState(() {
         _isGeneratingAudiobook = false;
-        _audiobookStatus = '';
         _audiobookJobId = null;
       });
     } catch (e) {
@@ -1680,7 +1815,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required for AutomaticKeepAliveClientMixin
-    debugPrint('PDF Reader build: _pdfLibrary.length=${_pdfLibrary.length}');
+    debugPrint('Read Aloud build: _pdfLibrary.length=${_pdfLibrary.length}');
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1741,7 +1876,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 IconButton(
                   icon: const Icon(Icons.add, size: 20),
                   onPressed: _openPdf,
-                  tooltip: 'Open Document',
+                  tooltip: 'Import PDF/TXT/MD/DOCX/EPUB',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.edit_note, size: 20),
+                  onPressed: _openManualTextInput,
+                  tooltip: 'Paste Text',
                   visualDensity: VisualDensity.compact,
                 ),
               ],
@@ -1781,6 +1922,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                           onPressed: _openPdf,
                           icon: const Icon(Icons.add, size: 16),
                           label: const Text('Open'),
+                        ),
+                        TextButton.icon(
+                          onPressed: _openManualTextInput,
+                          icon: const Icon(Icons.edit_note, size: 16),
+                          label: const Text('Paste Text'),
                         ),
                       ],
                     ),
@@ -2033,6 +2179,28 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               ],
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                onPressed: () {
+                  setState(() {
+                    _audiobookOutputFormat = 'm4b';
+                    _audiobookSubtitleFormat = 'none';
+                    _audiobookSmartChunking = true;
+                    _audiobookMaxCharsPerChunk = _optimizedChunkChars;
+                    _audiobookCrossfadeMs = _optimizedCrossfadeMs;
+                  });
+                },
+                icon: const Icon(Icons.auto_awesome, size: 16),
+                label: const Text(
+                  'Apply Mayari optimized export',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ),
+            ),
+          ),
           // Output format selector
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -2122,9 +2290,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                 Expanded(
                   child: Slider(
                     value: _audiobookMaxCharsPerChunk.toDouble(),
-                    min: 400,
+                    min: 120,
                     max: 4000,
-                    divisions: 36,
+                    divisions: 97,
                     label: _audiobookMaxCharsPerChunk.toString(),
                     onChanged: _audiobookSmartChunking
                         ? (value) => setState(
@@ -2686,7 +2854,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             FilledButton.icon(
               onPressed: _openPdf,
               icon: const Icon(Icons.upload_file),
-              label: const Text('Upload PDF'),
+              label: const Text('Upload Document'),
             ),
           ],
         ),
@@ -2759,26 +2927,43 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   color: Theme.of(context).colorScheme.surface,
                   child: SingleChildScrollView(
                     padding: const EdgeInsets.all(24),
-                    child: SelectableText(
-                      _textFileContent!,
-                      style: TextStyle(
-                        fontSize: 16,
-                        height: 1.6,
-                        fontFamily:
-                            _selectedPdfPath!.toLowerCase().endsWith('.md')
-                            ? 'monospace'
-                            : null,
-                      ),
-                      onSelectionChanged: (selection, cause) {
-                        if (selection.baseOffset != selection.extentOffset) {
-                          final selected = _textFileContent!.substring(
-                            selection.baseOffset,
-                            selection.extentOffset,
-                          );
-                          setState(() => _selectedText = selected);
-                        }
-                      },
-                    ),
+                    child: _isMarkdownFile
+                        ? SelectionArea(
+                            child: MarkdownBody(
+                              data: _textFileContent!,
+                              selectable: true,
+                              styleSheet: MarkdownStyleSheet.fromTheme(
+                                Theme.of(context),
+                              ).copyWith(
+                                p: Theme.of(context).textTheme.bodyMedium
+                                    ?.copyWith(fontSize: 16, height: 1.6),
+                                code: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      fontFamily: 'monospace',
+                                      fontSize: 14,
+                                    ),
+                              ),
+                            ),
+                          )
+                        : SelectableText(
+                            _textFileContent!,
+                            style: const TextStyle(fontSize: 16, height: 1.6),
+                            onSelectionChanged: (selection, cause) {
+                              if (selection.baseOffset !=
+                                  selection.extentOffset) {
+                                final selected = _textFileContent!.substring(
+                                  selection.baseOffset,
+                                  selection.extentOffset,
+                                );
+                                setState(
+                                  () => _selectedText = _plainTextForReadAloud(
+                                    selected,
+                                    _selectedPdfPath,
+                                  ),
+                                );
+                              }
+                            },
+                          ),
                   ),
                 ),
         ),
@@ -2842,7 +3027,12 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           // Select all button
           TextButton.icon(
             onPressed: () {
-              setState(() => _selectedText = _textFileContent);
+              setState(
+                () => _selectedText = _plainTextForReadAloud(
+                  _textFileContent ?? '',
+                  _selectedPdfPath,
+                ),
+              );
             },
             icon: const Icon(Icons.select_all, size: 18),
             label: const Text('Select All'),

@@ -16,7 +16,9 @@ dependencies:
   provider: ^6.1.0
   path_provider: ^2.1.5
   path: ^1.9.1
+  syncfusion_flutter_pdf: ^29.1.41
   syncfusion_flutter_pdfviewer: ^29.1.41
+  flutter_markdown: ^0.7.7+1
   url_launcher: ^6.2.0
 
 dev_dependencies:

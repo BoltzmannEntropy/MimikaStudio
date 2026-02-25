@@ -216,6 +216,7 @@ class Qwen3Request(BaseModel):
     repetition_penalty: float = 1.0
     seed: int = -1
     unload_after: bool = False  # Unload model after generation
+    enqueue: bool = False  # Queue generation and return job_id immediately
 
 class Qwen3UploadRequest(BaseModel):
     name: str
@@ -369,11 +370,40 @@ _word_align_model = None
 _word_align_model_lock = threading.Lock()
 _job_history: deque[dict] = deque(maxlen=2000)
 _job_history_lock = threading.Lock()
+_live_generation_jobs: dict[str, dict] = {}
+_live_generation_jobs_lock = threading.Lock()
 
 
 def _record_job_history_entry(entry: dict) -> None:
     with _job_history_lock:
         _job_history.appendleft(entry)
+
+
+def _utc_timestamp() -> str:
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _upsert_live_generation_job(job_id: str, base: Optional[dict] = None, **updates) -> dict:
+    with _live_generation_jobs_lock:
+        current = dict(_live_generation_jobs.get(job_id, {}))
+        if not current and base:
+            current.update(base)
+        current.update(updates)
+        current["id"] = job_id
+        current["timestamp"] = current.get("timestamp") or _utc_timestamp()
+        _live_generation_jobs[job_id] = current
+        return dict(current)
+
+
+def _pop_live_generation_job(job_id: str) -> Optional[dict]:
+    with _live_generation_jobs_lock:
+        item = _live_generation_jobs.pop(job_id, None)
+    return dict(item) if item else None
+
+
+def _snapshot_live_generation_jobs() -> list[dict]:
+    with _live_generation_jobs_lock:
+        return [dict(item) for item in _live_generation_jobs.values()]
 
 
 def _record_job_event(
@@ -461,6 +491,30 @@ def _log_generation_event(
         language or "-",
         model_name or "-",
         str(output_path) if output_path else "-",
+        extra={"request_id": request_id},
+    )
+
+
+def _log_job_queue_action(
+    *,
+    action: str,
+    job_id: str,
+    engine: str,
+    mode: str,
+    request_id: str = "-",
+    status: Optional[str] = None,
+    title: Optional[str] = None,
+    details: Optional[str] = None,
+) -> None:
+    logger.info(
+        "job_queue action=%s id=%s engine=%s mode=%s status=%s title=%s details=%s",
+        action,
+        job_id,
+        engine,
+        mode,
+        status or "-",
+        title or "-",
+        details or "-",
         extra={"request_id": request_id},
     )
 
@@ -1811,6 +1865,299 @@ def _ensure_qwen3_model_ready(mode: str, model_size: str, model_quantization: st
     model_name = _qwen3_model_name_for_request(mode, model_size, model_quantization)
     return _ensure_named_model_ready(model_name, engine_label="Qwen3")
 
+
+def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
+    if request.model_quantization not in {"bf16", "8bit"}:
+        raise HTTPException(
+            status_code=400,
+            detail="model_quantization must be 'bf16' or '8bit'",
+        )
+    _ensure_qwen3_model_ready(
+        mode=request.mode,
+        model_size=request.model_size,
+        model_quantization=request.model_quantization,
+    )
+
+    params = GenerationParams(
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=request.top_k,
+        repetition_penalty=request.repetition_penalty,
+        seed=request.seed,
+    )
+
+    if request.mode == "clone":
+        if not request.voice_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Clone mode requires voice_name"
+            )
+
+        engine = get_qwen3_engine(
+            model_size=request.model_size,
+            quantization=request.model_quantization,
+            mode="clone"
+        )
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        voices = engine.get_saved_voices()
+
+        voice = next((v for v in voices if v["name"] == request.voice_name), None)
+        if voice is None:
+            audio_file = _find_voice_audio(request.voice_name)
+            if audio_file is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Voice '{request.voice_name}' not found. Upload a voice first."
+                )
+            transcript = ""
+            txt_file = audio_file.with_suffix(".txt")
+            if txt_file.exists():
+                transcript = _safe_read_text(txt_file).strip()
+            voice = {"name": request.voice_name, "audio_path": str(audio_file), "transcript": transcript}
+
+        prepared_ref_path = _prepare_clone_reference_audio(
+            voice["audio_path"],
+            request.voice_name,
+        )
+        try:
+            output_path = engine.generate_voice_clone(
+                text=request.text,
+                ref_audio_path=str(prepared_ref_path),
+                ref_text=voice["transcript"],
+                language=request.language,
+                speed=request.speed,
+                params=params,
+            )
+        finally:
+            prepared_ref_path.unlink(missing_ok=True)
+
+        result = {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "mode": "clone",
+            "voice": request.voice_name,
+        }
+
+    elif request.mode == "custom":
+        if not request.speaker:
+            raise HTTPException(
+                status_code=400,
+                detail="Custom mode requires speaker"
+            )
+
+        if request.speaker not in QWEN_SPEAKERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}"
+            )
+
+        engine = get_qwen3_engine(
+            model_size=request.model_size,
+            quantization=request.model_quantization,
+            mode="custom"
+        )
+        engine.outputs_dir = outputs_dir
+        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+
+        output_path = engine.generate_custom_voice(
+            text=request.text,
+            speaker=request.speaker,
+            language=request.language,
+            instruct=request.instruct,
+            speed=request.speed,
+            params=params,
+        )
+
+        result = {
+            "audio_url": f"/audio/{output_path.name}",
+            "filename": output_path.name,
+            "mode": "custom",
+            "speaker": request.speaker,
+        }
+
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown mode: {request.mode}. Use 'clone' or 'custom'"
+        )
+
+    if request.unload_after:
+        engine.unload()
+
+    return result, output_path
+
+
+def _queue_qwen3_job(request: Qwen3Request, http_request: Request) -> dict:
+    if request.model_quantization not in {"bf16", "8bit"}:
+        raise HTTPException(
+            status_code=400,
+            detail="model_quantization must be 'bf16' or '8bit'",
+        )
+    _ensure_qwen3_model_ready(
+        mode=request.mode,
+        model_size=request.model_size,
+        model_quantization=request.model_quantization,
+    )
+
+    request_id = getattr(http_request.state, "request_id", "-")
+    job_id = str(uuid.uuid4())[:12]
+    model_name = _qwen3_model_name_for_request(
+        request.mode,
+        request.model_size,
+        request.model_quantization,
+    )
+    base_job = {
+        "id": job_id,
+        "type": "voice_clone" if request.mode == "clone" else "tts",
+        "engine": "qwen3",
+        "mode": request.mode,
+        "status": "started",
+        "title": f"qwen3 {request.mode}",
+        "chars": len((request.text or "").strip()),
+        "voice": request.voice_name if request.mode == "clone" else None,
+        "speaker": request.speaker if request.mode == "custom" else None,
+        "language": request.language,
+        "model": model_name,
+        "streamed": False,
+        "output_path": None,
+        "audio_url": None,
+        "request_id": request_id,
+        "timestamp": _utc_timestamp(),
+    }
+    _upsert_live_generation_job(job_id, base=base_job)
+    _log_job_queue_action(
+        action="enqueue",
+        job_id=job_id,
+        engine="qwen3",
+        mode=request.mode,
+        request_id=request_id,
+        status="started",
+        title=base_job["title"],
+        details=f"chars={base_job['chars']}",
+    )
+
+    payload = request.model_dump() if hasattr(request, "model_dump") else request.dict()
+
+    def _worker():
+        _upsert_live_generation_job(job_id, status="processing")
+        _log_job_queue_action(
+            action="processing",
+            job_id=job_id,
+            engine="qwen3",
+            mode=request.mode,
+            request_id=request_id,
+            status="processing",
+            title=base_job["title"],
+        )
+        try:
+            queued_request = Qwen3Request(**payload)
+            result, output_path = _run_qwen3_generation(queued_request)
+
+            completed = _upsert_live_generation_job(
+                job_id,
+                status="completed",
+                output_path=str(output_path),
+                audio_url=result.get("audio_url"),
+            )
+            _record_job_history_entry(completed)
+            _log_job_queue_action(
+                action="completed",
+                job_id=job_id,
+                engine="qwen3",
+                mode=queued_request.mode,
+                request_id=request_id,
+                status="completed",
+                title=base_job["title"],
+                details=str(output_path),
+            )
+            logger.info(
+                "generation engine=%s mode=%s streamed=no chars=%s voice=%s speaker=%s language=%s model=%s output=%s",
+                "qwen3",
+                queued_request.mode,
+                len((queued_request.text or "").strip()),
+                queued_request.voice_name or "-",
+                queued_request.speaker or "-",
+                queued_request.language or "-",
+                model_name,
+                str(output_path),
+                extra={"request_id": request_id},
+            )
+        except HTTPException as exc:
+            failed = _upsert_live_generation_job(
+                job_id,
+                status="failed",
+                error=str(exc.detail),
+            )
+            _record_job_history_entry(failed)
+            _log_job_queue_action(
+                action="failed",
+                job_id=job_id,
+                engine="qwen3",
+                mode=request.mode,
+                request_id=request_id,
+                status="failed",
+                title=base_job["title"],
+                details=str(exc.detail),
+            )
+            logger.warning(
+                "queued generation failed engine=qwen3 mode=%s detail=%s",
+                request.mode,
+                str(exc.detail),
+                extra={"request_id": request_id},
+            )
+        except ImportError as exc:
+            failed = _upsert_live_generation_job(
+                job_id,
+                status="failed",
+                error=f"Qwen3-TTS backend unavailable. Run: pip install -U mlx-audio. Error: {exc}",
+            )
+            _record_job_history_entry(failed)
+            _log_job_queue_action(
+                action="failed",
+                job_id=job_id,
+                engine="qwen3",
+                mode=request.mode,
+                request_id=request_id,
+                status="failed",
+                title=base_job["title"],
+                details=str(exc),
+            )
+            logger.warning(
+                "queued generation unavailable engine=qwen3 mode=%s detail=%s",
+                request.mode,
+                str(exc),
+                extra={"request_id": request_id},
+            )
+        except Exception as exc:
+            failed = _upsert_live_generation_job(
+                job_id,
+                status="failed",
+                error=str(exc),
+            )
+            _record_job_history_entry(failed)
+            _log_job_queue_action(
+                action="failed",
+                job_id=job_id,
+                engine="qwen3",
+                mode=request.mode,
+                request_id=request_id,
+                status="failed",
+                title=base_job["title"],
+                details=str(exc),
+            )
+            logger.exception(
+                "queued generation crashed engine=qwen3 mode=%s",
+                request.mode,
+                extra={"request_id": request_id},
+            )
+        finally:
+            _pop_live_generation_job(job_id)
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    return {"job_id": job_id, "status": "started"}
+
 @app.post("/api/qwen3/generate")
 async def qwen3_generate(request: Qwen3Request, http_request: Request):
     """Generate speech using Qwen3-TTS.
@@ -1820,129 +2167,10 @@ async def qwen3_generate(request: Qwen3Request, http_request: Request):
     - custom: Preset speaker voices (requires speaker)
     """
     try:
-        if request.model_quantization not in {"bf16", "8bit"}:
-            raise HTTPException(
-                status_code=400,
-                detail="model_quantization must be 'bf16' or '8bit'",
-            )
-        _ensure_qwen3_model_ready(
-            mode=request.mode,
-            model_size=request.model_size,
-            model_quantization=request.model_quantization,
-        )
+        if request.enqueue:
+            return _queue_qwen3_job(request, http_request)
 
-        # Build generation parameters
-        params = GenerationParams(
-            temperature=request.temperature,
-            top_p=request.top_p,
-            top_k=request.top_k,
-            repetition_penalty=request.repetition_penalty,
-            seed=request.seed,
-        )
-
-        if request.mode == "clone":
-            # Voice Clone mode
-            if not request.voice_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Clone mode requires voice_name"
-                )
-
-            engine = get_qwen3_engine(
-                model_size=request.model_size,
-                quantization=request.model_quantization,
-                mode="clone"
-            )
-            engine.outputs_dir = outputs_dir
-            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
-            voices = engine.get_saved_voices()
-
-            # Find the voice (search own engine first, then all engines)
-            voice = next((v for v in voices if v["name"] == request.voice_name), None)
-            if voice is None:
-                audio_file = _find_voice_audio(request.voice_name)
-                if audio_file is None:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Voice '{request.voice_name}' not found. Upload a voice first."
-                    )
-                transcript = ""
-                txt_file = audio_file.with_suffix(".txt")
-                if txt_file.exists():
-                    transcript = _safe_read_text(txt_file).strip()
-                voice = {"name": request.voice_name, "audio_path": str(audio_file), "transcript": transcript}
-
-            prepared_ref_path = _prepare_clone_reference_audio(
-                voice["audio_path"],
-                request.voice_name,
-            )
-            try:
-                output_path = engine.generate_voice_clone(
-                    text=request.text,
-                    ref_audio_path=str(prepared_ref_path),
-                    ref_text=voice["transcript"],
-                    language=request.language,
-                    speed=request.speed,
-                    params=params,
-                )
-            finally:
-                prepared_ref_path.unlink(missing_ok=True)
-
-            result = {
-                "audio_url": f"/audio/{output_path.name}",
-                "filename": output_path.name,
-                "mode": "clone",
-                "voice": request.voice_name,
-            }
-
-        elif request.mode == "custom":
-            # Custom Voice mode (preset speakers)
-            if not request.speaker:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Custom mode requires speaker"
-                )
-
-            if request.speaker not in QWEN_SPEAKERS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}"
-                )
-
-            engine = get_qwen3_engine(
-                model_size=request.model_size,
-                quantization=request.model_quantization,
-                mode="custom"
-            )
-            engine.outputs_dir = outputs_dir
-            engine.outputs_dir.mkdir(parents=True, exist_ok=True)
-
-            output_path = engine.generate_custom_voice(
-                text=request.text,
-                speaker=request.speaker,
-                language=request.language,
-                instruct=request.instruct,
-                speed=request.speed,
-                params=params,
-            )
-
-            result = {
-                "audio_url": f"/audio/{output_path.name}",
-                "filename": output_path.name,
-                "mode": "custom",
-                "speaker": request.speaker,
-            }
-
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown mode: {request.mode}. Use 'clone' or 'custom'"
-            )
-
-        # Optionally unload model after generation
-        if request.unload_after:
-            engine.unload()
-
+        result, output_path = _run_qwen3_generation(request)
         _log_generation_event(
             http_request,
             engine="qwen3",
@@ -3019,44 +3247,46 @@ async def model_delete(model_name: str):
         raise HTTPException(status_code=404, detail=f"Model cache directory not found")
 
 
+def _audiobook_job_to_history_item(job) -> dict:
+    timestamp = datetime.utcfromtimestamp(job.started_at).isoformat() + "Z"
+    return {
+        "id": job.job_id,
+        "type": "audiobook",
+        "engine": "kokoro",
+        "mode": "audiobook",
+        "status": job.status.value,
+        "title": job.title or f"Audiobook {job.job_id}",
+        "chars": job.total_chars,
+        "voice": job.voice,
+        "speaker": None,
+        "language": "en",
+        "model": "Kokoro",
+        "streamed": False,
+        "output_path": str(job.audio_path) if job.audio_path else None,
+        "audio_url": f"/audio/{job.audio_path.name}" if job.audio_path else None,
+        "request_id": None,
+        "timestamp": timestamp,
+        "percent": job.percent,
+        "current_chunk": job.current_chunk,
+        "total_chunks": job.total_chunks,
+        "eta_seconds": round(job.eta_seconds, 1),
+    }
+
+
 @app.get("/api/jobs")
 async def jobs_list(limit: int = 200):
     """List recent generation jobs across TTS, voice-clone, and audiobook flows."""
     safe_limit = max(1, min(limit, 1000))
+    items = _snapshot_live_generation_jobs()
     with _job_history_lock:
-        items = list(_job_history)
+        items.extend(list(_job_history))
 
     # Merge live audiobook job state so running/queued progress appears in Jobs UI.
     try:
         from tts.audiobook import list_jobs as _list_audiobook_jobs
 
         for job in _list_audiobook_jobs():
-            timestamp = datetime.utcfromtimestamp(job.started_at).isoformat() + "Z"
-            items.insert(
-                0,
-                {
-                    "id": job.job_id,
-                    "type": "audiobook",
-                    "engine": "kokoro",
-                    "mode": "audiobook",
-                    "status": job.status.value,
-                    "title": job.title or f"Audiobook {job.job_id}",
-                    "chars": job.total_chars,
-                    "voice": job.voice,
-                    "speaker": None,
-                    "language": "en",
-                    "model": "Kokoro",
-                    "streamed": False,
-                    "output_path": str(job.audio_path) if job.audio_path else None,
-                    "audio_url": f"/audio/{job.audio_path.name}" if job.audio_path else None,
-                    "request_id": None,
-                    "timestamp": timestamp,
-                    "percent": job.percent,
-                    "current_chunk": job.current_chunk,
-                    "total_chunks": job.total_chunks,
-                    "eta_seconds": round(job.eta_seconds, 1),
-                },
-            )
+            items.insert(0, _audiobook_job_to_history_item(job))
     except Exception:
         # Jobs endpoint should still work even if audiobook runtime is unavailable.
         pass
@@ -3074,6 +3304,31 @@ async def jobs_list(limit: int = 200):
         reverse=True,
     )
     return {"jobs": sorted_items[:safe_limit], "total": len(sorted_items)}
+
+
+@app.get("/api/jobs/{job_id}")
+async def jobs_get(job_id: str):
+    """Return one job by id, searching live queue first and history second."""
+    with _live_generation_jobs_lock:
+        live_item = _live_generation_jobs.get(job_id)
+    if live_item is not None:
+        return {"job": live_item}
+
+    with _job_history_lock:
+        for item in _job_history:
+            if str(item.get("id") or "") == job_id:
+                return {"job": item}
+
+    try:
+        from tts.audiobook import get_job as _get_audiobook_job
+
+        book_job = _get_audiobook_job(job_id)
+        if book_job is not None:
+            return {"job": _audiobook_job_to_history_item(book_job)}
+    except Exception:
+        pass
+
+    raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
 
 # ============== Audiobook Generation Endpoints ==============
@@ -3160,6 +3415,16 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
         job_type="audiobook",
         job_id=job.job_id,
         title=request.title,
+    )
+    _log_job_queue_action(
+        action="enqueue",
+        job_id=job.job_id,
+        engine="kokoro",
+        mode="audiobook",
+        request_id=getattr(http_request.state, "request_id", "-"),
+        status=job.status.value,
+        title=request.title,
+        details=f"chars={job.total_chars}",
     )
 
     return {
@@ -3254,6 +3519,16 @@ async def audiobook_generate_from_file(
             job_id=job.job_id,
             title=job.title,
         )
+        _log_job_queue_action(
+            action="enqueue",
+            job_id=job.job_id,
+            engine="kokoro",
+            mode="audiobook",
+            request_id=getattr(http_request.state, "request_id", "-"),
+            status=job.status.value,
+            title=job.title,
+            details=f"file={file.filename or 'document'} chars={job.total_chars}",
+        )
 
         return {
             "job_id": job.job_id,
@@ -3323,7 +3598,7 @@ async def audiobook_status(job_id: str):
 
 
 @app.post("/api/audiobook/cancel/{job_id}")
-async def audiobook_cancel(job_id: str):
+async def audiobook_cancel(job_id: str, http_request: Request):
     """Cancel an in-progress audiobook generation job."""
     from tts.audiobook import cancel_job, get_job
 
@@ -3333,8 +3608,27 @@ async def audiobook_cancel(job_id: str):
 
     success = cancel_job(job_id)
     if success:
+        _log_job_queue_action(
+            action="cancel",
+            job_id=job_id,
+            engine="kokoro",
+            mode="audiobook",
+            request_id=getattr(http_request.state, "request_id", "-"),
+            status="cancelled",
+            title=job.title,
+        )
         return {"message": "Cancellation requested", "job_id": job_id}
     else:
+        _log_job_queue_action(
+            action="cancel_ignored",
+            job_id=job_id,
+            engine="kokoro",
+            mode="audiobook",
+            request_id=getattr(http_request.state, "request_id", "-"),
+            status=job.status.value,
+            title=job.title,
+            details="already completed/failed",
+        )
         return {"message": "Job cannot be cancelled (already completed or failed)", "job_id": job_id}
 
 
@@ -3675,6 +3969,7 @@ async def voice_clone_audio_list():
                 "mode": mode,
                 "label": label,
                 "audio_url": f"/audio/{file.name}",
+                "file_path": str(file.resolve()),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
@@ -3845,19 +4140,15 @@ async def extract_pdf_text(file: UploadFile = File(...)):
 
             text, _chapters = extract_epub_chapters(temp_path)
         elif ext == ".docx":
-            try:
-                from docx import Document
-            except Exception as exc:  # pragma: no cover - runtime dependency path
-                raise HTTPException(
-                    status_code=503,
-                    detail=f"DOCX support unavailable (python-docx not installed): {exc}",
-                ) from exc
+            from tts.audiobook import extract_docx_text
 
-            doc = Document(temp_path)
-            text = "\n\n".join(
-                para.text.strip() for para in doc.paragraphs if para.text and para.text.strip()
-            )
-        else:  # .txt / .md
+            text = extract_docx_text(temp_path)
+        elif ext == ".md":
+            from tts.audiobook import strip_markdown_for_read_aloud
+
+            markdown_text = payload.decode("utf-8", errors="replace")
+            text = strip_markdown_for_read_aloud(markdown_text)
+        else:  # .txt
             text = payload.decode("utf-8", errors="replace")
 
         normalized = _normalize_pdf_text_for_tts(text)

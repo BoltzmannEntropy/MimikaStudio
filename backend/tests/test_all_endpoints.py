@@ -20,7 +20,9 @@ Grouped by endpoint category:
 import io
 import struct
 import tempfile
+import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -59,6 +61,98 @@ def _make_minimal_wav(
     buf.write(b"data")
     buf.write(struct.pack("<I", data_size))
     buf.write(b"\x00" * data_size)
+    buf.seek(0)
+    return buf
+
+
+def _make_minimal_docx(text: str) -> io.BytesIO:
+    """Create a minimal DOCX-compatible zip with a single paragraph."""
+    escaped = (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>""",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>""",
+        )
+        archive.writestr(
+            "word/document.xml",
+            f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>{escaped}</w:t></w:r></w:p>
+  </w:body>
+</w:document>""",
+        )
+    buf.seek(0)
+    return buf
+
+
+def _make_minimal_epub(text: str, title: str = "EPUB Sample") -> io.BytesIO:
+    """Create a minimal EPUB file with one XHTML chapter."""
+    escaped_text = (
+        text.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    escaped_title = (
+        title.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip")
+        archive.writestr(
+            "META-INF/container.xml",
+            """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+  </rootfiles>
+</container>""",
+        )
+        archive.writestr(
+            "OEBPS/content.opf",
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>{escaped_title}</dc:title>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="chapter1.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine>
+    <itemref idref="ch1"/>
+  </spine>
+</package>""",
+        )
+        archive.writestr(
+            "OEBPS/chapter1.xhtml",
+            f"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head><title>{escaped_title}</title></head>
+  <body>
+    <h1>{escaped_title}</h1>
+    <p>{escaped_text}</p>
+  </body>
+</html>""",
+        )
     buf.seek(0)
     return buf
 
@@ -134,6 +228,120 @@ class TestSystemEndpoints:
         assert "folders" in data
         assert isinstance(data["folders"], list)
         assert len(data["folders"]) > 0
+
+
+class TestReadAloudDocumentEndpoints:
+    """Read Aloud document listing and text extraction endpoints."""
+
+    def test_pdf_list_returns_documents(self, client):
+        resp = client.get("/api/pdf/list")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "documents" in data
+        assert isinstance(data["documents"], list)
+
+    def test_extract_markdown_text_returns_plain_text(self, client):
+        markdown = b"# Title\n\nThis is **markdown** with a [link](https://example.com)."
+        resp = client.post(
+            "/api/pdf/extract-text",
+            files={"file": ("sample.md", markdown, "text/markdown")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["type"] == "md"
+        assert "Title" in data["text"]
+        assert "**" not in data["text"]
+
+    def test_extract_docx_text_returns_content(self, client):
+        docx = _make_minimal_docx("Read aloud support for docx content")
+        resp = client.post(
+            "/api/pdf/extract-text",
+            files={
+                "file": (
+                    "sample.docx",
+                    docx.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ),
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["type"] == "docx"
+        assert "docx content" in data["text"].lower()
+
+    def test_extract_epub_text_returns_content(self, client):
+        epub = _make_minimal_epub("EPUB extraction for read aloud is active.")
+        resp = client.post(
+            "/api/pdf/extract-text",
+            files={"file": ("sample.epub", epub.getvalue(), "application/epub+zip")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["type"] == "epub"
+        assert "epub extraction" in data["text"].lower()
+
+    def test_audiobook_generate_from_file_accepts_docx(self, client):
+        fake_job = SimpleNamespace(
+            job_id="docxjob1",
+            status=SimpleNamespace(value="started"),
+            total_chunks=2,
+            total_chars=128,
+            chapters=["chapter-1"],
+            title="DOCX Job",
+        )
+        docx = _make_minimal_docx("DOCX audiobook request text")
+        with patch("tts.audiobook.create_audiobook_from_file", return_value=fake_job):
+            resp = client.post(
+                "/api/audiobook/generate-from-file",
+                files={
+                    "file": (
+                        "sample.docx",
+                        docx.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ),
+                },
+                data={"title": "DOCX Job"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == "docxjob1"
+        assert data["status"] == "started"
+
+    def test_audiobook_generate_from_file_accepts_epub(self, client):
+        fake_job = SimpleNamespace(
+            job_id="epubjob1",
+            status=SimpleNamespace(value="started"),
+            total_chunks=3,
+            total_chars=256,
+            chapters=["chapter-1", "chapter-2"],
+            title="EPUB Job",
+        )
+        epub = _make_minimal_epub("EPUB audiobook request text")
+        with patch("tts.audiobook.create_audiobook_from_file", return_value=fake_job):
+            resp = client.post(
+                "/api/audiobook/generate-from-file",
+                files={"file": ("sample.epub", epub.getvalue(), "application/epub+zip")},
+                data={"title": "EPUB Job"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["job_id"] == "epubjob1"
+        assert data["status"] == "started"
+
+
+class TestJobsEndpoints:
+    """Unified jobs queue endpoint."""
+
+    def test_jobs_returns_200(self, client):
+        resp = client.get("/api/jobs")
+        assert resp.status_code == 200
+
+    def test_jobs_has_expected_shape(self, client):
+        data = client.get("/api/jobs").json()
+        assert "jobs" in data
+        assert "total" in data
+        assert isinstance(data["jobs"], list)
+        assert isinstance(data["total"], int)
 
 
 # ===================================================================

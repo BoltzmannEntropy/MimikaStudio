@@ -847,7 +847,7 @@ class _MainScreenState extends State<MainScreen> {
               ),
               Tab(
                 icon: Icon(Icons.description_rounded, size: 26),
-                text: 'PDF Reader',
+                text: 'Read Aloud',
               ),
               Tab(icon: Icon(Icons.work_history_rounded, size: 26), text: 'Jobs'),
               Tab(icon: Icon(Icons.tune_rounded, size: 26), text: 'Settings'),

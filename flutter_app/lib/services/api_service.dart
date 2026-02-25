@@ -60,6 +60,35 @@ class ApiService {
     );
   }
 
+  Future<String> _awaitJobAudioUrl(
+    String jobId, {
+    String actionLabel = 'Generation',
+    Duration timeout = const Duration(minutes: 30),
+    Duration pollInterval = const Duration(seconds: 2),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      final job = await getJob(jobId);
+      final status = (job['status'] as String? ?? '').toLowerCase();
+      if (status == 'completed') {
+        final audioPath = job['audio_url'] as String?;
+        if (audioPath != null && audioPath.isNotEmpty) {
+          return '$baseUrl$audioPath';
+        }
+        throw Exception('$actionLabel completed but no audio was produced');
+      }
+      if (status == 'failed') {
+        final error = job['error']?.toString() ?? 'Unknown backend error';
+        throw Exception('$actionLabel failed: $error');
+      }
+      if (status == 'cancelled') {
+        throw Exception('$actionLabel was cancelled');
+      }
+      await Future.delayed(pollInterval);
+    }
+    throw Exception('$actionLabel timed out waiting for job completion');
+  }
+
   String _extractDownloadFilename(String? contentDisposition, String fallback) {
     if (contentDisposition == null || contentDisposition.isEmpty) {
       return fallback;
@@ -457,6 +486,7 @@ class ApiService {
       'repetition_penalty': repetitionPenalty,
       'seed': seed,
       'unload_after': unloadAfter,
+      'enqueue': true,
     };
 
     if (mode == 'clone') {
@@ -475,7 +505,15 @@ class ApiService {
     );
     if (response.statusCode == 200) {
       final data = _decodeJson(response.body);
-      return '$baseUrl${data['audio_url']}';
+      final audioPath = data['audio_url'] as String?;
+      if (audioPath != null && audioPath.isNotEmpty) {
+        return '$baseUrl$audioPath';
+      }
+      final jobId = data['job_id']?.toString();
+      if (jobId != null && jobId.isNotEmpty) {
+        return _awaitJobAudioUrl(jobId, actionLabel: 'Qwen3 generation');
+      }
+      throw Exception('Failed to generate Qwen3 audio: missing audio_url/job_id');
     }
     throw _apiError('Failed to generate Qwen3 audio', response);
   }
@@ -1215,6 +1253,19 @@ class ApiService {
       return List<Map<String, dynamic>>.from(data['jobs'] as List<dynamic>);
     }
     throw _apiError('Failed to load jobs', response);
+  }
+
+  Future<Map<String, dynamic>> getJob(String jobId) async {
+    final response = await _get(Uri.parse('$baseUrl/api/jobs/$jobId'));
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body) as Map<String, dynamic>;
+      final job = data['job'];
+      if (job is Map<String, dynamic>) {
+        return job;
+      }
+      throw Exception('Failed to parse job response');
+    }
+    throw _apiError('Failed to load job', response);
   }
 
   // ============== MCP Server ==============

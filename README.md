@@ -4,7 +4,7 @@
   <code>v2026.02</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i></h1>
-  <p>Local-first voice cloning, text-to-speech, PDF reader, and audiobook creator.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
+  <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, and audiobook creator.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
   <br>
   <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
   <br><br>
@@ -16,7 +16,7 @@
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first application for **macOS (Apple Silicon)** with four integrated capabilities and production-oriented workflows: **clone any voice** from as little as 3 seconds of reference audio using multiple engines (Qwen3-TTS and Chatterbox), generate **high-quality text-to-speech** with fast and expressive model families (Kokoro, Supertonic, and standalone CosyVoice3 ONNX), **read PDFs aloud** with sentence-level highlighting and synchronized progression, and **convert full PDFs to audiobooks** with queueable chapter generation and reusable voice presets. MimikaStudio runs fully on-device, includes first-run model download management, and exposes both UI and API paths for advanced local automation.
+A local-first application for **macOS (Apple Silicon)** with four integrated capabilities and production-oriented workflows: **clone any voice** from as little as 3 seconds of reference audio using multiple engines (Qwen3-TTS and Chatterbox), generate **high-quality text-to-speech** with fast and expressive model families (Kokoro and Supertonic), **read documents aloud** with sentence-level highlighting and synchronized progression (PDF, DOCX, EPUB, Markdown, TXT), and **convert full documents to audiobooks** with queueable chapter generation and reusable voice presets. MimikaStudio runs fully on-device, includes first-run model download management, and exposes both UI and API paths for advanced local automation.
 
 License: Source code is licensed under Business Source License 1.1 (BSL-1.1), and binary distributions are licensed under the MimikaStudio Binary Distribution License. See LICENSE, BINARY-LICENSE.txt, and the website License page.
 
@@ -333,8 +333,8 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 
 ### Beyond Simple TTS
 
-- **PDF Reader with Voice**: Read PDFs aloud with sentence-by-sentence highlighting
-- **Audiobook Creator**: Convert PDFs into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers (Kokoro voices only)
+- **Read Aloud Document Reader**: Read PDF, DOCX, EPUB, Markdown, and TXT aloud with sentence-by-sentence highlighting
+- **Audiobook Creator**: Convert documents into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers (Kokoro voices only)
 - **Unified Jobs Queue**: Track every executed job (TTS, voice clone, and audiobook) with status and inline playback controls
 - **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox)
 - **Model Manager**: In-app model download manager — check status and download models on demand
@@ -364,7 +364,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Folder View in Settings**: View and open user home, Mimika data, logs, default voices (Natasha/Suzan), and user clone voices folders directly from the app
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
-- **Audiobook Creator**: Convert full PDFs to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)
+- **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)
 - **CLI Tool**: Full command-line interface for Kokoro and Qwen3
 - **MCP & API Dashboard**: Built-in tab showing all MCP tools and REST endpoints with live server status
 - **MCP Server**: Full MCP integration for programmatic access to all API endpoints
@@ -703,7 +703,7 @@ The backend exposes 60+ REST endpoints via FastAPI. Full interactive docs at **h
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/audiobook/generate` | POST | Start audiobook generation from text |
-| `/api/audiobook/generate-from-file` | POST | Generate from uploaded PDF file (Kokoro voices only) |
+| `/api/audiobook/generate-from-file` | POST | Generate from uploaded document file (PDF/TXT/MD/DOCX/EPUB) |
 | `/api/audiobook/status/{job_id}` | GET | Job progress (chars/sec, ETA, chapters) |
 | `/api/audiobook/cancel/{job_id}` | POST | Cancel in-progress job |
 | `/api/audiobook/list` | GET | List generated audiobooks |
@@ -810,7 +810,7 @@ MimikaStudio/
 │   ├── mimika                # CLI tool for TTS/voice cloning
 │   └── tts_mcp_server.py    # MCP server for programmatic access
 │
-├── pdf/                      # Place PDFs here for the PDF Reader
+├── pdf/                      # Place read-aloud documents here (pdf/txt/md/docx/epub)
 │
 ├── flutter_app/              # Flutter desktop application (~10,100 lines Dart)
 │   ├── lib/

@@ -19,6 +19,7 @@ class _JobsScreenState extends State<JobsScreen> {
   bool _isLoading = true;
   String? _error;
   Timer? _pollTimer;
+  Timer? _clockTimer;
   StreamSubscription<PlayerState>? _playerSub;
   String? _playingJobId;
   bool _isPaused = false;
@@ -28,11 +29,16 @@ class _JobsScreenState extends State<JobsScreen> {
     super.initState();
     _loadJobs();
     _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _loadJobs());
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted || _jobs.isEmpty) return;
+      setState(() {});
+    });
   }
 
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _clockTimer?.cancel();
     _playerSub?.cancel();
     _audioPlayer.dispose();
     super.dispose();
@@ -140,6 +146,16 @@ class _JobsScreenState extends State<JobsScreen> {
     return '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')} $hh:$mm:$ss';
   }
 
+  int? _elapsedSecondsFromTimestamp(String raw) {
+    if (raw.isEmpty) return null;
+    final parsed = DateTime.tryParse(raw);
+    if (parsed == null) return null;
+    final startUtc = parsed.toUtc();
+    final nowUtc = DateTime.now().toUtc();
+    final diff = nowUtc.difference(startUtc).inSeconds;
+    return diff < 0 ? 0 : diff;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -196,9 +212,12 @@ class _JobsScreenState extends State<JobsScreen> {
               final title = (job['title'] as String?) ?? 'Job';
               final engine = (job['engine'] as String?) ?? '-';
               final type = (job['type'] as String?) ?? '-';
-              final ts = _humanTimestamp((job['timestamp'] as String?) ?? '');
+              final rawTs = (job['timestamp'] as String?) ?? '';
+              final ts = _humanTimestamp(rawTs);
+              final elapsedSeconds = _elapsedSecondsFromTimestamp(rawTs);
               final chars = job['chars'];
               final percent = job['percent'];
+              final outputPath = (job['output_path'] as String?) ?? '';
               final hasAudio =
                   (job['audio_url'] as String?) != null &&
                   (job['audio_url'] as String).isNotEmpty;
@@ -242,7 +261,15 @@ class _JobsScreenState extends State<JobsScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '$type • $engine • $ts',
+                        '$type • $engine',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'started: $ts${elapsedSeconds != null ? ' • elapsed: ${elapsedSeconds}s' : ''}',
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -254,6 +281,18 @@ class _JobsScreenState extends State<JobsScreen> {
                           'chars: ${chars ?? '-'}${percent != null ? ' • ${percent.toString()}%' : ''}',
                           style: TextStyle(
                             fontSize: 12,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                      if (status == 'completed' && outputPath.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          outputPath,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
                             color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),

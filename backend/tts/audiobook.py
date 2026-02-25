@@ -17,6 +17,9 @@ import time
 import threading
 import subprocess
 import shutil
+from html import unescape
+from zipfile import ZipFile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from dataclasses import dataclass, field
 from enum import Enum
@@ -296,15 +299,174 @@ def _extract_pdf_pypdf2(pdf_path: str) -> Tuple[str, List[Chapter]]:
         return "", []
 
 
-# ============== EPUB Processing (like audiblez) ==============
+# ============== DOCX / EPUB / Markdown Processing ==============
+
+_OOXML_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+
+
+def _normalize_block_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.replace("\u00a0", " ")
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
+
+
+def strip_markdown_for_read_aloud(markdown_text: str) -> str:
+    """Remove common markdown syntax so TTS reads clean prose."""
+    text = markdown_text
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", "", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"^#{1,6}\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^>\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^[-*_]{3,}\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"(\*\*|__)(.*?)\1", r"\2", text)
+    text = re.sub(r"(\*|_)(.*?)\1", r"\2", text)
+    return _normalize_block_text(text)
+
+
+def extract_docx_text(docx_path: str) -> str:
+    """Extract DOCX text with python-docx when available, otherwise OOXML XML fallback."""
+    try:
+        from docx import Document
+
+        doc = Document(docx_path)
+        paragraphs = [
+            para.text.strip() for para in doc.paragraphs if para.text and para.text.strip()
+        ]
+        text = _normalize_block_text("\n\n".join(paragraphs))
+        if text:
+            return text
+    except Exception as exc:
+        print(f"[Audiobook] python-docx unavailable/failed, using XML fallback: {exc}")
+
+    try:
+        with ZipFile(docx_path, "r") as archive:
+            xml_bytes = archive.read("word/document.xml")
+    except Exception as exc:
+        raise ValueError(f"Invalid DOCX file: {exc}") from exc
+
+    root = ET.fromstring(xml_bytes)
+    paragraphs: list[str] = []
+
+    for paragraph in root.findall(".//w:p", _OOXML_NS):
+        parts: list[str] = []
+        for element in paragraph.iter():
+            tag = element.tag.rsplit("}", 1)[-1]
+            if tag == "t" and element.text:
+                parts.append(element.text)
+            elif tag == "tab":
+                parts.append(" ")
+            elif tag in ("br", "cr"):
+                parts.append("\n")
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+
+    return _normalize_block_text("\n\n".join(paragraphs))
+
+
+def extract_docx_chapters(docx_path: str, title: Optional[str] = None) -> Tuple[str, List[Chapter]]:
+    text = extract_docx_text(docx_path)
+    if not text:
+        return "", []
+    resolved_title = title or Path(docx_path).stem or "Document"
+    return text, [Chapter(title=resolved_title, text=text, level=1)]
+
+
+def _extract_html_text(html_content: str) -> str:
+    text = html_content
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(
+        r"(?i)</(p|div|h1|h2|h3|h4|h5|h6|li|blockquote|section|article|tr)>",
+        "\n\n",
+        text,
+    )
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return _normalize_block_text(text)
+
+
+def _resolve_epub_opf_path(archive: ZipFile) -> Optional[str]:
+    try:
+        container_xml = archive.read("META-INF/container.xml")
+    except KeyError:
+        return None
+    root = ET.fromstring(container_xml)
+    rootfile = root.find(".//{*}rootfile")
+    if rootfile is None:
+        return None
+    return rootfile.attrib.get("full-path")
+
+
+def _extract_epub_chapters_fallback(epub_path: str) -> Tuple[str, List[Chapter]]:
+    try:
+        with ZipFile(epub_path, "r") as archive:
+            opf_path = _resolve_epub_opf_path(archive)
+            if not opf_path:
+                return "", []
+            opf_root = ET.fromstring(archive.read(opf_path))
+            opf_dir = Path(opf_path).parent.as_posix()
+
+            manifest: dict[str, str] = {}
+            for item in opf_root.findall(".//{*}manifest/{*}item"):
+                item_id = item.attrib.get("id")
+                href = item.attrib.get("href")
+                if not item_id or not href:
+                    continue
+                manifest[item_id] = f"{opf_dir}/{href}" if opf_dir not in ("", ".") else href
+
+            spine_ids = [
+                itemref.attrib.get("idref", "")
+                for itemref in opf_root.findall(".//{*}spine/{*}itemref")
+                if itemref.attrib.get("idref")
+            ]
+            chapter_paths = [manifest[sid] for sid in spine_ids if sid in manifest]
+            if not chapter_paths:
+                chapter_paths = sorted(
+                    name for name in archive.namelist() if name.lower().endswith((".xhtml", ".html", ".htm"))
+                )
+
+            chapters: list[Chapter] = []
+            chapter_idx = 1
+            for chapter_path in chapter_paths:
+                try:
+                    html_bytes = archive.read(chapter_path)
+                except KeyError:
+                    continue
+                chapter_text = _extract_html_text(html_bytes.decode("utf-8", errors="ignore"))
+                if not chapter_text:
+                    continue
+                title_match = re.search(r"(?is)<h1[^>]*>(.*?)</h1>", html_bytes.decode("utf-8", errors="ignore"))
+                title = (
+                    _extract_html_text(title_match.group(1))
+                    if title_match and title_match.group(1).strip()
+                    else f"Chapter {chapter_idx}"
+                )
+                chapters.append(Chapter(title=title, text=chapter_text, level=1))
+                chapter_idx += 1
+    except Exception as exc:
+        print(f"[Audiobook] EPUB fallback parser failed: {exc}")
+        return "", []
+
+    if not chapters:
+        return "", []
+
+    full_text = "\n\n".join(f"## {ch.title}\n\n{ch.text}" for ch in chapters if ch.text.strip())
+    return _normalize_block_text(full_text), chapters
+
 
 def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
     """
-    Extract chapters from EPUB file (like audiblez).
+    Extract chapters from EPUB file.
+    Prefers ebooklib parsing and falls back to a pure-zip parser inspired by Mayari.
     """
-    chapters = []
-    full_text_parts = []
-    short_chapter_parts = []
+    chapters: list[Chapter] = []
+    full_text_parts: list[str] = []
+    short_chapter_parts: list[tuple[str, str]] = []
 
     try:
         import ebooklib
@@ -313,49 +475,36 @@ def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
 
         book = epub.read_epub(epub_path)
 
-        # Get chapters
         chapter_idx = 0
         for item in book.get_items():
-            if item.get_type() == ebooklib.ITEM_DOCUMENT:
-                # Parse HTML content
-                soup = BeautifulSoup(item.get_content(), 'html.parser')
+            if item.get_type() != ebooklib.ITEM_DOCUMENT:
+                continue
 
-                # Extract title from h1-h4 or use filename
-                title_tag = soup.find(['h1', 'h2', 'h3', 'h4', 'title'])
-                title = title_tag.get_text().strip() if title_tag else f"Chapter {chapter_idx + 1}"
+            soup = BeautifulSoup(item.get_content(), "html.parser")
+            title_tag = soup.find(["h1", "h2", "h3", "h4", "title"])
+            title = title_tag.get_text().strip() if title_tag else f"Chapter {chapter_idx + 1}"
 
-                # Extract text from content tags (like audiblez)
-                text_parts = []
-                for tag in soup.find_all(['p', 'h1', 'h2', 'h3', 'h4', 'li']):
-                    text = tag.get_text().strip()
-                    if text:
-                        # Ensure sentences end with period (like audiblez)
-                        if not text.endswith(('.', '!', '?', ':', ';')):
-                            text += '.'
-                        text_parts.append(text)
+            text_parts = []
+            for tag in soup.find_all(["p", "h1", "h2", "h3", "h4", "li"]):
+                tag_text = tag.get_text().strip()
+                if not tag_text:
+                    continue
+                if not tag_text.endswith((".", "!", "?", ":", ";")):
+                    tag_text += "."
+                text_parts.append(tag_text)
 
-                chapter_text = '\n'.join(text_parts)
+            chapter_text = _normalize_block_text("\n".join(text_parts))
+            if chapter_text:
+                short_chapter_parts.append((title, chapter_text))
 
-                # Keep short sections for fallback extraction so small EPUBs remain readable.
-                if chapter_text:
-                    short_chapter_parts.append((title, chapter_text))
+            if len(chapter_text) > 100:
+                chapters.append(Chapter(title=title, text=chapter_text, level=1))
+                full_text_parts.append(f"## {title}\n\n{chapter_text}")
+                chapter_idx += 1
 
-                # Filter by minimum length (like audiblez find_good_chapters)
-                if len(chapter_text) > 100:
-                    chapters.append(Chapter(
-                        title=title,
-                        text=chapter_text,
-                        level=1
-                    ))
-                    full_text_parts.append(f"## {title}\n\n{chapter_text}")
-                    chapter_idx += 1
-
-    except ImportError:
-        print("[Audiobook] ebooklib not available for EPUB")
-        return "", []
-    except Exception as e:
-        print(f"[Audiobook] EPUB error: {e}")
-        return "", []
+    except Exception as exc:
+        print(f"[Audiobook] EPUB parser failed, using fallback: {exc}")
+        return _extract_epub_chapters_fallback(epub_path)
 
     if not full_text_parts and short_chapter_parts:
         merged = "\n\n".join(text for _, text in short_chapter_parts if text.strip())
@@ -364,7 +513,9 @@ def extract_epub_chapters(epub_path: str) -> Tuple[str, List[Chapter]]:
             chapters.append(Chapter(title=title, text=merged, level=1))
             full_text_parts.append(f"## {title}\n\n{merged}")
 
-    full_text = '\n\n'.join(full_text_parts)
+    full_text = _normalize_block_text("\n\n".join(full_text_parts))
+    if not full_text.strip():
+        return _extract_epub_chapters_fallback(epub_path)
     return full_text, chapters
 
 
@@ -469,17 +620,15 @@ def create_audiobook_from_file(
         text, chapters = extract_pdf_with_toc(file_path)
     elif ext == '.epub':
         text, chapters = extract_epub_chapters(file_path)
-    elif ext in ('.txt', '.md'):
-        text = path.read_text(encoding='utf-8')
+    elif ext == '.txt':
+        text = _normalize_block_text(path.read_text(encoding='utf-8'))
+        chapters = [Chapter(title=title, text=text)]
+    elif ext == '.md':
+        raw_markdown = path.read_text(encoding='utf-8')
+        text = strip_markdown_for_read_aloud(raw_markdown)
         chapters = [Chapter(title=title, text=text)]
     elif ext == '.docx':
-        try:
-            from docx import Document
-            doc = Document(file_path)
-            text = '\n\n'.join(para.text for para in doc.paragraphs if para.text.strip())
-            chapters = [Chapter(title=title, text=text)]
-        except ImportError:
-            raise ValueError("python-docx not installed for DOCX support")
+        text, chapters = extract_docx_chapters(file_path, title=title)
     else:
         raise ValueError(f"Unsupported file format: {ext}")
 

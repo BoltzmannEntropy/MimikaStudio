@@ -1908,6 +1908,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final fileId = file['id'] as String;
     final filename = file['filename'] as String;
     final label = (file['label'] as String?) ?? 'Qwen3 Clone';
+    final filePathRaw = (file['file_path'] as String?)?.trim();
+    final filePath = (filePathRaw != null && filePathRaw.isNotEmpty)
+        ? filePathRaw
+        : '$_outputFolder/$filename';
     final duration = (file['duration_seconds'] as num?) ?? 0;
     final sizeMb = (file['size_mb'] as num?) ?? 0;
     final isThisPlaying = _playingAudioId == fileId;
@@ -1933,6 +1937,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         children: [
           ListTile(
             dense: true,
+            isThreeLine: true,
             contentPadding: const EdgeInsets.symmetric(horizontal: 12),
             leading: Icon(
               Icons.audiotrack,
@@ -1948,7 +1953,21 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
               ),
             ),
-            subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(meta, style: const TextStyle(fontSize: 10)),
+                Text(
+                  filePath,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
             trailing: SizedBox(
               width: 72,
               child: Row(
