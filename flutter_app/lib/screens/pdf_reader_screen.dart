@@ -60,6 +60,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   final AudioPlayer _audioPlayer = AudioPlayer();
   final PdfViewerController _pdfController = PdfViewerController();
   final GlobalKey<SfPdfViewerState> _pdfViewerKey = GlobalKey();
+  final TextEditingController _freeTextController = TextEditingController();
 
   @override
   bool get wantKeepAlive => true;
@@ -304,6 +305,7 @@ Paste your long text here.
 
   bool _isLoadingPdfBytes = false;
   String? _selectedPdfNetworkUrl; // Full URL for SfPdfViewer.network on web
+  bool _freeTextEditMode = false;
 
   /// Select a PDF by fetching its bytes from the backend (for web).
   Future<void> _selectPdfFromUrl(String urlPath, String name) async {
@@ -362,6 +364,7 @@ Paste your long text here.
     _audiobookPollTimer?.cancel();
     _audiobookPlayerSubscription?.cancel();
     _audioPlayer.dispose();
+    _freeTextController.dispose();
     _pdfController.dispose();
     super.dispose();
   }
@@ -504,6 +507,7 @@ Paste your long text here.
       _activeReadAloudAnchorIndex = -1;
       _pdfWordAnchorBuildId++;
       _stopReading();
+      _freeTextEditMode = false;
     });
 
     // Load text content for .txt and .md files
@@ -771,6 +775,11 @@ Paste your long text here.
   bool get _isMarkdownFile {
     if (_selectedPdfPath == null) return false;
     return _selectedPdfPath!.toLowerCase().endsWith('.md');
+  }
+
+  bool get _isManualTextDoc {
+    final path = _selectedPdfPath ?? '';
+    return path.startsWith('manual://');
   }
 
   bool get _hasTextToRead {
@@ -2936,82 +2945,84 @@ Paste your long text here.
         if (_isReading) _buildReadingIndicator(),
         // Text content
         Expanded(
-          child: _textFileContent == null
-              ? (_isExtractingText
-                    ? const Center(child: CircularProgressIndicator())
-                    : Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(
-                              Icons.error_outline,
-                              size: 36,
-                              color: Colors.orange,
-                            ),
-                            const SizedBox(height: 8),
-                            const Text('Could not load document text'),
-                            const SizedBox(height: 8),
-                            FilledButton.tonalIcon(
-                              onPressed: () {
-                                final path = _selectedPdfPath;
-                                final name = _selectedPdfName;
-                                if (path == null || name == null) return;
-                                if (path.startsWith('/pdf/')) {
-                                  _selectPdfFromUrl(path, name);
-                                } else {
-                                  _selectPdf(path, name);
-                                }
-                              },
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      ))
-              : Container(
-                  color: Theme.of(context).colorScheme.surface,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
-                    child: _isMarkdownFile
-                        ? SelectionArea(
-                            child: MarkdownBody(
-                              data: _textFileContent!,
-                              selectable: true,
-                              styleSheet:
-                                  MarkdownStyleSheet.fromTheme(
-                                    Theme.of(context),
-                                  ).copyWith(
-                                    p: Theme.of(context).textTheme.bodyMedium
-                                        ?.copyWith(fontSize: 16, height: 1.6),
-                                    code: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          fontFamily: 'monospace',
-                                          fontSize: 14,
+          child: (_isManualTextDoc && _freeTextEditMode && !_isReading)
+              ? _buildFreeTextEditor()
+              : (_textFileContent == null
+                    ? (_isExtractingText
+                          ? const Center(child: CircularProgressIndicator())
+                          : Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.error_outline,
+                                    size: 36,
+                                    color: Colors.orange,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  const Text('Could not load document text'),
+                                  const SizedBox(height: 8),
+                                  FilledButton.tonalIcon(
+                                    onPressed: () {
+                                      final path = _selectedPdfPath;
+                                      final name = _selectedPdfName;
+                                      if (path == null || name == null) return;
+                                      if (path.startsWith('/pdf/')) {
+                                        _selectPdfFromUrl(path, name);
+                                      } else {
+                                        _selectPdf(path, name);
+                                      }
+                                    },
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('Retry'),
+                                  ),
+                                ],
+                              ),
+                            ))
+                    : Container(
+                        color: Theme.of(context).colorScheme.surface,
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.all(24),
+                          child: _isReading
+                              ? _buildReadAloudHighlightedText(
+                                  _isMarkdownFile
+                                      ? _plainTextForReadAloud(
+                                          _textFileContent!,
+                                          _selectedPdfPath,
+                                        )
+                                      : _textFileContent!,
+                                )
+                              : (_isMarkdownFile
+                                    ? SelectionArea(
+                                        child: MarkdownBody(
+                                          data: _textFileContent!,
+                                          selectable: true,
+                                          styleSheet:
+                                              MarkdownStyleSheet.fromTheme(
+                                                Theme.of(context),
+                                              ).copyWith(
+                                                p: Theme.of(context)
+                                                    .textTheme
+                                                    .bodyMedium
+                                                    ?.copyWith(
+                                                      fontSize: 16,
+                                                      height: 1.6,
+                                                    ),
+                                                code: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.copyWith(
+                                                      fontFamily: 'monospace',
+                                                      fontSize: 14,
+                                                    ),
+                                              ),
                                         ),
-                                  ),
-                            ),
-                          )
-                        : SelectableText(
-                            _textFileContent!,
-                            style: const TextStyle(fontSize: 16, height: 1.6),
-                            onSelectionChanged: (selection, cause) {
-                              if (selection.baseOffset !=
-                                  selection.extentOffset) {
-                                final selected = _textFileContent!.substring(
-                                  selection.baseOffset,
-                                  selection.extentOffset,
-                                );
-                                setState(
-                                  () => _selectedText = _plainTextForReadAloud(
-                                    selected,
-                                    _selectedPdfPath,
-                                  ),
-                                );
-                              }
-                            },
-                          ),
-                  ),
-                ),
+                                      )
+                                    : _buildSelectablePlainText(
+                                        _textFileContent!,
+                                      )),
+                        ),
+                      )),
         ),
         // Info bar
         Container(
@@ -3035,7 +3046,140 @@ Paste your long text here.
     );
   }
 
+  void _captureTextSelection(String sourceText, TextSelection selection) {
+    if (selection.baseOffset < 0 ||
+        selection.extentOffset < 0 ||
+        selection.baseOffset == selection.extentOffset) {
+      return;
+    }
+    final start = selection.start.clamp(0, sourceText.length);
+    final end = selection.end.clamp(0, sourceText.length);
+    if (start >= end) return;
+    final selected = sourceText.substring(start, end);
+    setState(
+      () => _selectedText = _plainTextForReadAloud(selected, _selectedPdfPath),
+    );
+  }
+
+  Widget _buildSelectablePlainText(
+    String text, {
+    TextStyle style = const TextStyle(fontSize: 16, height: 1.6),
+  }) {
+    return SelectableText(
+      text,
+      style: style,
+      onSelectionChanged: (selection, cause) {
+        _captureTextSelection(text, selection);
+      },
+    );
+  }
+
+  int _findCurrentSentenceStartInText(String text) {
+    if (_currentSentenceIndex < 0 ||
+        _currentSentenceIndex >= _sentences.length) {
+      return -1;
+    }
+    int from = 0;
+    for (int i = 0; i <= _currentSentenceIndex; i++) {
+      final sentence = _sentences[i];
+      final idx = text.indexOf(sentence, from);
+      if (idx < 0) {
+        return i == _currentSentenceIndex ? text.indexOf(sentence) : -1;
+      }
+      if (i == _currentSentenceIndex) return idx;
+      from = idx + sentence.length;
+    }
+    return -1;
+  }
+
+  Widget _buildReadAloudHighlightedText(String fullText) {
+    if (fullText.isEmpty) return _buildSelectablePlainText(fullText);
+    if (_currentReadingText.isEmpty || _currentSentenceIndex < 0) {
+      return _buildSelectablePlainText(fullText);
+    }
+
+    final sentenceStart = _findCurrentSentenceStartInText(fullText);
+    if (sentenceStart < 0) {
+      return _buildSelectablePlainText(fullText);
+    }
+
+    final sentenceEnd = (sentenceStart + _currentReadingText.length).clamp(
+      sentenceStart,
+      fullText.length,
+    );
+    final before = fullText.substring(0, sentenceStart);
+    final sentence = fullText.substring(sentenceStart, sentenceEnd);
+    final after = fullText.substring(sentenceEnd);
+
+    final theme = Theme.of(context);
+    final baseStyle = theme.textTheme.bodyMedium?.copyWith(
+      fontSize: 16,
+      height: 1.6,
+    );
+    final sentenceStyle = baseStyle?.copyWith(
+      backgroundColor: _trailingReadAloudHighlightColor.withValues(alpha: 0.2),
+    );
+    final activeWordStyle = baseStyle?.copyWith(
+      fontWeight: FontWeight.w700,
+      backgroundColor: _activeReadAloudHighlightColor.withValues(alpha: 0.55),
+    );
+
+    final spans = <InlineSpan>[TextSpan(text: before, style: baseStyle)];
+    final tokenPattern = RegExp(r'\S+');
+    int cursor = 0;
+    int trackedWordIndex = -1;
+    for (final match in tokenPattern.allMatches(sentence)) {
+      if (match.start > cursor) {
+        spans.add(
+          TextSpan(
+            text: sentence.substring(cursor, match.start),
+            style: sentenceStyle,
+          ),
+        );
+      }
+
+      final token = match.group(0) ?? '';
+      final clean = _cleanWordForSearch(token);
+      final shouldTrack = clean.length >= 2;
+      if (shouldTrack) trackedWordIndex++;
+
+      final isActiveWord =
+          !_isPaused &&
+          _currentWordIndex >= 0 &&
+          shouldTrack &&
+          trackedWordIndex == _currentWordIndex;
+
+      spans.add(
+        TextSpan(
+          text: token,
+          style: isActiveWord ? activeWordStyle : sentenceStyle,
+        ),
+      );
+      cursor = match.end;
+    }
+    if (cursor < sentence.length) {
+      spans.add(
+        TextSpan(text: sentence.substring(cursor), style: sentenceStyle),
+      );
+    }
+    spans.add(TextSpan(text: after, style: baseStyle));
+
+    return SelectableText.rich(
+      TextSpan(style: baseStyle, children: spans),
+      onSelectionChanged: (selection, cause) {
+        _captureTextSelection(fullText, selection);
+      },
+    );
+  }
+
   Widget _buildTextToolbar() {
+    final fullText = _plainTextForReadAloud(
+      _textFileContent ?? '',
+      _selectedPdfPath,
+    );
+    final isFullSelection =
+        fullText.isNotEmpty && (_selectedText?.trim() ?? '') == fullText.trim();
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -3070,19 +3214,46 @@ Paste your long text here.
             ),
           ),
           const SizedBox(width: 8),
-          // Select all button
+          // Select-all toggle for read-aloud source text.
           TextButton.icon(
             onPressed: () {
-              setState(
-                () => _selectedText = _plainTextForReadAloud(
-                  _textFileContent ?? '',
-                  _selectedPdfPath,
+              if (fullText.isEmpty) return;
+              final selecting = !isFullSelection;
+              setState(() {
+                _selectedText = selecting ? fullText : null;
+              });
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    selecting
+                        ? 'Selected full text for Read Aloud (${fullText.length} chars).'
+                        : 'Cleared manual selection. Read Aloud will use current document text.',
+                  ),
+                  duration: const Duration(seconds: 2),
                 ),
               );
             },
             icon: const Icon(Icons.select_all, size: 18),
-            label: const Text('Select All'),
+            label: Text(isFullSelection ? 'Clear Selection' : 'Select All'),
           ),
+          if (_isManualTextDoc) ...[
+            const SizedBox(width: 6),
+            TextButton.icon(
+              onPressed: () {
+                setState(() {
+                  _freeTextEditMode = !_freeTextEditMode;
+                  if (_freeTextEditMode) {
+                    _freeTextController.text = _textFileContent ?? '';
+                  }
+                });
+              },
+              icon: Icon(
+                _freeTextEditMode ? Icons.visibility : Icons.edit_note,
+              ),
+              label: Text(_freeTextEditMode ? 'Preview' : 'Edit Text'),
+            ),
+          ],
           const Spacer(),
           // TTS controls
           if (_selectedText != null && _selectedText!.isNotEmpty && !_isReading)
@@ -3411,6 +3582,86 @@ Paste your long text here.
 
     return RichText(
       text: TextSpan(style: baseStyle, children: spans),
+    );
+  }
+
+  Widget _buildFreeTextEditor() {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Free Text Mode: paste or type your text, then Read Aloud or Convert to Audiobook.',
+            style: theme.textTheme.bodySmall,
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: TextField(
+              controller: _freeTextController,
+              expands: true,
+              maxLines: null,
+              minLines: null,
+              textAlignVertical: TextAlignVertical.top,
+              style: const TextStyle(fontSize: 15, height: 1.4),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Paste text here...',
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              FilledButton.icon(
+                onPressed: () {
+                  final updatedText = _freeTextController.text;
+                  final updatedBytes = Uint8List.fromList(
+                    utf8.encode(updatedText),
+                  );
+                  final currentPath = _selectedPdfPath;
+                  setState(() {
+                    _textFileContent = updatedText;
+                    _selectedText = _plainTextForReadAloud(
+                      updatedText,
+                      _selectedPdfPath,
+                    );
+                    _selectedPdfBytes = updatedBytes;
+                    _freeTextEditMode = false;
+                    if (currentPath != null) {
+                      for (final item in _pdfLibrary) {
+                        if (item['path'] == currentPath) {
+                          item['bytes'] = updatedBytes;
+                          break;
+                        }
+                      }
+                    }
+                  });
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Free text updated. Ready for Read Aloud.'),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.check),
+                label: const Text('Apply'),
+              ),
+              const SizedBox(width: 8),
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _freeTextEditMode = false;
+                  });
+                },
+                icon: const Icon(Icons.close),
+                label: const Text('Cancel'),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
