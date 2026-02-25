@@ -335,6 +335,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 
 - **PDF Reader with Voice**: Read PDFs aloud with sentence-by-sentence highlighting
 - **Audiobook Creator**: Convert PDFs into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers (Kokoro voices only)
+- **Unified Jobs Queue**: Track every executed job (TTS, voice clone, and audiobook) with status and inline playback controls
 - **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox)
 - **Model Manager**: In-app model download manager — check status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
@@ -343,6 +344,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Multi-LLM Support**: Claude, OpenAI, Ollama (local), or Claude Code CLI
 
 ![PDF Reader & Audiobook Creator](assets/08-mimikastudio-readaloud.png)
+![Jobs Queue](assets/15-mimikastudio-jobs-queue.png)
 
 ---
 
@@ -356,8 +358,10 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
 - **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
 - **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices (IPA transcription is not part of the current release)
-- **Default Voice Samples**: Natasha and Suzan ship with the app; user uploads stored in `backend/data/user_voices/`
-- **User Voices in UI**: Uploaded voices appear under each engine's **Your Voices** section after refresh
+- **Default Voice Samples**: Max, Natasha, Sara, and Suzan ship with the app; user uploads are stored in `~/MimikaStudio/data/user_voices/cloners/` by default (or `MIMIKA_DATA_DIR`)
+- **User Voices in UI**: Uploaded voices appear immediately under each engine's **Your Voices** section
+- **Jobs Tab**: Unified queue of TTS, voice clone, and audiobook jobs with progress, completion state, and playback controls
+- **Folder View in Settings**: View and open user home, Mimika data, logs, default voices (Natasha/Suzan), and user clone voices folders directly from the app
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full PDFs to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)

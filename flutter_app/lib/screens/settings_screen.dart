@@ -23,6 +23,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   // General settings
   String _outputFolder = '';
+  List<Map<String, dynamic>> _systemFolders = [];
 
   // Appearance settings
   ThemeMode _themeMode = ThemeMode.system;
@@ -49,6 +50,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _outputFolder = await _settingsService.getOutputFolder();
       } catch (e) {
         _outputFolder = 'Default (project folder)';
+      }
+
+      try {
+        _systemFolders = await _apiService.getSystemFolders();
+      } catch (e) {
+        _systemFolders = [];
       }
 
       // Load other settings
@@ -156,6 +163,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to save update frequency: $e')),
         );
+      }
+    }
+  }
+
+  Future<void> _openFolder(String path) async {
+    final resolvedPath = path.trim();
+    if (resolvedPath.isEmpty) return;
+
+    try {
+      final directory = Directory(resolvedPath);
+      if (!directory.existsSync()) {
+        throw Exception('Folder does not exist: $resolvedPath');
+      }
+
+      ProcessResult result;
+      if (Platform.isMacOS) {
+        result = await Process.run('open', [resolvedPath]);
+      } else if (Platform.isWindows) {
+        result = await Process.run('explorer', [resolvedPath]);
+      } else if (Platform.isLinux) {
+        result = await Process.run('xdg-open', [resolvedPath]);
+      } else {
+        throw Exception('Opening folders is not supported on this platform');
+      }
+
+      if (result.exitCode != 0) {
+        throw Exception(
+          result.stderr.toString().trim().isEmpty
+              ? 'Failed to open folder'
+              : result.stderr.toString().trim(),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to open folder: $e')));
       }
     }
   }
@@ -336,13 +380,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
                               ).colorScheme.onSurfaceVariant,
                             ),
                           ),
-                          trailing: FilledButton.tonal(
-                            onPressed: _selectOutputFolder,
-                            child: const Text('Browse'),
+                          trailing: Wrap(
+                            spacing: 8,
+                            children: [
+                              OutlinedButton(
+                                onPressed: () => _openFolder(_outputFolder),
+                                child: const Text('Open'),
+                              ),
+                              FilledButton.tonal(
+                                onPressed: _selectOutputFolder,
+                                child: const Text('Browse'),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildSectionHeader('Folders', Icons.folder_copy_outlined),
+                  Card(
+                    child: _systemFolders.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'Folder paths unavailable from backend.',
+                            ),
+                          )
+                        : Column(
+                            children: [
+                              for (final folder in _systemFolders)
+                                _buildFolderTile(
+                                  label:
+                                      folder['label']?.toString() ?? 'Folder',
+                                  path: folder['path']?.toString() ?? '',
+                                ),
+                            ],
+                          ),
                   ),
                   const SizedBox(height: 24),
 
@@ -555,7 +629,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           final tabController = DefaultTabController.of(
                             context,
                           );
-                          tabController.animateTo(6);
+                          tabController.animateTo(9);
                         },
                         child: const Text('Open Pro'),
                       ),
@@ -662,6 +736,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildFolderTile({required String label, required String path}) {
+    return ListTile(
+      leading: const Icon(Icons.folder),
+      title: Text(label),
+      subtitle: SelectableText(
+        path,
+        style: TextStyle(
+          fontSize: 12,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+      trailing: OutlinedButton(
+        onPressed: path.trim().isEmpty ? null : () => _openFolder(path),
+        child: const Text('Open'),
       ),
     );
   }

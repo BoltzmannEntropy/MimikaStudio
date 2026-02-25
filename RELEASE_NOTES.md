@@ -1,30 +1,35 @@
-# MimikaStudio v2026.02.4 Release Notes
+# MimikaStudio v2026.02.5 Release Notes
 
-**Release Date:** February 24, 2026
+**Release Date:** February 25, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.02.4
+## What's New In v2026.02.5
 
-- Split CosyVoice3 into a real standalone ONNX model (`ayousanz/cosy-voice3-onnx`) with independent download/status.
-- Removed Supertonic-core coupling from CosyVoice3 endpoints and model checks.
-- Added global Jobs tab in top navigation showing all TTS, voice-clone, and audiobook jobs.
-- Added audiobook visibility in Jobs with audio playback once completed.
-- Added generation-event job logging coverage for TTS and voice-clone flows.
-- Added DOCX and EPUB text extraction support in Read Aloud.
-- Removed fixed 300-character UI text-entry limits and preserved long-text editing with scrolling.
-- Added download controls for generated audio across library surfaces.
+- Fixed Qwen3 voice clone failures for problematic user uploads by normalizing reference audio to safe mono PCM WAV before inference.
+- Added upload-time decode/normalization guard for Qwen3 voice samples (invalid audio now returns clear 400 errors instead of generation-time 500 errors).
+- Transcript is now optional when uploading Qwen3 voice samples.
+- Newly uploaded Qwen3 voices now appear immediately in the voice list and are auto-selected.
+- Added Settings folder view with direct open actions for key paths:
+  - User home
+  - Mimika user folder
+  - Data folder
+  - Generated audio folder
+  - Log folder
+  - Default voices folder (Max/Natasha/Sara/Suzan)
+  - User clone voices folder
+- Removed CosyVoice3 from visible desktop UI tabs/model manager surfaces.
+- Added Jobs Queue showcase screenshot and documentation updates in README and website.
 
 ---
 
 ## Reliability Improvements
 
-### API and runtime stability
-
-- `/api/system/info` now probes MLX availability using a subprocess-safe check to avoid hard interpreter abort paths.
-- Model registry metadata now reflects CosyVoice3 capability accurately (standalone ONNX preset-voice TTS).
-- Documentation and website model catalog now align with runtime behavior for CosyVoice3 vs Supertonic.
+- Unified clone user-voice storage under one runtime-writable folder:
+  `~/MimikaStudio/data/user_voices/cloners/` (or `MIMIKA_DATA_DIR` override).
+- Added startup migration from legacy per-engine user voice folders into the shared cloner folder.
+- Added dedicated `/api/system/folders` endpoint used by the Settings folder view.
 
 ---
 
@@ -32,15 +37,15 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of February 24, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.
+As of February 25, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.
 2. In Applications, right-click MimikaStudio.app and select Open.
 3. Click Open in the warning dialog.
 4. If macOS still blocks launch, go to: System Settings -> Privacy & Security -> Open Anyway (for MimikaStudio), then confirm with password/Touch ID.
-5. On first launch, wait for the bundled backend to start. The startup log screen below is expected for a few seconds.
-6. On first use, click Download for the required model in the in-app model card.
+5. On first launch, wait for the bundled backend to start.
+6. On first use, click Download for required models in-app.
 
 ---
 
@@ -50,14 +55,3 @@ macOS may block first launch until you explicitly allow it in security settings.
 - Apple Silicon (M1/M2/M3/M4)
 - 8 GB RAM minimum (16 GB recommended)
 
----
-
-## Checksums
-
-`MimikaStudio-2026.02.4-arm64.dmg` SHA256 is published in:
-
-`MimikaStudio-2026.02.4-arm64.dmg.sha256`
-
----
-
-**Full Changelog:** https://github.com/BoltzmannEntropy/MimikaStudio/compare/v2026.02.3...v2026.02.4

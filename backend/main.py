@@ -26,7 +26,7 @@ import tempfile
 import urllib.request
 import zipfile
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 import uuid
 import soundfile as sf
 
@@ -825,15 +825,16 @@ def _ensure_cosyvoice3_pregenerated_rows() -> None:
 # Qwen3 voice storage locations
 SHARED_SAMPLE_VOICES_DIR = _bundled_data_dir / "samples" / "voices"
 QWEN3_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-QWEN3_USER_VOICES_DIR = _runtime_data_dir / "user_voices" / "qwen3"
+CLONER_USER_VOICES_DIR = _runtime_data_dir / "user_voices" / "cloners"
+QWEN3_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 
 # Chatterbox voice storage locations
 CHATTERBOX_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-CHATTERBOX_USER_VOICES_DIR = _runtime_data_dir / "user_voices" / "chatterbox"
+CHATTERBOX_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 
 # IndexTTS-2 voice storage locations
 INDEXTTS2_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-INDEXTTS2_USER_VOICES_DIR = QWEN3_USER_VOICES_DIR
+INDEXTTS2_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 _bundled_dicta_model_dir = _backend_dir / "models" / "dicta-onnx"
 _runtime_dicta_model_dir = _runtime_data_dir / "models" / "dicta-onnx"
 if (_bundled_dicta_model_dir / "dicta-1.0.onnx").exists():
@@ -861,10 +862,7 @@ def _get_all_voices() -> list:
     """List all voice samples across all engines (shared pool)."""
     all_dirs = [
         ("shared", SHARED_SAMPLE_VOICES_DIR, "default"),
-        ("qwen3", QWEN3_USER_VOICES_DIR, "user"),
-        ("chatterbox", CHATTERBOX_USER_VOICES_DIR, "user"),
-        ("indextts2", INDEXTTS2_SAMPLE_VOICES_DIR, "default"),
-        ("indextts2", INDEXTTS2_USER_VOICES_DIR, "user"),
+        ("cloners", CLONER_USER_VOICES_DIR, "user"),
     ]
     voices: dict[str, dict] = {}
     for origin_engine, vdir, source in all_dirs:
@@ -891,9 +889,7 @@ def _find_voice_audio(name: str) -> Optional[Path]:
     """Search all voice directories for a voice file by name."""
     all_dirs = [
         SHARED_SAMPLE_VOICES_DIR,
-        QWEN3_USER_VOICES_DIR,
-        CHATTERBOX_USER_VOICES_DIR,
-        INDEXTTS2_USER_VOICES_DIR, INDEXTTS2_SAMPLE_VOICES_DIR,
+        CLONER_USER_VOICES_DIR,
     ]
     for vdir in all_dirs:
         audio_file = vdir / f"{name}.wav"
@@ -914,12 +910,11 @@ def _migrate_legacy_voice_samples() -> None:
     """Consolidate legacy sample folders into the shared defaults folder."""
     samples_root = _bundled_data_dir / "samples"
     shared_dir = SHARED_SAMPLE_VOICES_DIR
+    cloner_user_dir = CLONER_USER_VOICES_DIR
     legacy_qwen3_dir = samples_root / "qwen3_voices"
     legacy_chatterbox_dir = samples_root / "chatterbox_voices"
 
-    QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
 
     def move_voice(src_dir: Path, name: str, dest_dir: Path) -> None:
         src_wav = src_dir / f"{name}.wav"
@@ -958,10 +953,79 @@ def _migrate_legacy_voice_samples() -> None:
         for wav_file in legacy_dir.glob("*.wav"):
             move_voice(legacy_dir, wav_file.stem, shared_dir)
 
+    runtime_user_root = _runtime_data_dir / "user_voices"
+    legacy_user_dirs = (
+        runtime_user_root / "qwen3",
+        runtime_user_root / "chatterbox",
+        runtime_user_root / "indextts2",
+        _bundled_data_dir / "user_voices" / "qwen3",
+        _bundled_data_dir / "user_voices" / "chatterbox",
+        _bundled_data_dir / "user_voices" / "indextts2",
+    )
+    for legacy_user_dir in legacy_user_dirs:
+        if legacy_user_dir.resolve() == cloner_user_dir.resolve():
+            continue
+        if not legacy_user_dir.exists():
+            continue
+        for wav_file in legacy_user_dir.glob("*.wav"):
+            move_voice(legacy_user_dir, wav_file.stem, cloner_user_dir)
+
 
 def _safe_tag(value: str, fallback: str = "model") -> str:
     tag = re.sub(r"[^a-zA-Z0-9_-]+", "", value.replace("/", "-").replace(" ", "-")).strip("-_")
     return tag[:32] if tag else fallback
+
+
+def _decode_and_normalize_uploaded_voice(uploaded_path: Path, target_path: Path) -> float:
+    """Decode user upload and normalize it to mono 24k PCM WAV."""
+    try:
+        audio, sample_rate = sf.read(str(uploaded_path), dtype="float32")
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid or unsupported audio file. Please upload a WAV file. ({exc})",
+        ) from exc
+
+    if getattr(audio, "size", 0) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded audio is empty")
+
+    if len(audio.shape) > 1:
+        audio = audio.mean(axis=1)
+    if sample_rate <= 0:
+        raise HTTPException(status_code=400, detail="Invalid audio sample rate")
+
+    normalized_sr = 24000
+    if sample_rate != normalized_sr:
+        audio = resample_audio(audio, sample_rate, normalized_sr)
+        sample_rate = normalized_sr
+
+    sf.write(str(target_path), audio, sample_rate, subtype="PCM_16")
+    return float(len(audio) / sample_rate)
+
+
+def _prepare_clone_reference_audio(audio_path: str, voice_name: str) -> Path:
+    """Normalize a clone reference voice to a guaranteed readable WAV path."""
+    source = Path(audio_path)
+    if not source.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Voice sample '{voice_name}' file is missing. Re-upload the voice.",
+        )
+
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    temp_ref = outputs_dir / f"qwen3-ref-{_safe_tag(voice_name, 'voice')}-{uuid.uuid4().hex[:8]}.wav"
+    try:
+        _decode_and_normalize_uploaded_voice(source, temp_ref)
+    except HTTPException as exc:
+        temp_ref.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Voice sample '{voice_name}' cannot be decoded. "
+                "Please re-upload this voice as a WAV file."
+            ),
+        ) from exc
+    return temp_ref
 
 
 def _generate_chunked_audio(
@@ -1167,6 +1231,23 @@ async def system_info():
         "backend": "onnxruntime",
         "features": "expressive preset multilingual TTS (separate ONNX stack)",
     }
+    folders = [
+        {"id": "user_home", "label": "User Home", "path": str(Path.home())},
+        {"id": "runtime_home", "label": "Mimika User Folder", "path": str(_runtime_home)},
+        {"id": "runtime_data", "label": "Mimika Data Folder", "path": str(_runtime_data_dir)},
+        {"id": "output", "label": "Generated Audio Folder", "path": str(outputs_dir)},
+        {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
+        {
+            "id": "default_voices",
+            "label": "Default Voices (Natasha/Max)",
+            "path": str(SHARED_SAMPLE_VOICES_DIR),
+        },
+        {
+            "id": "user_cloner_voices",
+            "label": "Your Voice Clones",
+            "path": str(CLONER_USER_VOICES_DIR),
+        },
+    ]
 
     return {
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -1182,7 +1263,32 @@ async def system_info():
             "chatterbox": chatterbox_info,
             "supertonic": supertonic_info,
             "cosyvoice3": cosyvoice3_info,
-        }
+        },
+        "folders": folders,
+    }
+
+
+@app.get("/api/system/folders")
+async def system_folders():
+    """List important runtime folders exposed in Settings."""
+    return {
+        "folders": [
+            {"id": "user_home", "label": "User Home", "path": str(Path.home())},
+            {"id": "runtime_home", "label": "Mimika User Folder", "path": str(_runtime_home)},
+            {"id": "runtime_data", "label": "Mimika Data Folder", "path": str(_runtime_data_dir)},
+            {"id": "output", "label": "Generated Audio Folder", "path": str(outputs_dir)},
+            {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
+            {
+                "id": "default_voices",
+                "label": "Default Voices (Natasha/Max)",
+                "path": str(SHARED_SAMPLE_VOICES_DIR),
+            },
+            {
+                "id": "user_cloner_voices",
+                "label": "Your Voice Clones",
+                "path": str(CLONER_USER_VOICES_DIR),
+            },
+        ]
     }
 
 # System monitoring
@@ -1632,6 +1738,7 @@ async def cosyvoice3_generate(request: SupertonicRequest, http_request: Request)
         params = CosyVoice3Params(
             speed=request.speed,
             language=request.language,
+            total_steps=request.total_steps,
         )
         output_path = engine.generate(
             text=request.text,
@@ -1765,14 +1872,21 @@ async def qwen3_generate(request: Qwen3Request, http_request: Request):
                     transcript = _safe_read_text(txt_file).strip()
                 voice = {"name": request.voice_name, "audio_path": str(audio_file), "transcript": transcript}
 
-            output_path = engine.generate_voice_clone(
-                text=request.text,
-                ref_audio_path=voice["audio_path"],
-                ref_text=voice["transcript"],
-                language=request.language,
-                speed=request.speed,
-                params=params,
+            prepared_ref_path = _prepare_clone_reference_audio(
+                voice["audio_path"],
+                request.voice_name,
             )
+            try:
+                output_path = engine.generate_voice_clone(
+                    text=request.text,
+                    ref_audio_path=str(prepared_ref_path),
+                    ref_text=voice["transcript"],
+                    language=request.language,
+                    speed=request.speed,
+                    params=params,
+                )
+            finally:
+                prepared_ref_path.unlink(missing_ok=True)
 
             result = {
                 "audio_url": f"/audio/{output_path.name}",
@@ -1879,6 +1993,7 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
             repetition_penalty=request.repetition_penalty,
             seed=request.seed,
         )
+        prepared_ref_path: Optional[Path] = None
 
         if request.mode == "clone":
             if not request.voice_name:
@@ -1913,9 +2028,13 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
                     "transcript": transcript,
                 }
 
+            prepared_ref_path = _prepare_clone_reference_audio(
+                voice["audio_path"],
+                request.voice_name,
+            )
             chunk_iter = engine.stream_voice_clone_pcm(
                 text=request.text,
-                ref_audio_path=voice["audio_path"],
+                ref_audio_path=str(prepared_ref_path),
                 ref_text=voice["transcript"],
                 language=request.language,
                 speed=request.speed,
@@ -1964,6 +2083,8 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
                     if chunk:
                         yield chunk
             finally:
+                if prepared_ref_path is not None:
+                    prepared_ref_path.unlink(missing_ok=True)
                 if request.unload_after:
                     engine.unload()
 
@@ -2069,19 +2190,16 @@ async def qwen3_list_models():
 async def qwen3_upload_voice(
     file: UploadFile = File(...),
     name: str = Form(...),
-    transcript: str = Form(...),
+    transcript: Optional[str] = Form(""),
 ):
     """Upload a new voice sample for Qwen3 cloning.
 
     Requires:
     - Audio file (WAV, 3+ seconds recommended)
-    - Transcript of what is said in the audio
     """
-    if not transcript.strip():
-        raise HTTPException(
-            status_code=400,
-            detail="Transcript is required for voice cloning"
-        )
+    name = name.strip()
+    if not name or "/" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="Invalid voice name")
     if _is_shared_default_voice(name):
         raise HTTPException(
             status_code=400,
@@ -2089,34 +2207,46 @@ async def qwen3_upload_voice(
         )
 
     try:
-        engine = get_qwen3_engine()
-
-        # Save uploaded file temporarily
+        QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
         outputs_dir.mkdir(parents=True, exist_ok=True)
-        temp_path = outputs_dir / f"temp_{name}.wav"
+        safe_tag = _safe_tag(name, fallback="voice")
+        temp_path = outputs_dir / f"temp-{safe_tag}-{uuid.uuid4().hex[:8]}.wav"
         with open(temp_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
-        # Save as voice sample
-        voice_info = engine.save_voice_sample(
-            name=name,
-            audio_path=str(temp_path),
-            transcript=transcript.strip()
-        )
-
-        # Clean up temp file
+        final_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+        final_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+        duration_sec = _decode_and_normalize_uploaded_voice(temp_path, final_audio)
+        transcript_text = (transcript or "").strip()
+        final_transcript.write_text(transcript_text, encoding="utf-8")
         temp_path.unlink(missing_ok=True)
+        audio_url = f"/api/qwen3/voices/{quote(name)}/audio"
+
+        voice_info = {
+            "name": name,
+            "audio_path": str(final_audio),
+            "audio_url": audio_url,
+            "transcript": transcript_text,
+            "source": "user",
+            "duration_sec": round(duration_sec, 3),
+        }
+
+        try:
+            engine = get_qwen3_engine()
+            engine.clear_cache()
+        except ImportError:
+            pass
 
         return {
             "message": f"Voice '{name}' saved successfully",
             "voice": voice_info,
         }
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"Qwen3-TTS not installed: {e}"
-        )
+    except HTTPException:
+        raise
     except Exception as e:
+        temp_path = locals().get("temp_path")
+        if isinstance(temp_path, Path):
+            temp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

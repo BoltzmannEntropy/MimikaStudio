@@ -125,6 +125,16 @@ class TestSystemEndpoints:
         assert isinstance(data["ram_used_gb"], (int, float))
         assert isinstance(data["ram_total_gb"], (int, float))
 
+    def test_system_folders_returns_200(self, client):
+        resp = client.get("/api/system/folders")
+        assert resp.status_code == 200
+
+    def test_system_folders_has_paths(self, client):
+        data = client.get("/api/system/folders").json()
+        assert "folders" in data
+        assert isinstance(data["folders"], list)
+        assert len(data["folders"]) > 0
+
 
 # ===================================================================
 # KOKORO ENDPOINTS (4)
@@ -229,6 +239,31 @@ class TestQwen3Generation:
         resp = client.post("/api/qwen3/generate/stream", json={"mode": "clone"})
         assert resp.status_code == 422
 
+    def test_generate_clone_invalid_reference_audio_returns_400(self, client, tmp_path):
+        bad_audio = tmp_path / "bad.wav"
+        bad_audio.write_bytes(b"this-is-not-valid-audio")
+
+        engine = MagicMock()
+        engine.get_saved_voices.return_value = [
+            {"name": "badvoice", "audio_path": str(bad_audio), "transcript": ""}
+        ]
+
+        with patch("main._ensure_qwen3_model_ready"), patch(
+            "main.get_qwen3_engine", return_value=engine
+        ):
+            resp = client.post(
+                "/api/qwen3/generate",
+                json={
+                    "text": "hello world",
+                    "mode": "clone",
+                    "voice_name": "badvoice",
+                    "model_size": "0.6B",
+                    "model_quantization": "bf16",
+                },
+            )
+        assert resp.status_code == 400
+        assert "cannot be decoded" in str(resp.json()).lower()
+
 
 class TestQwen3Voices:
     """Voice CRUD: list, upload, delete, update, audio preview."""
@@ -251,6 +286,27 @@ class TestQwen3Voices:
         )
         # Should succeed (200) or engine not installed (503/500)
         assert resp.status_code in (200, 500, 503)
+
+    def test_upload_voice_does_not_require_engine_load(self, client):
+        """Uploading voices should work even if Qwen3 model runtime is unavailable."""
+        wav = _make_minimal_wav()
+        with patch("main.get_qwen3_engine", side_effect=ImportError("mlx unavailable")):
+            resp = client.post(
+                "/api/qwen3/voices",
+                data={"name": "__test_upload_no_engine__", "transcript": "hello world"},
+                files={"file": ("test.wav", wav, "audio/wav")},
+            )
+        assert resp.status_code == 200
+
+    def test_upload_voice_without_transcript_is_allowed(self, client):
+        """Transcript is optional for Qwen3 upload."""
+        wav = _make_minimal_wav()
+        resp = client.post(
+            "/api/qwen3/voices",
+            data={"name": "__test_upload_no_transcript__"},
+            files={"file": ("test.wav", wav, "audio/wav")},
+        )
+        assert resp.status_code == 200
 
     def test_delete_voice_nonexistent_returns_404(self, client):
         resp = client.delete("/api/qwen3/voices/__surely_does_not_exist__")

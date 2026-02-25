@@ -16,6 +16,8 @@ import numpy as np
 import soundfile as sf
 from scipy import signal
 
+from .runtime_paths import get_cloner_user_voices_dir, get_runtime_output_dir
+
 # Keep MLX import lazy to avoid backend startup aborts on machines without a
 # usable Metal device context.
 mx = None
@@ -103,12 +105,13 @@ class Qwen3TTSEngine:
                 "Unsupported Qwen3 config: "
                 f"mode={mode}, model_size={model_size}, quantization={quantization}"
             )
-        self.outputs_dir = Path(__file__).parent.parent / "outputs"
-        self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        self.outputs_dir = get_runtime_output_dir()
         self.sample_voices_dir = Path(__file__).parent.parent / "data" / "samples" / "voices"
-        self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
-        self.user_voices_dir = Path(__file__).parent.parent / "data" / "user_voices" / "qwen3"
-        self.user_voices_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        self.user_voices_dir = get_cloner_user_voices_dir()
         self._voice_prompts = {}
 
     def _get_device_and_dtype(self) -> Tuple[str, str]:

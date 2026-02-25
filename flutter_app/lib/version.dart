@@ -1,6 +1,6 @@
 /// MimikaStudio version information.
-const String appVersion = "2026.02.4";
-const int buildNumber = 4;
-const String versionName = "Shutdown Reliability + Distribution Hardening";
+const String appVersion = "2026.02.5";
+const int buildNumber = 5;
+const String versionName = "Qwen3 Clone Decode Guard + Folder View";
 
 String get versionString => "$appVersion (build $buildNumber)";

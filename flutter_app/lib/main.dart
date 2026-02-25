@@ -5,7 +5,6 @@ import 'dart:ui';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'screens/cosyvoice3_screen.dart';
 import 'screens/quick_tts_screen.dart';
 import 'screens/supertonic_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
@@ -771,7 +770,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 12,
+      length: 11,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
@@ -839,10 +838,6 @@ class _MainScreenState extends State<MainScreen> {
               ),
               Tab(icon: Icon(Icons.bolt_rounded, size: 26), text: 'Supertonic'),
               Tab(
-                icon: Icon(Icons.auto_awesome_rounded, size: 26),
-                text: 'CosyVoice3',
-              ),
-              Tab(
                 icon: Icon(Icons.record_voice_over_rounded, size: 26),
                 text: 'Qwen3 Clone',
               ),
@@ -873,7 +868,6 @@ class _MainScreenState extends State<MainScreen> {
                   ModelsScreen(),
                   QuickTtsScreen(),
                   SupertonicScreen(),
-                  CosyVoice3Screen(),
                   Qwen3CloneScreen(),
                   ChatterboxCloneScreen(),
                   PdfReaderScreen(),

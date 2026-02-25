@@ -12,6 +12,7 @@ import soundfile as sf
 from scipy import signal
 
 from .audio_utils import merge_audio_chunks
+from .runtime_paths import get_cloner_user_voices_dir, get_runtime_output_dir
 from .text_chunking import smart_chunk_text
 
 # Keep MLX import lazy to avoid backend startup aborts on machines without a
@@ -52,18 +53,17 @@ class ChatterboxEngine:
     def __init__(self) -> None:
         self.model = None
         self.device: Optional[str] = None
-        self.outputs_dir = Path(__file__).parent.parent / "outputs"
-        self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        self.outputs_dir = get_runtime_output_dir()
 
         self.sample_voices_dir = (
             Path(__file__).parent.parent / "data" / "samples" / "voices"
         )
-        self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.sample_voices_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
 
-        self.user_voices_dir = (
-            Path(__file__).parent.parent / "data" / "user_voices" / "chatterbox"
-        )
-        self.user_voices_dir.mkdir(parents=True, exist_ok=True)
+        self.user_voices_dir = get_cloner_user_voices_dir()
 
     def _get_device(self) -> str:
         if mx is not None and mx.metal.is_available():

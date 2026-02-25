@@ -4,6 +4,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import contextlib
+import importlib.util
+import io
 import os
 import re
 import subprocess
@@ -11,6 +14,8 @@ import sys
 import tempfile
 import threading
 import uuid
+
+import soundfile as sf
 
 
 DEFAULT_MODEL_NAME = "CosyVoice3"
@@ -97,6 +102,7 @@ _VOICE_PRESETS = {
 class CosyVoice3Params:
     speed: float = 1.0
     language: str = "Auto"
+    total_steps: int = 5
 
 
 class CosyVoice3Engine:
@@ -105,6 +111,7 @@ class CosyVoice3Engine:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         self._generate_lock = threading.Lock()
         self._model_dir_cache: dict[Path, Path] = {}
+        self._inproc_engine_cache: dict[Path, object] = {}
         self._last_snapshot_dir: Optional[Path] = None
 
     def is_runtime_available(self) -> bool:
@@ -155,6 +162,125 @@ class CosyVoice3Engine:
         self._model_dir_cache[snapshot_dir] = model_dir
         return model_dir
 
+    def _load_inprocess_engine(self, snapshot_dir: Path):
+        snapshot_dir = snapshot_dir.expanduser().resolve()
+        cached = self._inproc_engine_cache.get(snapshot_dir)
+        if cached is not None:
+            return cached
+
+        model_dir = self._prepare_model_dir(snapshot_dir)
+        script_path = snapshot_dir / "scripts" / "onnx_inference_pure.py"
+        if not script_path.exists():
+            raise RuntimeError(
+                f"CosyVoice3 snapshot is missing scripts/onnx_inference_pure.py: {snapshot_dir}"
+            )
+
+        module_name = f"mimika_cosyvoice3_pure_{snapshot_dir.name}"
+        spec = importlib.util.spec_from_file_location(module_name, str(script_path))
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"Failed to load CosyVoice3 ONNX module from {script_path}")
+
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        engine_cls = getattr(module, "PureOnnxCosyVoice3", None)
+        if engine_cls is None:
+            raise RuntimeError(
+                "CosyVoice3 ONNX script does not expose PureOnnxCosyVoice3 class"
+            )
+
+        use_fp16 = os.getenv("MIMIKA_COSYVOICE3_FP32", "").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+        }
+        engine = engine_cls(model_dir=str(model_dir), use_fp16=use_fp16)
+        self._inproc_engine_cache[snapshot_dir] = engine
+        return engine
+
+    def _generate_via_subprocess(
+        self,
+        *,
+        text: str,
+        output_file: Path,
+        script_path: Path,
+        model_dir: Path,
+        prompt_wav: Path,
+        prompt_text: str,
+    ) -> None:
+        timeout_seconds = max(120, int(os.getenv("MIMIKA_COSYVOICE3_TIMEOUT_SEC", "900")))
+        command = [
+            sys.executable,
+            str(script_path),
+            "--model_dir",
+            str(model_dir),
+            "--text",
+            text,
+            "--prompt_wav",
+            str(prompt_wav),
+            "--prompt_text",
+            prompt_text,
+            "--output",
+            str(output_file),
+        ]
+        if os.getenv("MIMIKA_COSYVOICE3_FP32", "").strip().lower() in {"1", "true", "yes"}:
+            command.append("--fp32")
+
+        result = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or f"exit={result.returncode}"
+            raise RuntimeError(f"CosyVoice3 ONNX inference failed: {detail[-1000:]}")
+
+    def _generate_via_inprocess(
+        self,
+        *,
+        inproc_engine,
+        text: str,
+        prompt_wav: Path,
+        prompt_text: str,
+        total_steps: int,
+    ):
+        text_clean = text.strip()
+        approx_tokens = max(1, len(text_clean) // 4)
+        max_factor = max(6, int(os.getenv("MIMIKA_COSYVOICE3_MAX_TOKEN_FACTOR", "12")))
+        max_cap = max(60, int(os.getenv("MIMIKA_COSYVOICE3_MAX_TOKEN_CAP", "280")))
+        min_floor = max(4, int(os.getenv("MIMIKA_COSYVOICE3_MIN_TOKEN_FLOOR", "8")))
+        top_k = max(5, int(os.getenv("MIMIKA_COSYVOICE3_TOPK", "20")))
+
+        max_len = max(min_floor * 3, min(max_cap, approx_tokens * max_factor))
+        min_len = max(min_floor, min(max_len - 1, approx_tokens))
+
+        step_count = max(3, min(int(total_steps), 12))
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            embedding = inproc_engine.extract_speaker_embedding(str(prompt_wav))
+            prompt_tokens = inproc_engine.extract_speech_tokens(str(prompt_wav))
+            prompt_mel = inproc_engine.extract_speech_mel(str(prompt_wav))
+
+            speech_tokens = inproc_engine.llm_inference(
+                text_clean,
+                prompt_text=prompt_text,
+                prompt_speech_tokens=prompt_tokens,
+                sampling_k=top_k,
+                max_len=max_len,
+                min_len=min_len,
+            )
+            mel = inproc_engine.flow_inference(
+                speech_tokens,
+                embedding,
+                prompt_tokens=prompt_tokens,
+                prompt_mel=prompt_mel,
+                n_timesteps=step_count,
+            )
+            return inproc_engine.hift_inference(mel)
+
     def get_voices(self) -> list[dict]:
         voices = []
         for voice_name, preset in _VOICE_PRESETS.items():
@@ -200,42 +326,31 @@ class CosyVoice3Engine:
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
         short_uuid = str(uuid.uuid4())[:8]
         output_file = self.outputs_dir / f"cosyvoice3-{self._voice_slug(voice_name)}-{short_uuid}.wav"
-        timeout_seconds = max(120, int(os.getenv("MIMIKA_COSYVOICE3_TIMEOUT_SEC", "900")))
-
-        command = [
-            sys.executable,
-            str(script_path),
-            "--model_dir",
-            str(model_dir),
-            "--text",
-            text.strip(),
-            "--prompt_wav",
-            str(prompt_wav),
-            "--prompt_text",
-            str(preset["prompt_text"]),
-            "--output",
-            str(output_file),
-        ]
-        if os.getenv("MIMIKA_COSYVOICE3_FP32", "").strip().lower() in {"1", "true", "yes"}:
-            command.append("--fp32")
 
         with self._generate_lock:
-            result = subprocess.run(
-                command,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout_seconds,
-                check=False,
-            )
+            try:
+                # Fast path: keep ONNX sessions warm in-process across requests.
+                inproc_engine = self._load_inprocess_engine(resolved_snapshot)
+                audio = self._generate_via_inprocess(
+                    inproc_engine=inproc_engine,
+                    text=text.strip(),
+                    prompt_wav=prompt_wav,
+                    prompt_text=str(preset["prompt_text"]),
+                    total_steps=params.total_steps,
+                )
+                sf.write(str(output_file), audio, SAMPLE_RATE)
+            except Exception:
+                # Fallback path preserves compatibility if in-process execution fails.
+                self._generate_via_subprocess(
+                    text=text.strip(),
+                    output_file=output_file,
+                    script_path=script_path,
+                    model_dir=model_dir,
+                    prompt_wav=prompt_wav,
+                    prompt_text=str(preset["prompt_text"]),
+                )
 
         self._last_snapshot_dir = resolved_snapshot
-        if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
-            stdout = (result.stdout or "").strip()
-            detail = stderr or stdout or f"exit={result.returncode}"
-            raise RuntimeError(f"CosyVoice3 ONNX inference failed: {detail[-1000:]}")
-
         if not output_file.exists():
             raise RuntimeError("CosyVoice3 ONNX inference finished without output file")
         return output_file

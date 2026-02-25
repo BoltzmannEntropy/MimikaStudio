@@ -11,6 +11,7 @@ class ModelsDialog extends StatefulWidget {
 
 class _ModelsDialogState extends State<ModelsDialog> {
   final ApiService _api = ApiService();
+  static const Set<String> _hiddenEngines = {'cosyvoice3'};
   List<Map<String, dynamic>> _models = [];
   bool _isLoading = true;
   String? _error;
@@ -34,7 +35,9 @@ class _ModelsDialogState extends State<ModelsDialog> {
 
   Future<void> _loadModels() async {
     try {
-      final models = await _api.getModelsStatus();
+      final models = (await _api.getModelsStatus())
+          .where((m) => !_hiddenEngines.contains(m['engine']))
+          .toList();
       if (mounted) {
         setState(() {
           _models = models;
@@ -82,8 +85,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
         return Icons.mic;
       case 'supertonic':
         return Icons.bolt;
-      case 'cosyvoice3':
-        return Icons.auto_awesome;
       case 'indextts2':
         return Icons.auto_awesome;
       default:
@@ -101,8 +102,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
         return Colors.orange;
       case 'supertonic':
         return Colors.deepPurple;
-      case 'cosyvoice3':
-        return Colors.indigo;
       case 'indextts2':
         return Colors.deepPurple;
       default:
@@ -279,7 +278,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
     final engineOrder = [
       'kokoro',
       'supertonic',
-      'cosyvoice3',
       'qwen3',
       'chatterbox',
       'indextts2',
@@ -287,7 +285,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
     final engineLabels = {
       'kokoro': 'Kokoro',
       'supertonic': 'Supertonic',
-      'cosyvoice3': 'CosyVoice3',
       'qwen3': 'Qwen3-TTS',
       'chatterbox': 'Chatterbox',
       'indextts2': 'IndexTTS-2',

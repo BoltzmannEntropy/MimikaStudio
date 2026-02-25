@@ -98,6 +98,17 @@ class ApiService {
     throw _apiError('Failed to load system info', response);
   }
 
+  Future<List<Map<String, dynamic>>> getSystemFolders() async {
+    final response = await _get(Uri.parse('$baseUrl/api/system/folders'));
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(
+        data['folders'] as List<dynamic>? ?? const [],
+      );
+    }
+    throw _apiError('Failed to load system folders', response);
+  }
+
   // System stats (CPU/RAM/GPU)
   Future<Map<String, dynamic>> getSystemStats() async {
     final response = await _get(Uri.parse('$baseUrl/api/system/stats'));
@@ -469,13 +480,13 @@ class ApiService {
     throw _apiError('Failed to generate Qwen3 audio', response);
   }
 
-  Future<void> uploadQwen3Voice(
+  Future<Map<String, dynamic>> uploadQwen3Voice(
     String name,
     Uint8List fileBytes,
     String fileName,
     String transcript,
   ) async {
-    var request = http.MultipartRequest(
+    final request = http.MultipartRequest(
       'POST',
       Uri.parse('$baseUrl/api/qwen3/voices'),
     );
@@ -486,10 +497,18 @@ class ApiService {
     );
 
     final response = await request.send().timeout(_requestTimeout);
+    final body = await response.stream.bytesToString();
     if (response.statusCode != 200) {
-      final body = await response.stream.bytesToString();
       throw Exception('Failed to upload Qwen3 voice: $body');
     }
+    if (body.trim().isEmpty) {
+      return const {};
+    }
+    final parsed = _decodeJson(body);
+    if (parsed is Map<String, dynamic>) {
+      return parsed;
+    }
+    return const {};
   }
 
   Future<void> deleteQwen3Voice(String name) async {
@@ -1178,7 +1197,8 @@ class ApiService {
 
   /// Download an audio file (for local save/share flows).
   Future<Uint8List> downloadAudioBytes(String audioUrl) async {
-    final absolute = audioUrl.startsWith('http://') || audioUrl.startsWith('https://');
+    final absolute =
+        audioUrl.startsWith('http://') || audioUrl.startsWith('https://');
     final uri = absolute ? Uri.parse(audioUrl) : Uri.parse('$baseUrl$audioUrl');
     final response = await _get(uri);
     if (response.statusCode == 200) {
