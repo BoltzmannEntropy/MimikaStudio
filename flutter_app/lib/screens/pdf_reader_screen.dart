@@ -509,6 +509,13 @@ Paste your long text here.
     // Load text content for .txt and .md files
     final lowerPath = path.toLowerCase();
 
+    // API-backed library entries use URL-style paths like "/pdf/<name>".
+    // Fetch bytes through backend for all platforms to avoid desktop file-path misses.
+    if (bytes == null && path.startsWith('/pdf/')) {
+      _selectPdfFromUrl(path, name);
+      return;
+    }
+
     // If we have bytes, always prefer the bytes-based path (works on all platforms)
     if (bytes != null) {
       if (lowerPath.endsWith('.txt') || lowerPath.endsWith('.md')) {
@@ -815,7 +822,9 @@ Paste your long text here.
       if (_isExtractingText) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Still extracting text from document, please wait...'),
+            content: Text(
+              'Still extracting text from document, please wait...',
+            ),
             duration: Duration(seconds: 2),
           ),
         );
@@ -1679,7 +1688,10 @@ Paste your long text here.
       textToConvert = _pdfExtractedText!;
     }
     if (textToConvert.isEmpty && _textFileContent != null) {
-      textToConvert = _plainTextForReadAloud(_textFileContent!, _selectedPdfPath);
+      textToConvert = _plainTextForReadAloud(
+        _textFileContent!,
+        _selectedPdfPath,
+      );
     }
 
     if (textToConvert.isEmpty) {
@@ -1981,10 +1993,11 @@ Paste your long text here.
                         ),
                         onTap: () {
                           final bytes = pdf['bytes'] as Uint8List?;
+                          final url = pdf['url'] as String?;
                           if (bytes != null) {
                             _selectPdf(path, name, bytes: bytes);
-                          } else if (kIsWeb && pdf['url'] != null) {
-                            _selectPdfFromUrl(pdf['url'] as String, name);
+                          } else if (url != null && url.isNotEmpty) {
+                            _selectPdfFromUrl(url, name);
                           } else {
                             _selectPdf(path, name);
                           }
@@ -2708,7 +2721,9 @@ Paste your long text here.
           : 'wav';
       final savePath = await FilePicker.platform.saveFile(
         dialogTitle: 'Save audiobook',
-        fileName: suggestedName.isNotEmpty ? suggestedName : 'audiobook-$jobId.wav',
+        fileName: suggestedName.isNotEmpty
+            ? suggestedName
+            : 'audiobook-$jobId.wav',
         type: FileType.custom,
         allowedExtensions: [ext],
       );
@@ -2922,7 +2937,37 @@ Paste your long text here.
         // Text content
         Expanded(
           child: _textFileContent == null
-              ? const Center(child: CircularProgressIndicator())
+              ? (_isExtractingText
+                    ? const Center(child: CircularProgressIndicator())
+                    : Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.error_outline,
+                              size: 36,
+                              color: Colors.orange,
+                            ),
+                            const SizedBox(height: 8),
+                            const Text('Could not load document text'),
+                            const SizedBox(height: 8),
+                            FilledButton.tonalIcon(
+                              onPressed: () {
+                                final path = _selectedPdfPath;
+                                final name = _selectedPdfName;
+                                if (path == null || name == null) return;
+                                if (path.startsWith('/pdf/')) {
+                                  _selectPdfFromUrl(path, name);
+                                } else {
+                                  _selectPdf(path, name);
+                                }
+                              },
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry'),
+                            ),
+                          ],
+                        ),
+                      ))
               : Container(
                   color: Theme.of(context).colorScheme.surface,
                   child: SingleChildScrollView(
@@ -2932,17 +2977,18 @@ Paste your long text here.
                             child: MarkdownBody(
                               data: _textFileContent!,
                               selectable: true,
-                              styleSheet: MarkdownStyleSheet.fromTheme(
-                                Theme.of(context),
-                              ).copyWith(
-                                p: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(fontSize: 16, height: 1.6),
-                                code: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      fontFamily: 'monospace',
-                                      fontSize: 14,
-                                    ),
-                              ),
+                              styleSheet:
+                                  MarkdownStyleSheet.fromTheme(
+                                    Theme.of(context),
+                                  ).copyWith(
+                                    p: Theme.of(context).textTheme.bodyMedium
+                                        ?.copyWith(fontSize: 16, height: 1.6),
+                                    code: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          fontFamily: 'monospace',
+                                          fontSize: 14,
+                                        ),
+                                  ),
                             ),
                           )
                         : SelectableText(
