@@ -1,32 +1,23 @@
-# MimikaStudio v2026.02.6 Release Notes
+# MimikaStudio v2026.02.7 Release Notes
 
-**Release Date:** February 25, 2026  
+**Release Date:** February 26, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.02.6
+## What's New In v2026.02.7
 
-- Read Aloud side deck now includes Genesis multi-format variants:
-  - PDF
-  - Markdown (.md)
-  - DOCX (.docx)
-  - EPUB (.epub)
-- Fixed Read Aloud selection/loading for API-backed DOCX/EPUB/MD entries on desktop.
-- Added Free Text Mode in Read Aloud:
-  - Paste or type text into a manual document.
-  - Edit/Preview toggle in the same pane.
-  - Use the same voice controls and "Convert to Audiobook" flow.
-- Improved text-mode Read Aloud UX:
-  - Clearer Select All / Clear Selection behavior with visible feedback.
-  - Inline text-view highlight behavior improved while reading.
+- Fixed audiobook outputs not appearing in the Read Aloud side deck when generated through API/MCP code paths.
+- Added legacy-output migration in `/api/audiobook/list` so previously generated audiobook files are discovered and served correctly.
+- Fixed PDF word highlighting during Read Aloud when reading from a selected text range.
+- Updated MCP documentation and agentic usage examples (Codex + Claude) in project docs.
 
 ---
 
 ## Reliability Improvements
 
-- Queue-based Read Aloud/Audiobook flows now behave consistently across PDF, DOCX, EPUB, MD, and TXT document inputs.
-- Better fallback handling in text-view mode when extraction/loading fails.
+- Audiobook generation now writes outputs to the active runtime output directory used by API listing and `/audio` serving.
+- Duplicate audiobook entries are avoided when scanning across primary + legacy output folders.
 
 ---
 

@@ -852,7 +852,8 @@ Paste your long text here.
     _sentences = _splitIntoSentences(textToRead);
     if (_sentences.isEmpty) return;
     _buildWordIndex(_sentences);
-    if (_readingSource == 'pdf') {
+    if (!_isTextFile &&
+        (_readingSource == 'pdf' || _readingSource == 'selection')) {
       await _preparePdfWordAnchorsIfNeeded();
       _buildGlobalWordAnchorMap();
     } else {
@@ -939,7 +940,10 @@ Paste your long text here.
   }
 
   Future<void> _preparePdfWordAnchorsIfNeeded() async {
-    if (_readingSource != 'pdf' || _isTextFile) return;
+    if (!(_readingSource == 'pdf' || _readingSource == 'selection') ||
+        _isTextFile) {
+      return;
+    }
     if (_pdfWordAnchors.isNotEmpty) return;
 
     final bytes = await _loadCurrentPdfBytesForAnchors();
@@ -1021,7 +1025,9 @@ Paste your long text here.
   }
 
   bool _tryHighlightWithPdfWordAnchor(int globalIndex) {
-    if (_readingSource != 'pdf') return false;
+    if (!(_readingSource == 'pdf' || _readingSource == 'selection')) {
+      return false;
+    }
     if (globalIndex < 0 || globalIndex >= _globalWordAnchorIndices.length) {
       return false;
     }
@@ -1590,7 +1596,9 @@ Paste your long text here.
     }
 
     if (_globalWords[globalIndex].isEmpty) return;
-    if (_readingSource == 'pdf' && _pdfWordAnchors.isNotEmpty) {
+    if (!_isTextFile &&
+        (_readingSource == 'pdf' || _readingSource == 'selection') &&
+        _pdfWordAnchors.isNotEmpty) {
       _tryHighlightWithPdfWordAnchor(globalIndex);
       return;
     }

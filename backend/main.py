@@ -3403,6 +3403,7 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
         smart_chunking=request.smart_chunking,
         max_chars_per_chunk=request.max_chars_per_chunk,
         crossfade_ms=request.crossfade_ms,
+        output_dir=outputs_dir,
     )
     _record_job_event(
         http_request,
@@ -3506,6 +3507,7 @@ async def audiobook_generate_from_file(
             smart_chunking=smart_chunking,
             max_chars_per_chunk=max_chars_per_chunk,
             crossfade_ms=crossfade_ms,
+            output_dir=outputs_dir,
         )
         _record_job_event(
             http_request,
@@ -3640,42 +3642,75 @@ async def audiobook_list():
     audiobooks = []
     audiobook_pattern = "audiobook-"
 
-    # Search for WAV, MP3, and M4B files
+    # Primary output folder and legacy folder used by older audiobook code paths.
+    scan_dirs: list[Path] = [outputs_dir]
+    legacy_outputs_dir = _backend_dir / "outputs"
+    if legacy_outputs_dir.exists():
+        try:
+            if legacy_outputs_dir.resolve() != outputs_dir.resolve():
+                scan_dirs.append(legacy_outputs_dir)
+        except OSError:
+            scan_dirs.append(legacy_outputs_dir)
+
+    seen_filenames: set[str] = set()
+
+    # Search for WAV, MP3, and M4B files.
     for ext in ["wav", "mp3", "m4b"]:
-        for file in outputs_dir.glob(f"{audiobook_pattern}*.{ext}"):
-            stat = file.stat()
-            # Parse job_id from filename: audiobook-{job_id}.wav/.mp3/.m4b
-            job_id = file.stem.replace(audiobook_pattern, "")
+        for scan_dir in scan_dirs:
+            for source_file in scan_dir.glob(f"{audiobook_pattern}*.{ext}"):
+                file = source_file
+                # Migrate legacy files into the active /audio folder so URLs resolve.
+                if scan_dir != outputs_dir:
+                    migrated = outputs_dir / source_file.name
+                    if not migrated.exists():
+                        try:
+                            shutil.copy2(source_file, migrated)
+                        except Exception:
+                            logger.warning(
+                                "Failed to migrate legacy audiobook '%s' to '%s'",
+                                source_file,
+                                migrated,
+                            )
+                    if migrated.exists():
+                        file = migrated
 
-            # Get audio duration
-            duration_seconds = 0
-            try:
-                if ext == "wav":
-                    import soundfile as sf
-                    info = sf.info(str(file))
-                    duration_seconds = info.duration
-                elif ext == "mp3":
-                    from pydub import AudioSegment
-                    audio = AudioSegment.from_mp3(str(file))
-                    duration_seconds = len(audio) / 1000.0
-                elif ext == "m4b":
-                    # For M4B, try pydub with ffmpeg
-                    from pydub import AudioSegment
-                    audio = AudioSegment.from_file(str(file), format="m4b")
-                    duration_seconds = len(audio) / 1000.0
-            except Exception:
+                if file.name in seen_filenames:
+                    continue
+                seen_filenames.add(file.name)
+
+                stat = file.stat()
+                # Parse job_id from filename: audiobook-{job_id}.wav/.mp3/.m4b
+                job_id = file.stem.replace(audiobook_pattern, "")
+
+                # Get audio duration
                 duration_seconds = 0
+                try:
+                    if ext == "wav":
+                        import soundfile as sf
+                        info = sf.info(str(file))
+                        duration_seconds = info.duration
+                    elif ext == "mp3":
+                        from pydub import AudioSegment
+                        audio = AudioSegment.from_mp3(str(file))
+                        duration_seconds = len(audio) / 1000.0
+                    elif ext == "m4b":
+                        # For M4B, try pydub with ffmpeg
+                        from pydub import AudioSegment
+                        audio = AudioSegment.from_file(str(file), format="m4b")
+                        duration_seconds = len(audio) / 1000.0
+                except Exception:
+                    duration_seconds = 0
 
-            audiobooks.append({
-                "job_id": job_id,
-                "filename": file.name,
-                "audio_url": f"/audio/{file.name}",
-                "format": ext,
-                "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                "duration_seconds": round(duration_seconds, 1),
-                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                "is_audiobook_format": ext == "m4b",
-            })
+                audiobooks.append({
+                    "job_id": job_id,
+                    "filename": file.name,
+                    "audio_url": f"/audio/{file.name}",
+                    "format": ext,
+                    "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                    "duration_seconds": round(duration_seconds, 1),
+                    "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    "is_audiobook_format": ext == "m4b",
+                })
 
     # Sort by creation time, newest first
     audiobooks.sort(key=lambda x: x["created_at"], reverse=True)

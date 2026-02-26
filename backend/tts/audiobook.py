@@ -104,6 +104,7 @@ class AudiobookJob:
     error_message: Optional[str] = None
     audio_path: Optional[Path] = None
     subtitle_path: Optional[Path] = None
+    output_dir: Optional[Path] = None
     duration_seconds: float = 0.0
     file_size_mb: float = 0.0
     started_at: float = field(default_factory=time.time)
@@ -532,6 +533,7 @@ def create_audiobook_job(
     smart_chunking: bool = True,
     max_chars_per_chunk: int = 1500,
     crossfade_ms: int = 40,
+    output_dir: Optional[Path] = None,
 ) -> AudiobookJob:
     """
     Create a new audiobook generation job.
@@ -565,6 +567,7 @@ def create_audiobook_job(
         output_format=output_format,
         subtitle_format=subtitle_format,
         chapters=chapters or [],
+        output_dir=output_dir,
     )
 
     with _jobs_lock:
@@ -591,6 +594,7 @@ def create_audiobook_from_file(
     smart_chunking: bool = True,
     max_chars_per_chunk: int = 1500,
     crossfade_ms: int = 40,
+    output_dir: Optional[Path] = None,
 ) -> AudiobookJob:
     """
     Create audiobook from a file (PDF, EPUB, TXT, etc.).
@@ -646,6 +650,7 @@ def create_audiobook_from_file(
         smart_chunking=smart_chunking,
         max_chars_per_chunk=max_chars_per_chunk,
         crossfade_ms=crossfade_ms,
+        output_dir=output_dir,
     )
 
 
@@ -754,7 +759,7 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
     Enhanced with character-based progress tracking (like audiblez).
     Now also generates timestamped subtitles (like abogen).
     """
-    outputs_dir = Path(__file__).parent.parent / "outputs"
+    outputs_dir = job.output_dir or (Path(__file__).parent.parent / "outputs")
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
     all_audio = []

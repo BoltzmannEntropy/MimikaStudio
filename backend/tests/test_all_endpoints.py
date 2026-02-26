@@ -21,6 +21,7 @@ import io
 import struct
 import tempfile
 import zipfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -28,6 +29,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+import main
 from main import app
 
 
@@ -868,6 +870,22 @@ class TestAudiobookList:
     def test_list_has_total(self, client):
         data = client.get("/api/audiobook/list").json()
         assert "total" in data
+
+    def test_list_migrates_legacy_backend_outputs(self, client):
+        unique = uuid.uuid4().hex[:8]
+        filename = f"audiobook-legacy-{unique}.mp3"
+        legacy_file = main._backend_dir / "outputs" / filename
+        active_file = main.outputs_dir / filename
+        legacy_file.parent.mkdir(parents=True, exist_ok=True)
+        legacy_file.write_bytes(b"ID3")
+        try:
+            data = client.get("/api/audiobook/list").json()
+            filenames = {row.get("filename") for row in data.get("audiobooks", [])}
+            assert filename in filenames
+            assert active_file.exists()
+        finally:
+            active_file.unlink(missing_ok=True)
+            legacy_file.unlink(missing_ok=True)
 
 
 class TestAudiobookDelete:
