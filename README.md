@@ -3,8 +3,8 @@
   <br><br>
   <code>v2026.02</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
-  <h1>Clone any voice <i>in seconds</i></h1>
-  <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, and audiobook creator.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
+  <h1>Clone any voice <i>in seconds</i> + Agentic MCP Support</h1>
+  <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and agentic MCP automation.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
   <br>
   <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
   <br><br>
