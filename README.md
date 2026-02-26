@@ -736,16 +736,16 @@ The backend exposes 60+ REST endpoints via FastAPI. Full interactive docs at **h
 
 ```bash
 # Start generation
-curl -X POST http://localhost:8000/api/audiobook/generate \
+curl -X POST http://localhost:7693/api/audiobook/generate \
   -H "Content-Type: application/json" \
   -d '{"text": "Your document text...", "title": "My Audiobook", "voice": "bf_emma", "output_format": "m4b"}'
 
 # From file
-curl -X POST http://localhost:8000/api/audiobook/generate-from-file \
+curl -X POST http://localhost:7693/api/audiobook/generate-from-file \
   -F "file=@mybook.pdf" -F "title=My Audiobook" -F "voice=bf_emma" -F "output_format=m4b"
 
 # Poll progress
-curl http://localhost:8000/api/audiobook/status/{job_id}
+curl http://localhost:7693/api/audiobook/status/{job_id}
 ```
 
 ---
@@ -764,11 +764,69 @@ The MCP server provides 50+ tools for:
 - LLM configuration
 - Audio library management
 
+### MCP Workflow Example: PDF -> Audiobook (Kokoro British Voice)
+
+This is the same JSON-RPC MCP workflow used by agent clients (Codex, Claude Code), without uploading audio anywhere.
+
+```bash
+# 1) Start backend + MCP
+./bin/mimikactl up --no-flutter
+```
+
+```bash
+# 2) (Optional) confirm Kokoro voices via MCP
+curl -s http://127.0.0.1:8010 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"tts_list_voices","arguments":{"engine":"kokoro"}}}'
+```
+
+```bash
+# 3) Start audiobook generation from a local PDF file
+curl -s http://127.0.0.1:8010 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"audiobook_generate_from_file","arguments":{"file_path":"/absolute/path/to/document.pdf","title":"My Oral Exam Notes","voice":"bf_emma","speed":1.0,"output_format":"mp3"}}}'
+```
+
+```bash
+# 4) Poll status until "completed"
+curl -s http://127.0.0.1:8010 \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"audiobook_status","arguments":{"job_id":"<JOB_ID>"}}}'
+```
+
+On completion, the file is created locally in `backend/outputs/`:
+
+- `backend/outputs/audiobook-<JOB_ID>.mp3`
+- Served locally at `http://localhost:7693/audio/audiobook-<JOB_ID>.mp3`
+
+### Using Mimika MCP from Codex and Claude Code
+
+If your client is connected to the Mimika MCP server (`http://127.0.0.1:8010`), you can ask it to run the exact same flow.
+
+**Codex prompt example**
+
+```text
+Use Mimika MCP tool audiobook_generate_from_file with:
+file_path=/absolute/path/to/document.pdf
+title=My Oral Exam Notes
+voice=bf_emma
+output_format=mp3
+Then poll audiobook_status until completed and return job_id + audio_url.
+```
+
+**Claude Code prompt example**
+
+```text
+Call Mimika MCP audiobook_generate_from_file for /absolute/path/to/document.pdf
+with voice bf_emma and output_format mp3.
+Track audiobook_status every 10 seconds and report final audio_url.
+```
+
 ### MCP & API Dashboard (In-App)
 
 The **MCP & API** tab in the Flutter app provides a live dashboard showing:
 
-- **Server status** — Backend API (port 8000), MCP Server (port 8010), and API Docs availability with green/red indicators
+- **Server status** — Backend API (port 7693), MCP Server (port 8010), and API Docs availability with green/red indicators
 - **All MCP tools** grouped by category (System, Kokoro, Qwen3, Chatterbox, Audiobook, Voice Management, Models, Samples) with expandable parameter details
 - **All 60+ REST API endpoints** grouped by category with HTTP method badges (GET/POST/PUT/DELETE)
 - **Search** — Filter tools and endpoints by name, path, or description
