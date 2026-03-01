@@ -1,24 +1,22 @@
-# MimikaStudio v2026.03.1 Release Notes
+# MimikaStudio v2026.03.2 Release Notes
 
 **Release Date:** March 1, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.03.1
+## What's New In v2026.03.2
 
-- Enforced embedded-only startup mode for `mimikactl` so local runs match DMG behavior.
-- Disabled raw Flutter dev-mode startup path in `mimikactl`; startup now requires bundled app resources.
-- Updated backend startup in `mimikactl` to use the embedded backend launcher (`Contents/Resources/backend/run_backend.sh`).
-- Added startup guards so `mimikactl` waits for actual UI process and fails fast with logs when launch fails.
-- Fixed app version display mismatch by syncing Flutter app version (`flutter_app/lib/version.dart`) with release versioning.
+- Fixed a regression where `POST /api/kokoro/generate` could terminate embedded backend in long-path `.app` bundle layouts.
+- Added eSpeak runtime path hardening in Kokoro engine to use a short alias path and prevent phonemizer backend crashes.
+- Preserved embedded-only startup behavior from v2026.03.1 and kept local `mimikactl` aligned with DMG runtime.
 
 ---
 
 ## Reliability Improvements
 
-- Embedded app smoke-tested in isolation (no prestarted backend): app boot now auto-starts backend on `127.0.0.1:7693`.
-- `mimikactl` now validates embedded bundle availability and can build missing bundle artifacts before launch.
+- Added bundled eSpeak initialization smoke coverage to DMG build pipeline so path-related Kokoro regressions fail during build.
+- Revalidated embedded app startup in sandboxed DMG mount and confirmed backend autostarts on `127.0.0.1:7693`.
 
 ---
 

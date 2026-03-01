@@ -1,8 +1,8 @@
 """MimikaStudio version information."""
 
-VERSION = "2026.03.1"
-BUILD_NUMBER = 8
-VERSION_NAME = "Embedded Backend Startup Hardening"
+VERSION = "2026.03.2"
+BUILD_NUMBER = 9
+VERSION_NAME = "Kokoro Embedded Backend Crash Fix"
 
 def get_version_string() -> str:
     """Return formatted version string."""

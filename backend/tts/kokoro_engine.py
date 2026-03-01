@@ -1,6 +1,8 @@
 from pathlib import Path
 import threading
 import uuid
+import os
+import tempfile
 import soundfile as sf
 import numpy as np
 
@@ -24,6 +26,50 @@ BRITISH_VOICES = {
 
 DEFAULT_VOICE = "bm_george"
 
+
+def _configure_espeak_runtime() -> None:
+    """Configure espeak-ng paths for bundled app environments.
+
+    In .app bundles with deep paths, espeak-ng can fail to resolve its data
+    directory and terminate the process. We force a short alias path for the
+    data dir before Kokoro initializes phonemizer.
+    """
+    try:
+        import espeakng_loader
+        from phonemizer.backend.espeak.wrapper import EspeakWrapper
+    except Exception:
+        return
+
+    try:
+        library_path = espeakng_loader.get_library_path()
+        data_path = espeakng_loader.get_data_path()
+    except Exception:
+        return
+
+    resolved_data_path = data_path
+
+    # espeak-ng data resolution is fragile with very long app-bundle paths.
+    if len(data_path) > 140:
+        alias_path = Path(tempfile.gettempdir()) / "mimika-espeak-ng-data"
+        try:
+            if alias_path.is_symlink() or alias_path.exists():
+                alias_path.unlink()
+        except Exception:
+            pass
+        try:
+            os.symlink(data_path, str(alias_path))
+            resolved_data_path = str(alias_path)
+        except Exception:
+            resolved_data_path = data_path
+
+    # Keep wrapper/env paths aligned for all phonemizer call sites.
+    EspeakWrapper.set_library(library_path)
+    EspeakWrapper.set_data_path(resolved_data_path)
+    os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = library_path
+    os.environ["PHONEMIZER_ESPEAK_DATA_PATH"] = resolved_data_path
+    os.environ["ESPEAK_DATA_PATH"] = resolved_data_path
+
+
 class KokoroEngine:
     def __init__(self):
         self.model = None
@@ -34,6 +80,7 @@ class KokoroEngine:
     def load_model(self):
         global _load_tts_model_fn
         if self.model is None:
+            _configure_espeak_runtime()
             if _load_tts_model_fn is None:
                 try:
                     from mlx_audio.tts import load as load_tts_model  # Lazy import to keep API boot stable.
