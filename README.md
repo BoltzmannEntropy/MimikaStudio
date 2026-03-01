@@ -149,16 +149,25 @@ Kokoro examples are bundled under `backend/data/samples/kokoro/` and listed abov
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of **February 19, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.  
+As of **February 19, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.
 macOS may block first launch until you explicitly allow it in security settings.
 
-1. Open the DMG and drag `MimikaStudio.app` to `Applications`.
-2. In `Applications`, right-click `MimikaStudio.app` and select `Open`.
-3. Click `Open` in the warning dialog.
-4. If macOS still blocks launch, go to:
+1. Open the DMG and drag `MimikaStudio.app` to `/Applications`.
+2. **Remove the quarantine attribute** by running one of these commands in Terminal:
+   ```bash
+   # If installed to /Applications (system-wide):
+   xattr -d com.apple.quarantine /Applications/MimikaStudio.app
+
+   # If installed to ~/Applications (user-only):
+   xattr -d com.apple.quarantine ~/Applications/MimikaStudio.app
+   ```
+   > **Why is this required?** macOS quarantines all downloaded apps. For unsigned apps, Gatekeeper may block execution entirely. The `xattr -d com.apple.quarantine` command removes this flag, allowing the app to run.
+3. In `Applications`, right-click `MimikaStudio.app` and select `Open`.
+4. Click `Open` in the warning dialog.
+5. If macOS still blocks launch, go to:
    `System Settings -> Privacy & Security -> Open Anyway` (for MimikaStudio), then confirm with password/Touch ID.
-5. On first launch, wait for the bundled backend to start. The startup log screen below is expected for a few seconds.
-6. On first use, click `Download` for the required model in the in-app model card.
+6. On first launch, wait for the bundled backend to start. The startup log screen below is expected for a few seconds.
+7. On first use, click `Download` for the required model in the in-app model card.
 
 ![DMG window with MimikaStudio and Applications shortcut](assets/11-mimikastudio-dmg-install-window.png)
 ![Right-click Open on MimikaStudio app](assets/12-mimikastudio-dmg-open-context-menu.png)
