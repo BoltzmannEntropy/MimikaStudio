@@ -1,23 +1,24 @@
-# MimikaStudio v2026.02.7 Release Notes
+# MimikaStudio v2026.03.1 Release Notes
 
-**Release Date:** February 26, 2026  
+**Release Date:** March 1, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.02.7
+## What's New In v2026.03.1
 
-- Fixed audiobook outputs not appearing in the Read Aloud side deck when generated through API/MCP code paths.
-- Added legacy-output migration in `/api/audiobook/list` so previously generated audiobook files are discovered and served correctly.
-- Fixed PDF word highlighting during Read Aloud when reading from a selected text range.
-- Updated MCP documentation and agentic usage examples (Codex + Claude) in project docs.
+- Enforced embedded-only startup mode for `mimikactl` so local runs match DMG behavior.
+- Disabled raw Flutter dev-mode startup path in `mimikactl`; startup now requires bundled app resources.
+- Updated backend startup in `mimikactl` to use the embedded backend launcher (`Contents/Resources/backend/run_backend.sh`).
+- Added startup guards so `mimikactl` waits for actual UI process and fails fast with logs when launch fails.
+- Fixed app version display mismatch by syncing Flutter app version (`flutter_app/lib/version.dart`) with release versioning.
 
 ---
 
 ## Reliability Improvements
 
-- Audiobook generation now writes outputs to the active runtime output directory used by API listing and `/audio` serving.
-- Duplicate audiobook entries are avoided when scanning across primary + legacy output folders.
+- Embedded app smoke-tested in isolation (no prestarted backend): app boot now auto-starts backend on `127.0.0.1:7693`.
+- `mimikactl` now validates embedded bundle availability and can build missing bundle artifacts before launch.
 
 ---
 

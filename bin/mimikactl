@@ -25,9 +25,9 @@ fi
 BACKEND_PORT="${MIMIKA_BACKEND_PORT:-7693}"
 MCP_PORT="${MIMIKA_MCP_PORT:-8010}"
 
-# Flutter app name
-FLUTTER_APP_NAME="mimika_studio"
+# Flutter app metadata
 FLUTTER_APP_BUNDLE_ID="com.mimikastudio.app"
+FLUTTER_APP_PRODUCT_NAME="MimikaStudio"
 
 # Colors
 RED='\033[0;31m'
@@ -75,61 +75,102 @@ wait_for_health() {
         fi
         echo -n "."
         sleep 1
-        ((retry++))
+        retry=$((retry + 1))
     done
     echo -e " ${RED}FAILED${NC}"
     return 1
 }
 
+flutter_app_exec_pattern() {
+    echo "$FLUTTER_APP_PRODUCT_NAME.app/Contents/MacOS/$FLUTTER_APP_PRODUCT_NAME"
+}
+
+flutter_app_pid() {
+    pgrep -f "$(flutter_app_exec_pattern)" 2>/dev/null | head -1 || true
+}
+
+is_flutter_app_running() {
+    [ -n "$(flutter_app_pid)" ]
+}
+
+wait_for_flutter_ui() {
+    local max_retries="${1:-240}"
+    local retry=0
+
+    echo -n "Waiting for ${FLUTTER_APP_PRODUCT_NAME} UI "
+    while [ $retry -lt $max_retries ]; do
+        local app_pid
+        app_pid="$(flutter_app_pid)"
+        if [ -n "$app_pid" ]; then
+            echo -e " ${GREEN}OK${NC} [PID: $app_pid]"
+            osascript -e "tell application \"$FLUTTER_APP_PRODUCT_NAME\" to activate" 2>/dev/null || open -a "$FLUTTER_APP_PRODUCT_NAME" 2>/dev/null || true
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+        retry=$((retry + 1))
+    done
+    echo -e " ${RED}FAILED${NC}"
+    return 1
+}
+
+embedded_app_bundle_path() {
+    local candidate
+    for candidate in \
+        "$ROOT_DIR/build/dmg-stage/$FLUTTER_APP_PRODUCT_NAME.app" \
+        "$ROOT_DIR/build/arm64/$FLUTTER_APP_PRODUCT_NAME.app"
+    do
+        if [ -d "$candidate" ] && [ -x "$candidate/Contents/Resources/backend/run_backend.sh" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+build_embedded_app_bundle() {
+    echo -e "${BLUE}Building embedded app bundle via scripts/build_dmg.sh...${NC}"
+    cd "$ROOT_DIR"
+    "$ROOT_DIR/scripts/build_dmg.sh"
+}
+
+ensure_embedded_app_bundle() {
+    local embedded_bundle=""
+    embedded_bundle="$(embedded_app_bundle_path || true)"
+    if [ -n "$embedded_bundle" ]; then
+        echo "$embedded_bundle"
+        return 0
+    fi
+
+    build_embedded_app_bundle
+    embedded_bundle="$(embedded_app_bundle_path || true)"
+    if [ -z "$embedded_bundle" ]; then
+        echo -e "${RED}Embedded app bundle is missing after build_dmg.sh.${NC}" >&2
+        return 1
+    fi
+    echo "$embedded_bundle"
+}
+
 # ============== Backend Functions ==============
 
 start_backend() {
-    echo -e "${BLUE}Starting backend...${NC}"
+    echo -e "${BLUE}Starting backend (embedded)...${NC}"
 
     # Kill existing
     kill_port $BACKEND_PORT
 
-    # Check for venv
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "Creating Python virtual environment..."
-        python3 -m venv "$VENV_DIR"
-        source "$VENV_DIR/bin/activate"
-        pip install -r "$ROOT_DIR/requirements.txt"
-    else
-        source "$VENV_DIR/bin/activate"
+    local embedded_bundle=""
+    embedded_bundle="$(ensure_embedded_app_bundle)" || return 1
+
+    local embedded_backend_dir="$embedded_bundle/Contents/Resources/backend"
+    local launcher="$embedded_backend_dir/run_backend.sh"
+    if [ ! -x "$launcher" ]; then
+        echo -e "${RED}Embedded backend launcher missing: $launcher${NC}"
+        return 1
     fi
 
-    # Ensure backend deps match pinned versions (notably transformers)
-    if ! python3 - <<'PY'
-import sys
-from packaging.version import parse as parse_version
-try:
-    import transformers
-    v = parse_version(transformers.__version__)
-except Exception:
-    sys.exit(1)
-target = parse_version("4.57.3")
-sys.exit(0 if v == target else 1)
-PY
-    then
-        pip install -r "$ROOT_DIR/requirements.txt"
-    fi
-
-    if ! python3 - <<'PY'
-import sys
-try:
-    import chatterbox
-except Exception:
-    sys.exit(1)
-sys.exit(0)
-PY
-    then
-        pip install --no-deps chatterbox-tts==0.1.6
-    fi
-
-    # Start FastAPI
-    cd "$BACKEND_DIR"
-    nohup env MIMIKA_BACKEND_PORT="$BACKEND_PORT" python main.py > "$LOG_DIR/backend.log" 2>&1 &
+    # Start bundled backend exactly as packaged app does.
+    nohup env MIMIKA_BACKEND_PORT="$BACKEND_PORT" "$launcher" > "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$PID_DIR/backend.pid"
 
     if ! wait_for_health "http://localhost:$BACKEND_PORT/api/health"; then
@@ -149,29 +190,26 @@ stop_backend() {
 # ============== Flutter Functions ==============
 
 start_flutter() {
-    local mode="${1:-release}"
-    echo -e "${BLUE}Starting Flutter UI (macOS, $mode mode)...${NC}"
+    local mode="${1:-embedded}"
+    echo -e "${BLUE}Starting Flutter UI (macOS, embedded mode)...${NC}"
 
     cd "$FLUTTER_DIR"
 
-    if [ "$mode" = "dev" ]; then
-        flutter run -d macos > "$LOG_DIR/flutter.log" 2>&1 &
-        echo $! > "$PID_DIR/flutter.pid"
-    else
-        # Always rebuild to ensure latest code
-        echo "Building Flutter app..."
-        flutter build macos --release
-
-        # Launch app
-        local app_path="$FLUTTER_DIR/build/macos/Build/Products/Release/MimikaStudio.app"
-        if [ -d "$app_path" ]; then
-            open "$app_path"
-        else
-            echo -e "${YELLOW}App not found at $app_path, running in dev mode${NC}"
-            flutter run -d macos &
-            echo $! > "$PID_DIR/flutter.pid"
+    local embedded_bundle=""
+    embedded_bundle="$(ensure_embedded_app_bundle)" || return 1
+    if [ -n "$embedded_bundle" ]; then
+        if [ "$mode" != "embedded" ]; then
+            echo -e "${YELLOW}Ignoring deprecated Flutter mode '$mode'; using embedded app bundle.${NC}"
         fi
+        echo -e "${BLUE}Launching embedded app bundle: $embedded_bundle${NC}"
+        open "$embedded_bundle"
+        if ! wait_for_flutter_ui 60; then
+            echo -e "${RED}Embedded app failed to launch UI.${NC}"
+            return 1
+        fi
+        return 0
     fi
+    return 1
 }
 
 stop_flutter() {
@@ -184,17 +222,21 @@ stop_flutter() {
     fi
 
     # Kill app by bundle ID
-    osascript -e 'quit app "MimikaStudio"' 2>/dev/null || true
+    osascript -e "quit app \"$FLUTTER_APP_PRODUCT_NAME\"" 2>/dev/null || true
+    osascript -e "quit app id \"$FLUTTER_APP_BUNDLE_ID\"" 2>/dev/null || true
+
+    local app_pids
+    app_pids="$(pgrep -f "$(flutter_app_exec_pattern)" || true)"
+    if [ -n "$app_pids" ]; then
+        echo "$app_pids" | xargs kill -9 2>/dev/null || true
+    fi
 
     echo -e "${GREEN}Flutter stopped${NC}"
 }
 
 build_flutter() {
-    echo -e "${BLUE}Building Flutter app...${NC}"
-    cd "$FLUTTER_DIR"
-    flutter pub get
-    flutter build macos --release
-    echo -e "${GREEN}Build complete${NC}"
+    build_embedded_app_bundle
+    echo -e "${GREEN}Embedded app bundle build complete${NC}"
 }
 
 # ============== Model Functions ==============
@@ -268,13 +310,19 @@ run_tests() {
 }
 
 cmd_flutter_start() {
-    local mode="dev"
+    local mode="embedded"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --dev) mode="dev" ;;
-            --release) mode="release" ;;
-            *) echo "Unknown option: $1" ;;
+            --embedded|--release) mode="embedded" ;;
+            --dev)
+                echo -e "${RED}Dev mode is disabled. Use embedded mode only.${NC}"
+                return 1
+                ;;
+            *)
+                echo "Unknown option: $1"
+                return 1
+                ;;
         esac
         shift
     done
@@ -287,14 +335,16 @@ cmd_flutter_start() {
 cmd_up() {
     local skip_flutter=false
     local skip_mcp=false
-    local flutter_mode="dev"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
             --no-flutter) skip_flutter=true ;;
             --no-mcp) skip_mcp=true ;;
-            --flutter-release) flutter_mode="release" ;;
-            *) echo "Unknown option: $1" ;;
+            --flutter-release|--flutter-embedded) ;;
+            *)
+                echo "Unknown option: $1"
+                exit 1
+                ;;
         esac
         shift
     done
@@ -307,7 +357,7 @@ cmd_up() {
     fi
 
     if [ "$skip_flutter" = false ]; then
-        start_flutter "$flutter_mode"
+        start_flutter embedded
     fi
 
     echo ""
@@ -332,23 +382,23 @@ cmd_status() {
     print_status "Backend" $BACKEND_PORT
     print_status "MCP Server" $MCP_PORT
 
-    # Flutter status (check by PID or app process)
-    local flutter_running=false
+    # Flutter status
+    local flutter_launch_pid=""
     if [ -f "$PID_DIR/flutter.pid" ]; then
         local pid=$(cat "$PID_DIR/flutter.pid")
         if kill -0 "$pid" 2>/dev/null; then
-            flutter_running=true
-            echo -e "${GREEN}●${NC} Flutter UI: ${GREEN}RUNNING${NC} [PID: $pid]"
+            flutter_launch_pid="$pid"
         fi
     fi
-    # Also check for running app
-    if [ "$flutter_running" = false ]; then
-        local app_pid=$(pgrep -f "$FLUTTER_APP_NAME.app/Contents/MacOS" 2>/dev/null | head -1 || true)
-        if [ -n "$app_pid" ]; then
-            echo -e "${GREEN}●${NC} Flutter UI: ${GREEN}RUNNING${NC} [PID: $app_pid]"
-        else
-            echo -e "${RED}○${NC} Flutter UI: ${RED}STOPPED${NC}"
-        fi
+
+    local app_pid
+    app_pid="$(flutter_app_pid)"
+    if [ -n "$app_pid" ]; then
+        echo -e "${GREEN}●${NC} Flutter UI: ${GREEN}RUNNING${NC} [PID: $app_pid]"
+    elif [ -n "$flutter_launch_pid" ]; then
+        echo -e "${YELLOW}◐${NC} Flutter UI: ${YELLOW}STARTING${NC} [Launcher PID: $flutter_launch_pid]"
+    else
+        echo -e "${RED}○${NC} Flutter UI: ${RED}STOPPED${NC}"
     fi
 
     echo ""
@@ -413,7 +463,7 @@ ${GREEN}Service Commands:${NC}
     up [options]                Start all services (Backend + MCP + Flutter)
         --no-flutter            Skip Flutter UI
         --no-mcp                Skip MCP server
-        --flutter-release       Run Flutter in release mode (default: dev)
+        --flutter-embedded      Use embedded app bundle mode (default)
     down                        Stop all services
     restart                     Restart all services
     status                      Show service status
@@ -423,9 +473,9 @@ ${GREEN}Backend Commands:${NC}
     backend stop                Stop backend
 
 ${GREEN}Flutter Commands:${NC}
-    flutter start [--dev|--release]     Start Flutter UI (macOS)
+    flutter start [--embedded]          Start Flutter UI from embedded app bundle
     flutter stop                Stop Flutter UI
-    flutter build               Build Flutter macOS app
+    flutter build               Build embedded app bundle + DMG assets
 
 ${GREEN}MCP Server Commands:${NC}
     mcp start                   Start MCP server (for Codex CLI)
