@@ -96,6 +96,15 @@ Expressive voice cloning with emotion control. Natural, emotive speech synthesis
 | **George** (British Male) | [sentence-02-bm_george.wav](backend/data/samples/kokoro/sentence-02-bm_george.wav) |
 | **Lily** (British Female) | [sentence-03-bf_lily.wav](backend/data/samples/kokoro/sentence-03-bf_lily.wav) |
 
+### Long-Form Audiobook Examples
+
+Full audiobook excerpts generated with Kokoro TTS from H.G. Wells' "A Short History of the World" (public domain). Generated at 0.95x speed for natural pacing.
+
+| Voice | Duration | Sample |
+|-------|----------|--------|
+| **Emma** (British RP Female) | ~17 min | [long-history-emma.mp3](backend/data/pregenerated/long-history-emma.mp3) |
+| **George** (British Male) | ~19 min | [long-history-george.mp3](backend/data/pregenerated/long-history-george.mp3) |
+
 ### Supertonic TTS
 
 | Voice | Sample |
@@ -127,8 +136,10 @@ All shipped pregenerated demo files in `backend/data/pregenerated`:
 | Supertonic | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) | Preset M2 multilingual ONNX demo |
 | CosyVoice3 | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) | CosyVoice3 F1/Eden standalone ONNX demo |
 | CosyVoice3 | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) | CosyVoice3 M2/Atlas standalone ONNX demo |
+| Kokoro | [long-history-emma.mp3](backend/data/pregenerated/long-history-emma.mp3) | Long-form audiobook demo (Emma, British female, 0.95x speed) |
+| Kokoro | [long-history-george.mp3](backend/data/pregenerated/long-history-george.mp3) | Long-form audiobook demo (George, British male, 0.95x speed) |
 
-Kokoro examples are bundled under `backend/data/samples/kokoro/` and listed above in the Kokoro section.
+Kokoro short examples are bundled under `backend/data/samples/kokoro/`. Long-form audiobook demos are in `backend/data/pregenerated/`.
 
 ---
 
