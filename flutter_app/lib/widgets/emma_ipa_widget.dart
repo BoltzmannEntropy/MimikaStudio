@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../services/api_service.dart';
@@ -20,6 +22,11 @@ class EmmaIpaWidget extends StatefulWidget {
 class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
   final TextEditingController _textController = TextEditingController();
   final AudioPlayer _audioPlayer = AudioPlayer();
+
+  // Stream subscriptions for cleanup
+  StreamSubscription<PlayerState>? _playerStateSubscription;
+  StreamSubscription<Duration>? _positionSubscription;
+  StreamSubscription<Duration?>? _durationSubscription;
 
   List<Map<String, dynamic>> _samples = [];
   Map<String, dynamic>? _selectedSample;
@@ -58,7 +65,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
   }
 
   void _setupAudioListeners() {
-    _audioPlayer.playerStateStream.listen((state) {
+    _playerStateSubscription = _audioPlayer.playerStateStream.listen((state) {
       if (mounted) {
         setState(() {
           _isPlaying = state.playing;
@@ -70,13 +77,13 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
       }
     });
 
-    _audioPlayer.positionStream.listen((position) {
+    _positionSubscription = _audioPlayer.positionStream.listen((position) {
       if (mounted) {
         setState(() => _position = position);
       }
     });
 
-    _audioPlayer.durationStream.listen((duration) {
+    _durationSubscription = _audioPlayer.durationStream.listen((duration) {
       if (mounted && duration != null) {
         setState(() => _duration = duration);
       }
@@ -85,6 +92,9 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
 
   @override
   void dispose() {
+    _playerStateSubscription?.cancel();
+    _positionSubscription?.cancel();
+    _durationSubscription?.cancel();
     _textController.dispose();
     _audioPlayer.dispose();
     super.dispose();

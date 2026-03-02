@@ -462,52 +462,57 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final nameController = TextEditingController();
     final transcriptController = TextEditingController();
 
-    return showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Qwen3 Voice Sample'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Voice Name',
-                hintText: 'e.g., "MyVoice"',
+    try {
+      return await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Qwen3 Voice Sample'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Voice Name',
+                  hintText: 'e.g., "MyVoice"',
+                ),
+                autofocus: true,
               ),
-              autofocus: true,
+              const SizedBox(height: 16),
+              TextField(
+                controller: transcriptController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Transcript (Optional)',
+                  hintText: 'What is said in the audio file...',
+                  helperText: 'Optional, but improves clone quality',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: transcriptController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Transcript (Optional)',
-                hintText: 'What is said in the audio file...',
-                helperText: 'Optional, but improves clone quality',
-              ),
+            TextButton(
+              onPressed: () {
+                if (nameController.text.trim().isNotEmpty) {
+                  Navigator.pop(context, {
+                    'name': nameController.text.trim(),
+                    'transcript': transcriptController.text.trim(),
+                  });
+                }
+              },
+              child: const Text('Save'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (nameController.text.trim().isNotEmpty) {
-                Navigator.pop(context, {
-                  'name': nameController.text.trim(),
-                  'transcript': transcriptController.text.trim(),
-                });
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      nameController.dispose();
+      transcriptController.dispose();
+    }
   }
 
   Future<void> _deleteVoice(String name) async {
@@ -551,64 +556,69 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final transcriptController = TextEditingController(text: currentTranscript);
     final nameController = TextEditingController(text: name);
 
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Edit Voice: $name'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Voice Name'),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: transcriptController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Transcript',
-                hintText: 'What is said in the audio...',
+    try {
+      final result = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('Edit Voice: $name'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Voice Name'),
               ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: transcriptController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Transcript',
+                  hintText: 'What is said in the audio...',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, {
+                'name': nameController.text,
+                'transcript': transcriptController.text,
+              }),
+              child: const Text('Save'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, {
-              'name': nameController.text,
-              'transcript': transcriptController.text,
-            }),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (result != null) {
-      try {
-        await _api.updateQwen3Voice(
-          name,
-          newName: result['name'] != name ? result['name'] : null,
-          transcript: result['transcript'],
-        );
-        await _loadData();
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+      if (result != null) {
+        try {
+          await _api.updateQwen3Voice(
+            name,
+            newName: result['name'] != name ? result['name'] : null,
+            transcript: result['transcript'],
+          );
+          await _loadData();
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Voice updated')));
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+          }
         }
       }
+    } finally {
+      nameController.dispose();
+      transcriptController.dispose();
     }
   }
 

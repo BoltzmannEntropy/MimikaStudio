@@ -219,51 +219,56 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     final nameController = TextEditingController();
     final transcriptController = TextEditingController();
 
-    return showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('IndexTTS-2 Voice Sample'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(
-                labelText: 'Voice Name',
-                hintText: 'e.g., MyVoice',
+    try {
+      return await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('IndexTTS-2 Voice Sample'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Voice Name',
+                  hintText: 'e.g., MyVoice',
+                ),
+                autofocus: true,
               ),
-              autofocus: true,
+              const SizedBox(height: 8),
+              TextField(
+                controller: transcriptController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Transcript (optional)',
+                  hintText: 'Reference audio transcript (optional)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: transcriptController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Transcript (optional)',
-                hintText: 'Reference audio transcript (optional)',
-              ),
+            TextButton(
+              onPressed: () {
+                if (nameController.text.isNotEmpty) {
+                  Navigator.pop(context, {
+                    'name': nameController.text,
+                    'transcript': transcriptController.text,
+                  });
+                }
+              },
+              child: const Text('Upload'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (nameController.text.isNotEmpty) {
-                Navigator.pop(context, {
-                  'name': nameController.text,
-                  'transcript': transcriptController.text,
-                });
-              }
-            },
-            child: const Text('Upload'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      nameController.dispose();
+      transcriptController.dispose();
+    }
   }
 
   Future<void> _deleteVoice(String name) async {
@@ -307,67 +312,72 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     final transcriptController = TextEditingController(text: currentTranscript);
     final nameController = TextEditingController(text: name);
 
-    final result = await showDialog<Map<String, String>>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Edit Voice'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Voice Name'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: transcriptController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Transcript (optional)',
+    try {
+      final result = await showDialog<Map<String, String>>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Edit Voice'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameController,
+                decoration: const InputDecoration(labelText: 'Voice Name'),
               ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: transcriptController,
+                maxLines: 3,
+                decoration: const InputDecoration(
+                  labelText: 'Transcript (optional)',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                if (nameController.text.isNotEmpty) {
+                  Navigator.pop(context, {
+                    'name': nameController.text,
+                    'transcript': transcriptController.text,
+                  });
+                }
+              },
+              child: const Text('Save'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (nameController.text.isNotEmpty) {
-                Navigator.pop(context, {
-                  'name': nameController.text,
-                  'transcript': transcriptController.text,
-                });
-              }
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
+      );
 
-    if (result != null) {
-      try {
-        await _api.updateIndexTTS2VoiceName(
-          name,
-          newName: result['name'] != name ? result['name'] : null,
-          transcript: result['transcript'],
-        );
-        await _loadData();
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Voice updated')));
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+      if (result != null) {
+        try {
+          await _api.updateIndexTTS2VoiceName(
+            name,
+            newName: result['name'] != name ? result['name'] : null,
+            transcript: result['transcript'],
+          );
+          await _loadData();
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text('Voice updated')));
+          }
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('Failed to update: $e')));
+          }
         }
       }
+    } finally {
+      nameController.dispose();
+      transcriptController.dispose();
     }
   }
 
