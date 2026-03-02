@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../services/api_service.dart';
@@ -156,6 +157,32 @@ class _JobsScreenState extends State<JobsScreen> {
     return diff < 0 ? 0 : diff;
   }
 
+  String _jobText(Map<String, dynamic> job) {
+    return (job['text'] as String?)?.trim() ?? '';
+  }
+
+  Future<void> _copyJobText(Map<String, dynamic> job) async {
+    final text = _jobText(job);
+    if (text.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Text is not available for this job.')),
+      );
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    final truncated = job['text_truncated'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          truncated ? 'Text copied (truncated).' : 'Text copied to clipboard.',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -207,7 +234,8 @@ class _JobsScreenState extends State<JobsScreen> {
             itemCount: _jobs.length,
             itemBuilder: (context, index) {
               final job = _jobs[index];
-              final status = (job['status'] as String? ?? 'unknown').toLowerCase();
+              final status = (job['status'] as String? ?? 'unknown')
+                  .toLowerCase();
               final statusColor = _statusColor(status, context);
               final title = (job['title'] as String?) ?? 'Job';
               final engine = (job['engine'] as String?) ?? '-';
@@ -221,7 +249,9 @@ class _JobsScreenState extends State<JobsScreen> {
               final hasAudio =
                   (job['audio_url'] as String?) != null &&
                   (job['audio_url'] as String).isNotEmpty;
-              final isThisPlaying = _playingJobId == (job['id'] as String? ?? '');
+              final hasText = _jobText(job).isNotEmpty;
+              final isThisPlaying =
+                  _playingJobId == (job['id'] as String? ?? '');
 
               return Card(
                 margin: const EdgeInsets.only(bottom: 8),
@@ -243,7 +273,10 @@ class _JobsScreenState extends State<JobsScreen> {
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 3,
+                            ),
                             decoration: BoxDecoration(
                               color: statusColor.withValues(alpha: 0.14),
                               borderRadius: BorderRadius.circular(999),
@@ -256,6 +289,23 @@ class _JobsScreenState extends State<JobsScreen> {
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            icon: const Icon(
+                              Icons.content_copy_rounded,
+                              size: 16,
+                            ),
+                            onPressed: hasText ? () => _copyJobText(job) : null,
+                            tooltip: hasText
+                                ? 'Copy text'
+                                : 'Text not available',
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                            padding: EdgeInsets.zero,
                           ),
                         ],
                       ),
@@ -281,7 +331,9 @@ class _JobsScreenState extends State<JobsScreen> {
                           'chars: ${chars ?? '-'}${percent != null ? ' • ${percent.toString()}%' : ''}',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -293,7 +345,9 @@ class _JobsScreenState extends State<JobsScreen> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -311,8 +365,9 @@ class _JobsScreenState extends State<JobsScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.pause, size: 18),
-                              onPressed:
-                                  (isThisPlaying && !_isPaused) ? _pauseAudio : null,
+                              onPressed: (isThisPlaying && !_isPaused)
+                                  ? _pauseAudio
+                                  : null,
                               tooltip: 'Pause',
                             ),
                             IconButton(

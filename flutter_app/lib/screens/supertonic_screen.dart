@@ -197,6 +197,30 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
     );
   }
 
+  String? _accentBadgeForVoice(Map<String, dynamic> voice) {
+    final candidates = [
+      voice['accent'],
+      voice['locale'],
+      voice['region'],
+      voice['language_variant'],
+      voice['code'],
+      voice['name'],
+    ];
+    for (final raw in candidates) {
+      final value = (raw as String?)?.trim().toLowerCase() ?? '';
+      if (value.isEmpty) continue;
+      if (value.contains('brit') ||
+          value.contains('en-gb') ||
+          value.contains('en_gb') ||
+          value == 'uk' ||
+          value.endsWith('-uk') ||
+          value.endsWith('_uk')) {
+        return 'British';
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -329,6 +353,7 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
                     final code = voice['code'] as String;
                     final gender = voice['gender'] as String? ?? 'female';
                     final isSelected = code == _selectedVoice;
+                    final accentBadge = _accentBadgeForVoice(voice);
                     return ChoiceChip(
                       label: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -339,6 +364,26 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
                           ),
                           const SizedBox(width: 4),
                           Text(code),
+                          if (accentBadge != null) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.blueGrey.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                accentBadge,
+                                style: const TextStyle(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                       selected: isSelected,
@@ -970,9 +1015,9 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
       await destination.create(recursive: true);
       await destination.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

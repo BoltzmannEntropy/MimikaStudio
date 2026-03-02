@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
@@ -839,6 +840,30 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
     }
+  }
+
+  Future<void> _copyAudioFileText(Map<String, dynamic> file) async {
+    final text = (file['text'] as String?)?.trim() ?? '';
+    if (text.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Text is not available for this audio file yet.'),
+        ),
+      );
+      return;
+    }
+
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    final truncated = file['text_truncated'] == true;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          truncated ? 'Text copied (truncated).' : 'Text copied to clipboard.',
+        ),
+      ),
+    );
   }
 
   bool _canGenerate() {
@@ -1924,6 +1949,8 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         : '$_outputFolder/$filename';
     final duration = (file['duration_seconds'] as num?) ?? 0;
     final sizeMb = (file['size_mb'] as num?) ?? 0;
+    final text = (file['text'] as String?)?.trim() ?? '';
+    final hasText = text.isNotEmpty;
     final isThisPlaying = _playingAudioId == fileId;
 
     final mins = (duration / 60).floor();
@@ -1979,10 +2006,16 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
               ],
             ),
             trailing: SizedBox(
-              width: 72,
+              width: 108,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.content_copy_rounded, size: 16),
+                    onPressed: hasText ? () => _copyAudioFileText(file) : null,
+                    tooltip: hasText ? 'Copy text' : 'Text not available',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     onPressed: () => _downloadAudioFile(file),

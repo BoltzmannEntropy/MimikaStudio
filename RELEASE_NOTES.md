@@ -1,22 +1,29 @@
-# MimikaStudio v2026.03.2 Release Notes
+# MimikaStudio v2026.03.4 Release Notes
 
-**Release Date:** March 1, 2026  
+**Release Date:** March 2, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.03.2
+## What's New In v2026.03.4
 
-- Fixed a regression where `POST /api/kokoro/generate` could terminate embedded backend in long-path `.app` bundle layouts.
-- Added eSpeak runtime path hardening in Kokoro engine to use a short alias path and prevent phonemizer backend crashes.
-- Preserved embedded-only startup behavior from v2026.03.1 and kept local `mimikactl` aligned with DMG runtime.
+- Added a new copy-text action in **Qwen3 Clone -> Audio Library** so users can copy the source text used for a generated voice clone directly from each item.
+- Added a new copy-text action in the **Jobs** tab so users can copy the input text for completed/active generation jobs.
+- Extended job payload handling to retain source text for newly created jobs (with truncation safeguards), enabling copy behavior across Jobs and voice-clone audio list responses.
+
+---
+
+## Supertonic UI Update
+
+- Added automatic **British** badge support in Supertonic voice cards when backend voice metadata indicates UK/British variants.
+- Current Supertonic runtime still exposes generic style IDs (`F1..F5`, `M1..M5`), so badge display activates when metadata becomes available.
 
 ---
 
 ## Reliability Improvements
 
-- Added bundled eSpeak initialization smoke coverage to DMG build pipeline so path-related Kokoro regressions fail during build.
-- Revalidated embedded app startup in sandboxed DMG mount and confirmed backend autostarts on `127.0.0.1:7693`.
+- Added bounded text retention controls for job records via `MIMIKA_MAX_JOB_TEXT_CHARS` (default `20000`) to avoid unbounded in-memory text growth.
+- Avoided storing full audiobook source text in job history to keep long-form flows lightweight.
 
 ---
 
@@ -24,7 +31,7 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of February 25, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
+As of March 2, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.

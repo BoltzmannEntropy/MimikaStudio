@@ -372,6 +372,7 @@ _job_history: deque[dict] = deque(maxlen=2000)
 _job_history_lock = threading.Lock()
 _live_generation_jobs: dict[str, dict] = {}
 _live_generation_jobs_lock = threading.Lock()
+_max_job_text_chars = max(0, _env_int("MIMIKA_MAX_JOB_TEXT_CHARS", 20000))
 
 
 def _record_job_history_entry(entry: dict) -> None:
@@ -381,6 +382,26 @@ def _record_job_history_entry(entry: dict) -> None:
 
 def _utc_timestamp() -> str:
     return datetime.utcnow().isoformat() + "Z"
+
+
+def _prepare_job_text(
+    text: str,
+    *,
+    mode: Optional[str] = None,
+    job_type: Optional[str] = None,
+) -> tuple[str, bool]:
+    normalized_mode = (mode or "").strip().lower()
+    normalized_type = (job_type or "").strip().lower()
+    # Avoid retaining full-document payloads in memory-heavy audiobook jobs.
+    if normalized_mode == "audiobook" or normalized_type == "audiobook":
+        return "", False
+
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return "", False
+    if _max_job_text_chars <= 0 or len(cleaned) <= _max_job_text_chars:
+        return cleaned, False
+    return cleaned[:_max_job_text_chars], True
 
 
 def _upsert_live_generation_job(job_id: str, base: Optional[dict] = None, **updates) -> dict:
@@ -427,6 +448,11 @@ def _record_job_event(
     resolved_type = job_type or ("voice_clone" if mode == "clone" else "tts")
     if streamed and resolved_type == "tts":
         resolved_type = "tts_stream"
+    stored_text, text_truncated = _prepare_job_text(
+        text,
+        mode=mode,
+        job_type=resolved_type,
+    )
     _record_job_history_entry(
         {
             "id": job_id or str(uuid.uuid4())[:12],
@@ -436,6 +462,8 @@ def _record_job_event(
             "status": status,
             "title": title or f"{engine} {mode}",
             "chars": len((text or "").strip()),
+            "text": stored_text,
+            "text_truncated": text_truncated,
             "voice": voice,
             "speaker": speaker,
             "language": language,
@@ -2007,14 +2035,22 @@ def _queue_qwen3_job(request: Qwen3Request, http_request: Request) -> dict:
         request.model_size,
         request.model_quantization,
     )
+    base_job_type = "voice_clone" if request.mode == "clone" else "tts"
+    stored_text, text_truncated = _prepare_job_text(
+        request.text,
+        mode=request.mode,
+        job_type=base_job_type,
+    )
     base_job = {
         "id": job_id,
-        "type": "voice_clone" if request.mode == "clone" else "tts",
+        "type": base_job_type,
         "engine": "qwen3",
         "mode": request.mode,
         "status": "started",
         "title": f"qwen3 {request.mode}",
         "chars": len((request.text or "").strip()),
+        "text": stored_text,
+        "text_truncated": text_truncated,
         "voice": request.voice_name if request.mode == "clone" else None,
         "speaker": request.speaker if request.mode == "custom" else None,
         "language": request.language,
@@ -3960,12 +3996,50 @@ async def cosyvoice3_audio_delete(filename: str):
 
 # ============== Voice Clone Audio Library Endpoints ==============
 
+def _job_output_filename(item: dict) -> str:
+    output_path = str(item.get("output_path") or "").strip()
+    if output_path:
+        return Path(output_path).name
+    audio_url = str(item.get("audio_url") or "").strip()
+    if audio_url:
+        parsed = urlparse(audio_url)
+        return Path(parsed.path).name
+    return ""
+
+
+def _voice_clone_text_lookup() -> dict[tuple[str, str], dict]:
+    items = _snapshot_live_generation_jobs()
+    with _job_history_lock:
+        items.extend(list(_job_history))
+
+    lookup: dict[tuple[str, str], dict] = {}
+    supported_engines = {"qwen3", "chatterbox", "indextts2"}
+    for item in items:
+        engine = str(item.get("engine") or "").strip().lower()
+        if engine not in supported_engines:
+            continue
+        filename = _job_output_filename(item)
+        if not filename:
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        key = (engine, filename)
+        if key not in lookup:
+            lookup[key] = {
+                "text": text,
+                "text_truncated": bool(item.get("text_truncated", False)),
+            }
+    return lookup
+
+
 @app.get("/api/voice-clone/audio/list")
 async def voice_clone_audio_list():
     """List all generated voice clone audio files."""
     from datetime import datetime
 
     audio_files = []
+    text_lookup = _voice_clone_text_lookup()
     patterns = [
         ("qwen3", "qwen3-*.wav"),
         ("chatterbox", "chatterbox-*.wav"),
@@ -3996,6 +4070,7 @@ async def voice_clone_audio_list():
             except Exception:
                 duration_seconds = 0
 
+            text_info = text_lookup.get((engine, file.name), {})
             audio_files.append({
                 "id": stem,
                 "filename": file.name,
@@ -4008,6 +4083,8 @@ async def voice_clone_audio_list():
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "text": text_info.get("text"),
+                "text_truncated": bool(text_info.get("text_truncated", False)),
             })
 
     # Sort by creation time, newest first
