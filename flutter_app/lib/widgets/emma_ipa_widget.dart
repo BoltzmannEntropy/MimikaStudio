@@ -272,7 +272,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                       SizedBox(
                         width: 140,
                         child: DropdownButtonFormField<String>(
-                          value: _selectedProvider,
+                          initialValue: _selectedProvider,
                           decoration: const InputDecoration(
                             labelText: 'LLM',
                             border: OutlineInputBorder(),
@@ -300,7 +300,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                       SizedBox(
                         width: 180,
                         child: DropdownButtonFormField<String>(
-                          value: _modelsByProvider[_selectedProvider]?.contains(_selectedModel) == true
+                          initialValue: _modelsByProvider[_selectedProvider]?.contains(_selectedModel) == true
                               ? _selectedModel
                               : _modelsByProvider[_selectedProvider]?.first,
                           decoration: const InputDecoration(

@@ -2,6 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'about_screen.dart';
+import 'mcp_endpoints_screen.dart';
+import 'pro_screen.dart';
 import '../services/api_service.dart';
 import '../services/settings_service.dart';
 import '../version.dart';
@@ -13,9 +16,11 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends State<SettingsScreen>
+    with SingleTickerProviderStateMixin {
   final ApiService _apiService = ApiService();
   final SettingsService _settingsService = SettingsService();
+  late final TabController _subTabController;
 
   bool _isLoading = true;
   bool _isExportingLogs = false;
@@ -35,7 +40,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
+    _subTabController = TabController(length: 4, vsync: this);
     _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    _subTabController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadSettings() async {
@@ -315,408 +327,419 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _openSubTab(int index) {
+    _subTabController.animateTo(index);
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Row(
-          children: [
-            const Icon(Icons.settings),
-            const SizedBox(width: 8),
-            const Text('Settings'),
-            const Spacer(),
-            Text(
-              'v$appVersion',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+    final theme = Theme.of(context);
+
+    return Column(
+      children: [
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
               ),
             ),
-          ],
-        ),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Icon(
-                    Icons.error_outline,
-                    size: 48,
-                    color: Colors.red.shade400,
+                  const Icon(Icons.settings),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Settings',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
                   ),
-                  const SizedBox(height: 16),
-                  Text('Error loading settings: $_error'),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _loadSettings,
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Retry'),
+                  const Spacer(),
+                  Text(
+                    'v$appVersion',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
-            )
-          : SingleChildScrollView(
+              const SizedBox(height: 12),
+              TabBar(
+                controller: _subTabController,
+                isScrollable: true,
+                tabs: const [
+                  Tab(icon: Icon(Icons.tune_rounded), text: 'General'),
+                  Tab(icon: Icon(Icons.hub_rounded), text: 'MCP'),
+                  Tab(icon: Icon(Icons.workspace_premium_rounded), text: 'Pro'),
+                  Tab(icon: Icon(Icons.info_rounded), text: 'About'),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _subTabController,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [
+              _buildGeneralTab(),
+              const McpEndpointsScreen(),
+              const ProScreen(),
+              const AboutScreen(),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildGeneralTab() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.error_outline, size: 48, color: Colors.red.shade400),
+            const SizedBox(height: 16),
+            Text('Error loading settings: $_error'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: _loadSettings,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionHeader('General', Icons.folder_outlined),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.folder_open),
+                  title: const Text('Output Folder'),
+                  subtitle: Text(
+                    _outputFolder,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  trailing: Wrap(
+                    spacing: 8,
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => _openFolder(_outputFolder),
+                        child: const Text('Open'),
+                      ),
+                      FilledButton.tonal(
+                        onPressed: _selectOutputFolder,
+                        child: const Text('Browse'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _buildSectionHeader('Folders', Icons.folder_copy_outlined),
+          Card(
+            child: _systemFolders.isEmpty
+                ? const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text('Folder paths unavailable from backend.'),
+                  )
+                : Column(
+                    children: [
+                      for (final folder in _systemFolders)
+                        _buildFolderTile(
+                          label: folder['label']?.toString() ?? 'Folder',
+                          path: folder['path']?.toString() ?? '',
+                        ),
+                    ],
+                  ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Appearance', Icons.palette_outlined),
+          Card(
+            child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // General Settings
-                  _buildSectionHeader('General', Icons.folder_outlined),
-                  Card(
-                    child: Column(
-                      children: [
-                        ListTile(
-                          leading: const Icon(Icons.folder_open),
-                          title: const Text('Output Folder'),
-                          subtitle: Text(
-                            _outputFolder,
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          trailing: Wrap(
-                            spacing: 8,
-                            children: [
-                              OutlinedButton(
-                                onPressed: () => _openFolder(_outputFolder),
-                                child: const Text('Open'),
-                              ),
-                              FilledButton.tonal(
-                                onPressed: _selectOutputFolder,
-                                child: const Text('Browse'),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                  const Text(
+                    'Theme',
+                    style: TextStyle(fontWeight: FontWeight.w500),
                   ),
                   const SizedBox(height: 12),
-                  _buildSectionHeader('Folders', Icons.folder_copy_outlined),
-                  Card(
-                    child: _systemFolders.isEmpty
-                        ? const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text(
-                              'Folder paths unavailable from backend.',
-                            ),
-                          )
-                        : Column(
-                            children: [
-                              for (final folder in _systemFolders)
-                                _buildFolderTile(
-                                  label:
-                                      folder['label']?.toString() ?? 'Folder',
-                                  path: folder['path']?.toString() ?? '',
-                                ),
-                            ],
-                          ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Appearance Settings
-                  _buildSectionHeader('Appearance', Icons.palette_outlined),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Theme',
-                            style: TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                          const SizedBox(height: 12),
-                          SegmentedButton<ThemeMode>(
-                            segments: const [
-                              ButtonSegment(
-                                value: ThemeMode.light,
-                                icon: Icon(Icons.light_mode),
-                                label: Text('Light'),
-                              ),
-                              ButtonSegment(
-                                value: ThemeMode.dark,
-                                icon: Icon(Icons.dark_mode),
-                                label: Text('Dark'),
-                              ),
-                              ButtonSegment(
-                                value: ThemeMode.system,
-                                icon: Icon(Icons.settings_suggest),
-                                label: Text('System'),
-                              ),
-                            ],
-                            selected: {_themeMode},
-                            onSelectionChanged: (selection) {
-                              if (selection.isNotEmpty) {
-                                _setTheme(selection.first);
-                              }
-                            },
-                          ),
-                        ],
+                  SegmentedButton<ThemeMode>(
+                    segments: const [
+                      ButtonSegment(
+                        value: ThemeMode.light,
+                        icon: Icon(Icons.light_mode),
+                        label: Text('Light'),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Update Settings
-                  _buildSectionHeader('Updates', Icons.system_update_outlined),
-                  Card(
-                    child: Column(
-                      children: [
-                        SwitchListTile(
-                          secondary: const Icon(Icons.autorenew),
-                          title: const Text('Auto-update'),
-                          subtitle: const Text(
-                            'Automatically check for and install updates',
-                          ),
-                          value: _autoUpdate,
-                          onChanged: _setAutoUpdate,
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: const Icon(Icons.schedule),
-                          title: const Text('Check Frequency'),
-                          trailing: DropdownButton<String>(
-                            value: _updateFrequency,
-                            underline: const SizedBox(),
-                            items: const [
-                              DropdownMenuItem(
-                                value: 'daily',
-                                child: Text('Daily'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'weekly',
-                                child: Text('Weekly'),
-                              ),
-                              DropdownMenuItem(
-                                value: 'monthly',
-                                child: Text('Monthly'),
-                              ),
-                            ],
-                            onChanged: _autoUpdate
-                                ? (value) {
-                                    if (value != null) {
-                                      _setUpdateFrequency(value);
-                                    }
-                                  }
-                                : null,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Diagnostics
-                  _buildSectionHeader('Diagnostics', Icons.bug_report_outlined),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Container(
-                                width: 36,
-                                height: 36,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.primary.withValues(alpha: 0.12),
-                                ),
-                                child: Icon(
-                                  Icons.bug_report_rounded,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Diagnostics',
-                                      style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                    Text(
-                                      'Export logs for troubleshooting',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          Divider(
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.outlineVariant.withValues(alpha: 0.6),
-                          ),
-                          const SizedBox(height: 12),
-                          Text(
-                            'Export logs to help troubleshoot issues.',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.tonalIcon(
-                              onPressed: _isExportingLogs
-                                  ? null
-                                  : _exportDiagnosticLogs,
-                              style: FilledButton.styleFrom(
-                                minimumSize: const Size.fromHeight(56),
-                                shape: const StadiumBorder(),
-                              ),
-                              icon: _isExportingLogs
-                                  ? SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2.2,
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.primary,
-                                      ),
-                                    )
-                                  : const Icon(Icons.manage_search_rounded),
-                              label: Text(
-                                _isExportingLogs
-                                    ? 'Exporting Diagnostic Logs...'
-                                    : 'Export Diagnostic Logs',
-                              ),
-                            ),
-                          ),
-                        ],
+                      ButtonSegment(
+                        value: ThemeMode.dark,
+                        icon: Icon(Icons.dark_mode),
+                        label: Text('Dark'),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // License Settings
-                  _buildSectionHeader('License', Icons.verified_outlined),
-                  Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.workspace_premium_rounded),
-                      title: const Text('Pro & License'),
-                      subtitle: const Text(
-                        'Manage the 7-day trial, Polar.sh and LemonSqueezy upgrades, and activation in the Pro tab.',
+                      ButtonSegment(
+                        value: ThemeMode.system,
+                        icon: Icon(Icons.settings_suggest),
+                        label: Text('System'),
                       ),
-                      trailing: FilledButton.tonal(
-                        onPressed: () {
-                          final tabController = DefaultTabController.of(
-                            context,
-                          );
-                          tabController.animateTo(9);
-                        },
-                        child: const Text('Open Pro'),
-                      ),
-                    ),
+                    ],
+                    selected: {_themeMode},
+                    onSelectionChanged: (selection) {
+                      if (selection.isNotEmpty) {
+                        _setTheme(selection.first);
+                      }
+                    },
                   ),
-                  const SizedBox(height: 24),
-
-                  // Advanced Settings
-                  _buildSectionHeader('Advanced', Icons.tune_outlined),
-                  Card(
-                    child: Column(
-                      children: [
-                        ListTile(
-                          leading: const Icon(Icons.cleaning_services),
-                          title: const Text('Clear Cache'),
-                          subtitle: const Text(
-                            'Remove temporary files and cached data',
-                          ),
-                          trailing: OutlinedButton(
-                            onPressed: _clearCache,
-                            child: const Text('Clear'),
-                          ),
-                        ),
-                        const Divider(height: 1),
-                        ListTile(
-                          leading: Icon(
-                            Icons.restart_alt,
-                            color: Colors.red.shade400,
-                          ),
-                          title: Text(
-                            'Reset All Settings',
-                            style: TextStyle(color: Colors.red.shade400),
-                          ),
-                          subtitle: const Text('Restore default settings'),
-                          trailing: OutlinedButton(
-                            onPressed: _resetSettings,
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: Colors.red,
-                              side: const BorderSide(color: Colors.red),
-                            ),
-                            child: const Text('Reset'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  // Version info footer
-                  Center(
-                    child: Column(
-                      children: [
-                        Text(
-                          'MimikaStudio',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.primary,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          versionString,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          versionName,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Updates', Icons.system_update_outlined),
+          Card(
+            child: Column(
+              children: [
+                SwitchListTile(
+                  secondary: const Icon(Icons.autorenew),
+                  title: const Text('Auto-update'),
+                  subtitle: const Text(
+                    'Automatically check for and install updates',
+                  ),
+                  value: _autoUpdate,
+                  onChanged: _setAutoUpdate,
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.schedule),
+                  title: const Text('Check Frequency'),
+                  trailing: DropdownButton<String>(
+                    value: _updateFrequency,
+                    underline: const SizedBox(),
+                    items: const [
+                      DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                      DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                      DropdownMenuItem(
+                        value: 'monthly',
+                        child: Text('Monthly'),
+                      ),
+                    ],
+                    onChanged: _autoUpdate
+                        ? (value) {
+                            if (value != null) {
+                              _setUpdateFrequency(value);
+                            }
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Diagnostics', Icons.bug_report_outlined),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.primary.withValues(alpha: 0.12),
+                        ),
+                        child: Icon(
+                          Icons.bug_report_rounded,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Diagnostics',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              'Export logs for troubleshooting',
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Divider(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.6),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Export logs to help troubleshoot issues.',
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: _isExportingLogs
+                          ? null
+                          : _exportDiagnosticLogs,
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size.fromHeight(56),
+                        shape: const StadiumBorder(),
+                      ),
+                      icon: _isExportingLogs
+                          ? SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                            )
+                          : const Icon(Icons.manage_search_rounded),
+                      label: Text(
+                        _isExportingLogs
+                            ? 'Exporting Diagnostic Logs...'
+                            : 'Export Diagnostic Logs',
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('License', Icons.verified_outlined),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.workspace_premium_rounded),
+              title: const Text('Pro & License'),
+              subtitle: const Text(
+                'Manage the 7-day trial, Polar.sh and LemonSqueezy upgrades, and activation in Settings > Pro.',
+              ),
+              trailing: FilledButton.tonal(
+                onPressed: () => _openSubTab(2),
+                child: const Text('Open Pro'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildSectionHeader('Advanced', Icons.tune_outlined),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.cleaning_services),
+                  title: const Text('Clear Cache'),
+                  subtitle: const Text(
+                    'Remove temporary files and cached data',
+                  ),
+                  trailing: OutlinedButton(
+                    onPressed: _clearCache,
+                    child: const Text('Clear'),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  leading: Icon(Icons.restart_alt, color: Colors.red.shade400),
+                  title: Text(
+                    'Reset All Settings',
+                    style: TextStyle(color: Colors.red.shade400),
+                  ),
+                  subtitle: const Text('Restore default settings'),
+                  trailing: OutlinedButton(
+                    onPressed: _resetSettings,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red,
+                      side: const BorderSide(color: Colors.red),
+                    ),
+                    child: const Text('Reset'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 32),
+          Center(
+            child: Column(
+              children: [
+                Text(
+                  'MimikaStudio',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  versionString,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  versionName,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
     );
   }
 

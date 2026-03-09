@@ -12,6 +12,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
 FLUTTER_DIR="$ROOT_DIR/flutter_app"
 VENV_DIR="$ROOT_DIR/venv"
+BACKEND_PORT="${MIMIKA_BACKEND_PORT:-7693}"
 DICTA_MODEL_DIR="$BACKEND_DIR/models/dicta-onnx"
 DICTA_MODEL_PATH="$DICTA_MODEL_DIR/dicta-1.0.onnx"
 DICTA_MODEL_URL="https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx"
@@ -70,18 +71,23 @@ ok "ffmpeg"
 echo ""
 info "Setting up Python virtual environment..."
 
-if [ ! -d "$VENV_DIR" ]; then
+if [ ! -x "$VENV_DIR/bin/python" ]; then
     python3 -m venv "$VENV_DIR"
     ok "Created venv at $VENV_DIR"
 else
-    ok "venv already exists at $VENV_DIR"
+    # Refresh scripts/symlinks in case the repo was moved and old shebangs are stale.
+    python3 -m venv --upgrade "$VENV_DIR"
+    ok "Refreshed venv at $VENV_DIR"
 fi
 
-# shellcheck disable=SC1091
-source "$VENV_DIR/bin/activate"
-ok "Activated venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
+if ! "$VENV_PYTHON" -c "import sys" >/dev/null 2>&1; then
+    fail "venv python is not executable at $VENV_PYTHON"
+    exit 1
+fi
+ok "venv python ready at $VENV_PYTHON"
 
-pip install --upgrade pip --quiet
+"$VENV_PYTHON" -m pip install --upgrade pip --quiet
 ok "pip upgraded"
 
 # =============================================================================
@@ -89,7 +95,7 @@ ok "pip upgraded"
 # =============================================================================
 echo ""
 info "Installing Python dependencies from requirements.txt..."
-pip install -r "$ROOT_DIR/requirements.txt"
+"$VENV_PYTHON" -m pip install -r "$ROOT_DIR/requirements.txt"
 ok "Core dependencies installed"
 
 # Chatterbox TTS must be installed with --no-deps because its pinned versions
@@ -97,7 +103,7 @@ ok "Core dependencies installed"
 # (omegaconf, resemble-perth, conformer, etc.) are already in requirements.txt.
 echo ""
 info "Installing chatterbox-tts (with --no-deps to avoid version conflicts)..."
-pip install --no-deps chatterbox-tts==0.1.6
+"$VENV_PYTHON" -m pip install --no-deps chatterbox-tts==0.1.6
 ok "chatterbox-tts installed"
 
 # Optional: Dicta Hebrew diacritizer model for Chatterbox (large download).
@@ -125,7 +131,7 @@ info "Skipping IndexTTS-2 install (PyTorch-dependent; MLX/ONNX-only profile)."
 # =============================================================================
 echo ""
 info "Verifying critical imports..."
-python3 -c "
+"$VENV_PYTHON" -c "
 import sys, importlib
 modules = [
     'fastapi', 'uvicorn', 'kokoro', 'qwen_tts', 'chatterbox',
@@ -153,7 +159,7 @@ ok "All critical imports verified"
 echo ""
 info "Initializing database..."
 cd "$BACKEND_DIR"
-python3 database.py
+"$VENV_PYTHON" database.py
 ok "Database initialized and seeded"
 
 # =============================================================================
@@ -188,6 +194,6 @@ echo -e "  Then open ${BLUE}http://127.0.0.1:5173${NC}"
 echo ""
 echo "Or start backend only:"
 echo -e "  ${BLUE}source venv/bin/activate${NC}"
-echo -e "  ${BLUE}cd backend && uvicorn main:app --host 0.0.0.0 --port 8000${NC}"
+echo -e "  ${BLUE}cd backend && uvicorn main:app --host 0.0.0.0 --port $BACKEND_PORT${NC}"
 echo ""
-echo "API docs: http://localhost:8000/docs"
+echo "API docs: http://localhost:$BACKEND_PORT/docs"

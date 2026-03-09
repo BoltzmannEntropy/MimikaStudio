@@ -13,9 +13,7 @@ import 'screens/pdf_reader_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/models_screen.dart';
 import 'screens/settings_screen.dart';
-import 'screens/mcp_endpoints_screen.dart';
-import 'screens/pro_screen.dart';
-import 'screens/about_screen.dart';
+import 'screens/voice_prompt_management_screen.dart';
 import 'services/api_service.dart';
 import 'services/backend_service.dart';
 import 'version.dart';
@@ -770,7 +768,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 11,
+      length: 9,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
@@ -849,14 +847,15 @@ class _MainScreenState extends State<MainScreen> {
                 icon: Icon(Icons.description_rounded, size: 26),
                 text: 'Read Aloud',
               ),
-              Tab(icon: Icon(Icons.work_history_rounded, size: 26), text: 'Jobs'),
-              Tab(icon: Icon(Icons.tune_rounded, size: 26), text: 'Settings'),
-              Tab(icon: Icon(Icons.hub_rounded, size: 26), text: 'MCP'),
               Tab(
-                icon: Icon(Icons.workspace_premium_rounded, size: 26),
-                text: 'Pro',
+                icon: Icon(Icons.work_history_rounded, size: 26),
+                text: 'Jobs',
               ),
-              Tab(icon: Icon(Icons.info_rounded, size: 26), text: 'About'),
+              Tab(
+                icon: Icon(Icons.mic_none_rounded, size: 26),
+                text: 'Voice Prompts',
+              ),
+              Tab(icon: Icon(Icons.tune_rounded, size: 26), text: 'Settings'),
             ],
           ),
         ),
@@ -872,10 +871,8 @@ class _MainScreenState extends State<MainScreen> {
                   ChatterboxCloneScreen(),
                   PdfReaderScreen(),
                   JobsScreen(),
+                  VoicePromptManagementScreen(),
                   SettingsScreen(),
-                  McpEndpointsScreen(),
-                  ProScreen(),
-                  AboutScreen(),
                 ],
               ),
             ),

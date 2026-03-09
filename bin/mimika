@@ -3,6 +3,10 @@
 MimikaStudio CLI - Command-line interface for voice cloning and TTS.
 
 Usage:
+    # Service control (forwarded to mimikactl)
+    mimika up
+    mimika dist
+
     # Kokoro TTS (fast British/American voices)
     mimika kokoro "Hello, world!" --voice bf_emma --output hello.wav
     mimika kokoro input.txt --voice bm_george --speed 1.2
@@ -23,12 +27,32 @@ import sys
 import os
 import re
 import json
-import requests
+import subprocess
 from pathlib import Path
 from typing import Optional
 
 # Backend API URL
 API_BASE = os.environ.get("MIMIKA_API_URL", "http://localhost:7693")
+CONTROL_COMMANDS = {
+    "up",
+    "down",
+    "restart",
+    "status",
+    "dist",
+    "backend",
+    "flutter",
+    "mcp",
+    "models",
+    "db",
+    "logs",
+    "test",
+    "clean",
+    "version",
+}
+
+# Imported lazily so service-control forwarding (mimika up/dist/status/...)
+# works even if system Python lacks third-party deps used by API commands.
+requests = None
 
 
 # =============================================================================
@@ -376,6 +400,15 @@ def cmd_voices(args):
 # =============================================================================
 
 def main():
+    # Forward service-control commands to mimikactl.
+    if len(sys.argv) > 1 and sys.argv[1] in CONTROL_COMMANDS:
+        ctl = Path(__file__).resolve().parent / "mimikactl"
+        if not ctl.exists():
+            print(f"Error: control script not found: {ctl}")
+            sys.exit(1)
+        result = subprocess.run([str(ctl), *sys.argv[1:]])
+        sys.exit(result.returncode)
+
     parser = argparse.ArgumentParser(
         description="MimikaStudio CLI - Voice cloning and TTS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -432,6 +465,16 @@ Examples:
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    # Import requests only for API-driven TTS commands.
+    global requests
+    try:
+        import requests as requests_module
+    except ModuleNotFoundError:
+        print("Error: Python package 'requests' is required for TTS commands.")
+        print("Run ./install.sh, or use service control via ./bin/mimikactl.")
+        sys.exit(1)
+    requests = requests_module
 
     # Check API is running
     try:

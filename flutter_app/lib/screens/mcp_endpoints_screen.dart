@@ -341,6 +341,8 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
             // Server status cards
             _buildServerStatusRow(colorScheme),
             const SizedBox(height: 16),
+            _buildAgentIntegrationCard(colorScheme),
+            const SizedBox(height: 16),
 
             // Search bar
             TextField(
@@ -538,6 +540,104 @@ class _McpEndpointsScreenState extends State<McpEndpointsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAgentIntegrationCard(ColorScheme colorScheme) {
+    return Card(
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: colorScheme.outlineVariant),
+      ),
+      child: ExpansionTile(
+        leading: Icon(Icons.integration_instructions, color: colorScheme.primary),
+        title: const Text(
+          'Claude Code & Codex Integration',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          'Connect both agents to the local MCP server on http://127.0.0.1:8010',
+          style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        children: [
+          _buildInstructionBlock(
+            colorScheme,
+            title: '1) Start the backend + MCP server',
+            code: './bin/mimikactl up --no-flutter',
+          ),
+          const SizedBox(height: 10),
+          _buildInstructionBlock(
+            colorScheme,
+            title: '2) Verify MCP is reachable',
+            code:
+                "curl -s http://127.0.0.1:8010 "
+                "-H 'Content-Type: application/json' "
+                "-d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'",
+          ),
+          const SizedBox(height: 10),
+          _buildInstructionBlock(
+            colorScheme,
+            title: '3) Configure your agent MCP server',
+            code:
+                'Server name: mimikastudio\n'
+                'Transport: HTTP JSON-RPC\n'
+                'URL: http://127.0.0.1:8010',
+          ),
+          const SizedBox(height: 10),
+          _buildInstructionBlock(
+            colorScheme,
+            title: 'Claude Code prompt example',
+            code:
+                'Use the mimikastudio MCP server.\n'
+                'List available tools, then call tts_list_voices for engine kokoro.',
+          ),
+          const SizedBox(height: 10),
+          _buildInstructionBlock(
+            colorScheme,
+            title: 'Codex prompt example',
+            code:
+                'Use mimikastudio MCP.\n'
+                'Generate audio with tts_generate_kokoro using voice bf_emma,\n'
+                'then return filename and audio_url.',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInstructionBlock(
+    ColorScheme colorScheme, {
+    required String title,
+    required String code,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.6)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          ),
+          const SizedBox(height: 6),
+          SelectableText(
+            code,
+            style: TextStyle(
+              fontSize: 12,
+              fontFamily: 'monospace',
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

@@ -5,15 +5,21 @@
 # Runs install.sh with full logging, captures system info, and tests the API.
 # For users experiencing installation or runtime issues.
 #
-# Usage: ./iuuses.sh
-# Output: iuuses_report_<timestamp>.log
+# Usage: ./issues.sh
+# Output: issues_report_<timestamp>.log
 # =============================================================================
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$ROOT_DIR/issues_report_$TIMESTAMP.log"
-VENV_DIR="$ROOT_DIR/venv"
 BACKEND_DIR="$ROOT_DIR/backend"
+PRIMARY_VENV_DIR="$ROOT_DIR/venv"
+FALLBACK_VENV_DIR="$BACKEND_DIR/venv"
+BACKEND_HOST="${MIMIKA_BACKEND_HOST:-127.0.0.1}"
+BACKEND_PORT="${MIMIKA_BACKEND_PORT:-7693}"
+BACKEND_URL="http://$BACKEND_HOST:$BACKEND_PORT"
+VENV_DIR=""
+VENV_PYTHON=""
 
 # --- Colors (for terminal) ---
 RED='\033[0;31m'
@@ -55,6 +61,17 @@ run_cmd() {
     fi
 }
 
+resolve_venv_python() {
+    local candidate
+    for candidate in "$PRIMARY_VENV_DIR" "$FALLBACK_VENV_DIR"; do
+        if [ -x "$candidate/bin/python" ] && "$candidate/bin/python" -c "import sys" >/dev/null 2>&1; then
+            echo "$candidate/bin/python"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # =============================================================================
 # Start Report
 # =============================================================================
@@ -62,6 +79,12 @@ echo "" > "$LOG_FILE"
 log "${CYAN}MimikaStudio Installation & Usage Diagnostic Report${NC}"
 log "Generated: $(date)"
 log "Log file: $LOG_FILE"
+
+if VENV_PYTHON="$(resolve_venv_python)"; then
+    VENV_DIR="$(cd "$(dirname "$VENV_PYTHON")/.." && pwd)"
+else
+    VENV_DIR="$PRIMARY_VENV_DIR"
+fi
 
 # =============================================================================
 # 1. System Information
@@ -158,36 +181,30 @@ fi
 # =============================================================================
 section "PYTHON VIRTUAL ENVIRONMENT"
 
-if [ -d "$VENV_DIR" ]; then
+if [ -n "$VENV_PYTHON" ] && [ -d "$VENV_DIR" ]; then
     log "${GREEN}venv exists at $VENV_DIR${NC}"
 
     subsection "venv Python"
-    if [ -f "$VENV_DIR/bin/python" ]; then
-        run_cmd "venv Python version" "$VENV_DIR/bin/python" --version
-        run_cmd "venv Python path" "$VENV_DIR/bin/python" -c "import sys; print(sys.executable)"
-    fi
+    run_cmd "venv Python version" "$VENV_PYTHON" --version
+    run_cmd "venv Python path" "$VENV_PYTHON" -c "import sys; print(sys.executable)"
 
     subsection "venv pip"
-    if [ -f "$VENV_DIR/bin/pip" ]; then
-        run_cmd "venv pip version" "$VENV_DIR/bin/pip" --version
-    fi
+    run_cmd "venv pip version" "$VENV_PYTHON" -m pip --version
 
     subsection "Installed Packages"
-    if [ -f "$VENV_DIR/bin/pip" ]; then
-        log "Key packages:"
-        for pkg in fastapi uvicorn torch torchaudio transformers kokoro qwen-tts chatterbox-tts indextts soundfile librosa spacy; do
-            version=$("$VENV_DIR/bin/pip" show "$pkg" 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
-            if [ -n "$version" ]; then
-                log "  ${GREEN}$pkg${NC}: $version"
-            else
-                log "  ${YELLOW}$pkg${NC}: NOT INSTALLED"
-            fi
-        done
-    fi
+    log "Key packages:"
+    for pkg in fastapi uvicorn torch torchaudio transformers kokoro qwen-tts chatterbox-tts indextts soundfile librosa spacy; do
+        version=$("$VENV_PYTHON" -m pip show "$pkg" 2>/dev/null | grep "^Version:" | cut -d' ' -f2)
+        if [ -n "$version" ]; then
+            log "  ${GREEN}$pkg${NC}: $version"
+        else
+            log "  ${YELLOW}$pkg${NC}: NOT INSTALLED"
+        fi
+    done
 
     subsection "Import Tests"
     log "Testing critical Python imports..."
-    "$VENV_DIR/bin/python" -c "
+    "$VENV_PYTHON" -c "
 import sys
 
 modules = [
@@ -218,8 +235,8 @@ for mod, desc in modules:
 " 2>&1 | tee -a "$LOG_FILE"
 
 else
-    log "${RED}venv NOT found at $VENV_DIR${NC}"
-    log "Run ./install.sh first to create the virtual environment"
+    log "${RED}No usable venv found at $PRIMARY_VENV_DIR or $FALLBACK_VENV_DIR${NC}"
+    log "Run ./install.sh first to create/repair the virtual environment"
 fi
 
 # =============================================================================
@@ -293,39 +310,52 @@ fi
 # =============================================================================
 section "API TESTS"
 
-# Check if backend is running
+TEST_BACKEND_PORT="$BACKEND_PORT"
+TEST_BACKEND_URL="$BACKEND_URL"
+
+# Check if Mimika backend is running
 subsection "Checking for Running Backend"
-if curl -s --connect-timeout 2 http://localhost:8000/api/health > /dev/null 2>&1; then
-    log "${GREEN}Backend is already running on port 8000${NC}"
+health_probe=$(curl -s --connect-timeout 2 "$TEST_BACKEND_URL/api/health" 2>/dev/null || true)
+if echo "$health_probe" | grep -q '"service":"mimikastudio"'; then
+    log "${GREEN}Backend is already running on $TEST_BACKEND_URL${NC}"
     BACKEND_WAS_RUNNING=1
 else
-    log "Backend not running. Starting backend for API tests..."
+    if [ -n "$health_probe" ]; then
+        log "${YELLOW}Port $BACKEND_PORT is occupied by a different service. Using fallback port 8769 for tests.${NC}"
+        TEST_BACKEND_PORT=8769
+        TEST_BACKEND_URL="http://127.0.0.1:$TEST_BACKEND_PORT"
+    fi
+
+    log "Backend not running. Starting backend for API tests on $TEST_BACKEND_URL..."
     BACKEND_WAS_RUNNING=0
 
-    if [ -f "$VENV_DIR/bin/python" ] && [ -f "$BACKEND_DIR/main.py" ]; then
+    if [ -n "$VENV_PYTHON" ] && [ -f "$BACKEND_DIR/main.py" ]; then
         cd "$BACKEND_DIR"
-        "$VENV_DIR/bin/python" -m uvicorn main:app --host 127.0.0.1 --port 8000 &
+        MIMIKA_BACKEND_HOST="127.0.0.1" \
+        MIMIKA_BACKEND_PORT="$TEST_BACKEND_PORT" \
+        "$VENV_PYTHON" -m uvicorn main:app --host 127.0.0.1 --port "$TEST_BACKEND_PORT" &
         BACKEND_PID=$!
         log "Started backend with PID: $BACKEND_PID"
 
         # Wait for backend to start
         log "Waiting for backend to be ready..."
         for i in {1..30}; do
-            if curl -s --connect-timeout 1 http://localhost:8000/api/health > /dev/null 2>&1; then
+            probe=$(curl -s --connect-timeout 1 "$TEST_BACKEND_URL/api/health" 2>/dev/null || true)
+            if echo "$probe" | grep -q '"service":"mimikastudio"'; then
                 log "${GREEN}Backend ready after ${i}s${NC}"
                 break
             fi
             sleep 1
         done
     else
-        log "${RED}Cannot start backend - missing venv or main.py${NC}"
+        log "${RED}Cannot start backend - missing usable venv or main.py${NC}"
     fi
 fi
 
 # Run API tests
 subsection "Health Check"
-log "$ curl http://localhost:8000/api/health"
-health_response=$(curl -s --connect-timeout 5 http://localhost:8000/api/health 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/health"
+health_response=$(curl -s --connect-timeout 5 "$TEST_BACKEND_URL/api/health" 2>&1)
 if [ $? -eq 0 ]; then
     log "${GREEN}Response:${NC} $health_response"
 else
@@ -333,8 +363,8 @@ else
 fi
 
 subsection "System Info"
-log "$ curl http://localhost:8000/api/system/info"
-sysinfo_response=$(curl -s --connect-timeout 5 http://localhost:8000/api/system/info 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/system/info"
+sysinfo_response=$(curl -s --connect-timeout 5 "$TEST_BACKEND_URL/api/system/info" 2>&1)
 if [ $? -eq 0 ]; then
     log "${GREEN}Response:${NC} $sysinfo_response"
 else
@@ -342,16 +372,16 @@ else
 fi
 
 subsection "OpenAPI Docs"
-log "$ curl http://localhost:8000/openapi.json (checking availability)"
-if curl -s --connect-timeout 5 http://localhost:8000/openapi.json > /dev/null 2>&1; then
+log "$ curl $TEST_BACKEND_URL/openapi.json (checking availability)"
+if curl -s --connect-timeout 5 "$TEST_BACKEND_URL/openapi.json" > /dev/null 2>&1; then
     log "${GREEN}OpenAPI docs available${NC}"
 else
     log "${RED}OpenAPI docs NOT available${NC}"
 fi
 
 subsection "Kokoro TTS Voices"
-log "$ curl http://localhost:8000/api/kokoro/voices"
-kokoro_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/kokoro/voices 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/kokoro/voices"
+kokoro_response=$(curl -s --connect-timeout 10 "$TEST_BACKEND_URL/api/kokoro/voices" 2>&1)
 if [ $? -eq 0 ]; then
     if [ ${#kokoro_response} -gt 500 ]; then
         log "${GREEN}Response (truncated):${NC} ${kokoro_response:0:500}..."
@@ -363,8 +393,8 @@ else
 fi
 
 subsection "Qwen3 TTS Voices"
-log "$ curl http://localhost:8000/api/qwen3/voices"
-qwen_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/qwen3/voices 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/qwen3/voices"
+qwen_response=$(curl -s --connect-timeout 10 "$TEST_BACKEND_URL/api/qwen3/voices" 2>&1)
 if [ $? -eq 0 ]; then
     if [ ${#qwen_response} -gt 500 ]; then
         log "${GREEN}Response (truncated):${NC} ${qwen_response:0:500}..."
@@ -376,8 +406,8 @@ else
 fi
 
 subsection "Chatterbox TTS Voices"
-log "$ curl http://localhost:8000/api/chatterbox/voices"
-chatterbox_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/chatterbox/voices 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/chatterbox/voices"
+chatterbox_response=$(curl -s --connect-timeout 10 "$TEST_BACKEND_URL/api/chatterbox/voices" 2>&1)
 if [ $? -eq 0 ]; then
     if [ ${#chatterbox_response} -gt 500 ]; then
         log "${GREEN}Response (truncated):${NC} ${chatterbox_response:0:500}..."
@@ -389,8 +419,8 @@ else
 fi
 
 subsection "Custom Voices"
-log "$ curl http://localhost:8000/api/voices/custom"
-custom_response=$(curl -s --connect-timeout 10 http://localhost:8000/api/voices/custom 2>&1)
+log "$ curl $TEST_BACKEND_URL/api/voices/custom"
+custom_response=$(curl -s --connect-timeout 10 "$TEST_BACKEND_URL/api/voices/custom" 2>&1)
 if [ $? -eq 0 ]; then
     if [ ${#custom_response} -gt 500 ]; then
         log "${GREEN}Response (truncated):${NC} ${custom_response:0:500}..."
@@ -415,10 +445,10 @@ fi
 # =============================================================================
 section "PORT STATUS"
 
-subsection "Port 8000 (Backend)"
+subsection "Port ${TEST_BACKEND_PORT:-$BACKEND_PORT} (Backend)"
 if command -v lsof &> /dev/null; then
-    port_8000=$(lsof -i :8000 2>/dev/null | grep LISTEN || echo "Not in use")
-    log "$port_8000"
+    port_backend=$(lsof -i :"${TEST_BACKEND_PORT:-$BACKEND_PORT}" 2>/dev/null | grep LISTEN || echo "Not in use")
+    log "$port_backend"
 else
     log "lsof not available"
 fi

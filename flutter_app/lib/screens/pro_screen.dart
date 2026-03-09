@@ -626,27 +626,25 @@ class _ProScreenState extends State<ProScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _loadLicenseState,
-              child: ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  _buildTrialBanner(context),
+    return _isLoading
+        ? const Center(child: CircularProgressIndicator())
+        : RefreshIndicator(
+            onRefresh: _loadLicenseState,
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                _buildTrialBanner(context),
+                const SizedBox(height: 18),
+                if (!_isProActivated) ...[
+                  _buildProCard(context),
                   const SizedBox(height: 18),
-                  if (!_isProActivated) ...[
-                    _buildProCard(context),
-                    const SizedBox(height: 18),
-                  ],
-                  _buildActivationCard(context),
-                  const SizedBox(height: 18),
-                  _buildProviderConfigCard(),
                 ],
-              ),
+                _buildActivationCard(context),
+                const SizedBox(height: 18),
+                _buildProviderConfigCard(),
+              ],
             ),
-    );
+          );
   }
 }
 

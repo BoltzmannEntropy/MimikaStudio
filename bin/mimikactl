@@ -40,6 +40,19 @@ mkdir -p "$PID_DIR" "$LOG_DIR" "$RUNS_LOG_DIR"
 
 # ============== Helper Functions ==============
 
+resolve_python_exec() {
+    local candidate
+    for candidate in "$VENV_DIR/bin/python" "$VENV_DIR/bin/python3"; do
+        if [ -x "$candidate" ] && "$candidate" -c "import sys" >/dev/null 2>&1; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+PYTHON_EXEC="$(resolve_python_exec || true)"
+
 print_status() {
     local name="$1"
     local port="$2"
@@ -114,6 +127,27 @@ wait_for_flutter_ui() {
     return 1
 }
 
+flutter_release_app_path() {
+    local release_dir="$FLUTTER_DIR/build/macos/Build/Products/Release"
+    local candidate
+    for candidate in \
+        "$release_dir/mimika_studio.app" \
+        "$release_dir/$FLUTTER_APP_PRODUCT_NAME.app"
+    do
+        if [ -d "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    candidate="$(find "$release_dir" -maxdepth 1 -type d -name '*.app' 2>/dev/null | head -n 1 || true)"
+    if [ -n "$candidate" ] && [ -d "$candidate" ]; then
+        echo "$candidate"
+        return 0
+    fi
+    return 1
+}
+
 embedded_app_bundle_path() {
     local candidate
     for candidate in \
@@ -131,7 +165,9 @@ embedded_app_bundle_path() {
 build_embedded_app_bundle() {
     echo -e "${BLUE}Building embedded app bundle via scripts/build_dmg.sh...${NC}"
     cd "$ROOT_DIR"
-    "$ROOT_DIR/scripts/build_dmg.sh"
+    # Avoid stale external toolchain overrides that can inject invalid
+    # linker search paths (for example old MetalToolchain cryptex mounts).
+    env -u TOOLCHAINS "$ROOT_DIR/scripts/build_dmg.sh"
 }
 
 ensure_embedded_app_bundle() {
@@ -154,23 +190,23 @@ ensure_embedded_app_bundle() {
 # ============== Backend Functions ==============
 
 start_backend() {
-    echo -e "${BLUE}Starting backend (embedded)...${NC}"
+    echo -e "${BLUE}Starting backend (source)...${NC}"
 
     # Kill existing
     kill_port $BACKEND_PORT
 
-    local embedded_bundle=""
-    embedded_bundle="$(ensure_embedded_app_bundle)" || return 1
-
-    local embedded_backend_dir="$embedded_bundle/Contents/Resources/backend"
-    local launcher="$embedded_backend_dir/run_backend.sh"
-    if [ ! -x "$launcher" ]; then
-        echo -e "${RED}Embedded backend launcher missing: $launcher${NC}"
+    if [ -z "$PYTHON_EXEC" ]; then
+        echo -e "${RED}No usable Python executable found under $VENV_DIR.${NC}"
+        echo -e "${YELLOW}Run ./install.sh first.${NC}"
         return 1
     fi
 
-    # Start bundled backend exactly as packaged app does.
-    nohup env MIMIKA_BACKEND_PORT="$BACKEND_PORT" "$launcher" > "$LOG_DIR/backend.log" 2>&1 &
+    cd "$BACKEND_DIR"
+    nohup env \
+        MIMIKA_BACKEND_HOST="127.0.0.1" \
+        MIMIKA_BACKEND_PORT="$BACKEND_PORT" \
+        "$PYTHON_EXEC" -m uvicorn main:app --host 127.0.0.1 --port "$BACKEND_PORT" \
+        > "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$PID_DIR/backend.pid"
 
     if ! wait_for_health "http://localhost:$BACKEND_PORT/api/health"; then
@@ -190,26 +226,29 @@ stop_backend() {
 # ============== Flutter Functions ==============
 
 start_flutter() {
-    local mode="${1:-embedded}"
-    echo -e "${BLUE}Starting Flutter UI (macOS, embedded mode)...${NC}"
-
-    cd "$FLUTTER_DIR"
-
-    local embedded_bundle=""
-    embedded_bundle="$(ensure_embedded_app_bundle)" || return 1
-    if [ -n "$embedded_bundle" ]; then
-        if [ "$mode" != "embedded" ]; then
-            echo -e "${YELLOW}Ignoring deprecated Flutter mode '$mode'; using embedded app bundle.${NC}"
-        fi
-        echo -e "${BLUE}Launching embedded app bundle: $embedded_bundle${NC}"
-        open "$embedded_bundle"
-        if ! wait_for_flutter_ui 60; then
-            echo -e "${RED}Embedded app failed to launch UI.${NC}"
-            return 1
-        fi
-        return 0
+    local mode="${1:-release}"
+    local release_bundle=""
+    release_bundle="$(flutter_release_app_path || true)"
+    if [ -z "$release_bundle" ]; then
+        echo -e "${YELLOW}Flutter release app bundle not found. Building first...${NC}"
+        build_flutter
+        release_bundle="$(flutter_release_app_path || true)"
     fi
-    return 1
+    if [ -z "$release_bundle" ]; then
+        echo -e "${RED}No Flutter release app bundle found after build.${NC}"
+        return 1
+    fi
+    if [ "$mode" != "release" ] && [ "$mode" != "embedded" ]; then
+        echo -e "${YELLOW}Unknown Flutter mode '$mode'; using release bundle.${NC}"
+    fi
+    echo -e "${BLUE}Starting Flutter UI (macOS release app)...${NC}"
+    echo -e "${BLUE}Launching app bundle: $release_bundle${NC}"
+    open "$release_bundle"
+    if ! wait_for_flutter_ui 60; then
+        echo -e "${RED}Flutter UI failed to launch.${NC}"
+        return 1
+    fi
+    return 0
 }
 
 stop_flutter() {
@@ -235,8 +274,19 @@ stop_flutter() {
 }
 
 build_flutter() {
-    build_embedded_app_bundle
-    echo -e "${GREEN}Embedded app bundle build complete${NC}"
+    echo -e "${BLUE}Building Flutter macOS release app...${NC}"
+    cd "$FLUTTER_DIR"
+    # Avoid stale external toolchain overrides and skip redundant pub resolves.
+    env TOOLCHAINS="com.apple.dt.toolchain.XcodeDefault" \
+        flutter build macos --release --no-pub
+    local release_bundle=""
+    release_bundle="$(flutter_release_app_path || true)"
+    if [ -z "$release_bundle" ]; then
+        echo -e "${RED}Flutter build succeeded but no .app bundle was found.${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}Flutter release build complete${NC}"
+    echo -e "Bundle: $release_bundle"
 }
 
 # ============== Model Functions ==============
@@ -310,13 +360,13 @@ run_tests() {
 }
 
 cmd_flutter_start() {
-    local mode="embedded"
+    local mode="release"
 
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --embedded|--release) mode="embedded" ;;
+            --embedded|--release) mode="release" ;;
             --dev)
-                echo -e "${RED}Dev mode is disabled. Use embedded mode only.${NC}"
+                echo -e "${RED}Dev mode is disabled. Use release mode only.${NC}"
                 return 1
                 ;;
             *)
@@ -350,6 +400,10 @@ cmd_up() {
     done
 
     echo -e "${BLUE}=== Starting MimikaStudio ===${NC}"
+    if [ "$skip_flutter" = false ]; then
+        echo -e "${BLUE}Forcing Flutter release build before startup...${NC}"
+        build_flutter
+    fi
     start_backend
 
     if [ "$skip_mcp" = false ]; then
@@ -357,7 +411,7 @@ cmd_up() {
     fi
 
     if [ "$skip_flutter" = false ]; then
-        start_flutter embedded
+        start_flutter release
     fi
 
     echo ""
@@ -365,6 +419,12 @@ cmd_up() {
     echo -e "Backend:    http://localhost:$BACKEND_PORT"
     echo -e "API Docs:   http://localhost:$BACKEND_PORT/docs"
     echo -e "MCP Server: http://localhost:$MCP_PORT"
+}
+
+cmd_dist() {
+    echo -e "${BLUE}=== Building Distribution Artifacts ===${NC}"
+    build_embedded_app_bundle
+    echo -e "${GREEN}=== Distribution Build Complete ===${NC}"
 }
 
 cmd_down() {
@@ -460,10 +520,11 @@ ${BLUE}MimikaStudio Control Script${NC}
 Usage: mimikactl <command> [options]
 
 ${GREEN}Service Commands:${NC}
-    up [options]                Start all services (Backend + MCP + Flutter)
+    up [options]                Build Flutter app, then start services (Backend + MCP + Flutter)
         --no-flutter            Skip Flutter UI
         --no-mcp                Skip MCP server
-        --flutter-embedded      Use embedded app bundle mode (default)
+        --flutter-embedded      Deprecated alias (ignored; release app is used)
+    dist                        Build embedded app + DMG distribution artifacts
     down                        Stop all services
     restart                     Restart all services
     status                      Show service status
@@ -473,9 +534,9 @@ ${GREEN}Backend Commands:${NC}
     backend stop                Stop backend
 
 ${GREEN}Flutter Commands:${NC}
-    flutter start [--embedded]          Start Flutter UI from embedded app bundle
+    flutter start [--embedded]  Start Flutter UI from Flutter release app bundle
     flutter stop                Stop Flutter UI
-    flutter build               Build embedded app bundle + DMG assets
+    flutter build               Build Flutter macOS release app only
 
 ${GREEN}MCP Server Commands:${NC}
     mcp start                   Start MCP server (for Codex CLI)
@@ -508,6 +569,7 @@ EOF
 
 case "${1:-}" in
     up) shift; cmd_up "$@" ;;
+    dist) cmd_dist ;;
     down) cmd_down ;;
     restart) shift; cmd_restart "$@" ;;
     status) cmd_status ;;

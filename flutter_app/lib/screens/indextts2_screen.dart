@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/generation_metrics_dialog.dart';
 
 class IndexTTS2Screen extends StatefulWidget {
   const IndexTTS2Screen({super.key});
@@ -29,7 +30,6 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
 
   bool _isLoading = false;
   bool _isGenerating = false;
-  bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
   String _outputFolder = 'backend/outputs';
@@ -44,6 +44,10 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
   bool _isPreviewPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  bool _isSidebarCollapsed = false;
+  TabController? _tabController;
+  int _lastTabIndex = -1;
+  int? _selfTabIndex;
 
   @override
   void initState() {
@@ -56,8 +60,40 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) {
+      _tabController?.animation?.removeListener(_onTabChanged);
+      _tabController = null;
+      _lastTabIndex = -1;
+      return;
+    }
+    if (_tabController == controller) {
+      return;
+    }
+    _tabController?.animation?.removeListener(_onTabChanged);
+    _tabController = controller;
+    _selfTabIndex ??= controller.index;
+    _lastTabIndex = controller.index;
+    _tabController?.animation?.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    final controller = _tabController;
+    if (controller == null) return;
+    final index = controller.index;
+    if (index == _lastTabIndex) return;
+    _lastTabIndex = index;
+    if (_selfTabIndex != null && index == _selfTabIndex) {
+      unawaited(_loadData());
+    }
+  }
+
+  @override
   void dispose() {
     _playerSubscription?.cancel();
+    _tabController?.animation?.removeListener(_onTabChanged);
     _audioPlayer.dispose();
     _textController.dispose();
     super.dispose();
@@ -172,103 +208,10 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     }
   }
 
-  Future<void> _uploadVoice() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
-      allowMultiple: false,
-      withData: true,
-    );
-
-    if (result != null && result.files.single.bytes != null) {
-      final fileBytes = result.files.single.bytes!;
-      final fileName = result.files.single.name;
-      final dialogResult = await _showUploadDialog();
-      if (dialogResult != null) {
-        setState(() => _isUploading = true);
-        try {
-          await _api.uploadIndexTTS2Voice(
-            dialogResult['name']!,
-            fileBytes,
-            fileName,
-            dialogResult['transcript'] ?? '',
-          );
-          await _loadData();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Voice "${dialogResult['name']}" uploaded successfully',
-                ),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
-          }
-        } finally {
-          setState(() => _isUploading = false);
-        }
-      }
-    }
-  }
-
-  Future<Map<String, String>?> _showUploadDialog() async {
-    final nameController = TextEditingController();
-    final transcriptController = TextEditingController();
-
-    try {
-      return await showDialog<Map<String, String>>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('IndexTTS-2 Voice Sample'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Voice Name',
-                  hintText: 'e.g., MyVoice',
-                ),
-                autofocus: true,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: transcriptController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Transcript (optional)',
-                  hintText: 'Reference audio transcript (optional)',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (nameController.text.isNotEmpty) {
-                  Navigator.pop(context, {
-                    'name': nameController.text,
-                    'transcript': transcriptController.text,
-                  });
-                }
-              },
-              child: const Text('Upload'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      nameController.dispose();
-      transcriptController.dispose();
-    }
+  void _openVoicePromptsTab() {
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) return;
+    controller.animateTo(7);
   }
 
   Future<void> _deleteVoice(String name) async {
@@ -589,9 +532,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
       await destination.create(recursive: true);
       await destination.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -619,7 +562,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
 
     return Row(
       children: [
-        _buildSidebar(),
+        _buildSidebarShell(),
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -768,6 +711,28 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
     );
   }
 
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand audio library',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
+  }
+
   Widget _buildHeader() {
     return Card(
       color: Colors.deepPurple.shade50,
@@ -792,7 +757,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'High-quality voice cloning from a reference audio sample. Upload a WAV file and enter text to generate speech in the cloned voice.',
+              'High-quality voice cloning from reference samples managed in Voice Prompts.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
             ),
             if (_systemInfo != null) ...[
@@ -858,17 +823,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             ),
             const Spacer(),
             FilledButton.tonalIcon(
-              onPressed: _isUploading ? null : _uploadVoice,
-              icon: _isUploading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload),
-              label: Text(
-                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
-              ),
+              onPressed: _openVoicePromptsTab,
+              icon: const Icon(Icons.mic_none_rounded),
+              label: const Text('Manage in Voice Prompts'),
             ),
           ],
         ),
@@ -888,7 +845,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Upload a WAV clip to clone a voice with IndexTTS-2',
+                    'Add voices in the Voice Prompts tab to clone with IndexTTS-2',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -919,7 +876,7 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
               child: const Padding(
                 padding: EdgeInsets.all(12),
                 child: Text(
-                  'No user voices yet. Upload a sample to add your own voice.',
+                  'No user voices yet. Add one in the Voice Prompts tab.',
                   style: TextStyle(fontSize: 12),
                 ),
               ),
@@ -953,7 +910,9 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
           child: ListTile(
             leading: Radio<String>(
               value: name,
+              // ignore: deprecated_member_use
               groupValue: _selectedVoice,
+              // ignore: deprecated_member_use
               onChanged: (value) => setState(() => _selectedVoice = value),
             ),
             title: Row(
@@ -1076,6 +1035,12 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
                   tooltip: 'Refresh',
                   visualDensity: VisualDensity.compact,
                 ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
             ),
           ),
@@ -1181,10 +1146,16 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
             ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
             trailing: SizedBox(
-              width: 72,
+              width: 104,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.insights_rounded, size: 16),
+                    onPressed: () => _showGenerationMetrics(file),
+                    tooltip: 'Generation Metrics',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     onPressed: () => _downloadAudioFile(file),
@@ -1240,5 +1211,24 @@ class _IndexTTS2ScreenState extends State<IndexTTS2Screen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showGenerationMetrics(Map<String, dynamic> file) async {
+    final filename = file['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
   }
 }

@@ -49,3 +49,26 @@ def get_cloner_user_voices_dir() -> Path:
         data_dir / "user_voices" / "cloners",
         Path("/tmp/mimikastudio/data/user_voices/cloners"),
     )
+
+
+def ensure_valid_cwd(fallback: Optional[Path] = None) -> Path:
+    """Guarantee the process CWD is readable.
+
+    Some packaged app launch paths can disappear while the process is alive.
+    Importing libraries that resolve relative paths (for example, transformers)
+    can then fail with FileNotFoundError from os.getcwd()/Path.resolve().
+    """
+    try:
+        return Path.cwd()
+    except (FileNotFoundError, OSError):
+        pass
+
+    target = (fallback or get_runtime_home()).expanduser()
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        target = Path("/tmp/mimikastudio")
+        target.mkdir(parents=True, exist_ok=True)
+
+    os.chdir(target)
+    return target

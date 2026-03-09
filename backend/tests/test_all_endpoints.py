@@ -488,6 +488,7 @@ class TestQwen3Voices:
 
     def test_upload_voice_with_form_data(self, client):
         """Upload a minimal WAV file as a new voice sample."""
+        client.delete("/api/qwen3/voices/__test_upload_voice__")
         wav = _make_minimal_wav()
         resp = client.post(
             "/api/qwen3/voices",
@@ -499,6 +500,7 @@ class TestQwen3Voices:
 
     def test_upload_voice_does_not_require_engine_load(self, client):
         """Uploading voices should work even if Qwen3 model runtime is unavailable."""
+        client.delete("/api/qwen3/voices/__test_upload_no_engine__")
         wav = _make_minimal_wav()
         with patch("main.get_qwen3_engine", side_effect=ImportError("mlx unavailable")):
             resp = client.post(
@@ -507,9 +509,11 @@ class TestQwen3Voices:
                 files={"file": ("test.wav", wav, "audio/wav")},
             )
         assert resp.status_code == 200
+        client.delete("/api/qwen3/voices/__test_upload_no_engine__")
 
     def test_upload_voice_without_transcript_is_allowed(self, client):
         """Transcript is optional for Qwen3 upload."""
+        client.delete("/api/qwen3/voices/__test_upload_no_transcript__")
         wav = _make_minimal_wav()
         resp = client.post(
             "/api/qwen3/voices",

@@ -7,6 +7,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../services/api_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/generation_metrics_dialog.dart';
 import '../widgets/model_status_banner.dart';
 
 class _ExpressionPreset {
@@ -139,6 +140,7 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
   bool _isAudioPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  bool _isSidebarCollapsed = false;
 
   @override
   void initState() {
@@ -338,7 +340,7 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
 
     return Row(
       children: [
-        _buildSidebar(),
+        _buildSidebarShell(),
         Expanded(
           child: SingleChildScrollView(
             padding: const EdgeInsets.all(16),
@@ -720,6 +722,28 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
     );
   }
 
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand audio library',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
+  }
+
   Widget _buildPregeneratedSamplesSection() {
     return Card(
       child: Padding(
@@ -881,6 +905,12 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
                   tooltip: 'Refresh',
                   visualDensity: VisualDensity.compact,
                 ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
             ),
           ),
@@ -986,10 +1016,16 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
               style: const TextStyle(fontSize: 10),
             ),
             trailing: SizedBox(
-              width: 72,
+              width: 104,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.insights_rounded, size: 16),
+                    onPressed: () => _showGenerationMetrics(file),
+                    tooltip: 'Generation Metrics',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     onPressed: () => _downloadAudioFile(file),
@@ -1045,6 +1081,25 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showGenerationMetrics(Map<String, dynamic> file) async {
+    final filename = file['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
   }
 
   Future<void> _playAudioFile(Map<String, dynamic> file) async {
@@ -1175,9 +1230,9 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
       await destination.create(recursive: true);
       await destination.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

@@ -1,11 +1,43 @@
-# MimikaStudio v2026.03.4 Release Notes
+# MimikaStudio v2026.03.5 Release Notes
 
-**Release Date:** March 2, 2026  
+**Release Date:** March 9, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.03.4
+## What's New In v2026.03.5
+
+- Added unified **Voice Prompt Management** workflows to create user voices by:
+  - Uploading local WAV voice files, and
+  - Importing from **YouTube URL** via `yt-dlp`, then extracting a 20-second speech segment for cloning prompts.
+- Added explicit voice-name uniqueness validation in backend and UI to prevent collisions with existing voice prompts and default voices.
+- Voice prompt lists now refresh immediately after add/edit/delete/import so newly introduced voices are instantly available in clone workflows.
+
+---
+
+## Voice Clone Workflow Changes
+
+- Moved user-voice creation surfaces out of clone screens and centralized them in **Voice Prompts**.
+- Updated clone screens to point users to Voice Prompt management and refresh voice choices when returning to clone tabs.
+- Verified compatibility of custom voice prompts for both **Qwen3 Clone** and **Chatterbox** workflows.
+- Moved **MCP**, **Pro**, and **About** into **Settings** as sub-tabs to reduce top-level navigation clutter.
+
+---
+
+## Reliability and Pre-Production Hardening
+
+- Added YouTube source URL allowlist checks (`youtube.com` / `youtu.be`) for safer import handling.
+- Added serialized voice mutation guards to reduce race-condition collisions on upload/update/delete/import endpoints.
+- Added failure cleanup paths to avoid orphaned audio/transcript/meta files when import/upload writes fail.
+- Added pre-production regression tests for voice prompt import validation and file-cleanup failure paths.
+- Added additional `OsxSkills` pre-production guardrail tests for:
+  - skill metadata/front matter integrity,
+  - required release script presence,
+  - shell script syntax checks.
+
+---
+
+## Previous Release: v2026.03.4
 
 - Added a new copy-text action in **Qwen3 Clone -> Audio Library** so users can copy the source text used for a generated voice clone directly from each item.
 - Added a new copy-text action in the **Jobs** tab so users can copy the input text for completed/active generation jobs.

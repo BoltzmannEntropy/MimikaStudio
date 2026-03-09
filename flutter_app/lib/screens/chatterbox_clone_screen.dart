@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/generation_metrics_dialog.dart';
 import '../widgets/model_status_banner.dart';
 
 class ChatterboxLanguageOption {
@@ -177,7 +178,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
 
   bool _isLoading = false;
   bool _isGenerating = false;
-  bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
   String _outputFolder = 'backend/outputs';
@@ -192,9 +192,13 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   bool _isPreviewPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  bool _isSidebarCollapsed = false;
+  bool _isDefaultVoicesCollapsed = false;
   Map<String, dynamic>? _dictaStatus;
   bool _isDictaDownloading = false;
   Timer? _dictaPollTimer;
+  TabController? _tabController;
+  int _lastTabIndex = -1;
 
   @override
   void initState() {
@@ -211,9 +215,42 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) {
+      _tabController?.animation?.removeListener(_onTabChanged);
+      _tabController = null;
+      _lastTabIndex = -1;
+      return;
+    }
+    if (_tabController == controller) {
+      return;
+    }
+    _tabController?.animation?.removeListener(_onTabChanged);
+    _tabController = controller;
+    _lastTabIndex = controller.index;
+    _tabController?.animation?.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    final controller = _tabController;
+    if (controller == null) return;
+    final index = controller.index;
+    if (index == _lastTabIndex) return;
+    _lastTabIndex = index;
+    if (index == 4) {
+      unawaited(
+        _refreshChatterboxVoices(preferredName: _selectedChatterboxVoice),
+      );
+    }
+  }
+
+  @override
   void dispose() {
     _playerSubscription?.cancel();
     _dictaPollTimer?.cancel();
+    _tabController?.animation?.removeListener(_onTabChanged);
     _audioPlayer.dispose();
     _textController.dispose();
     super.dispose();
@@ -378,7 +415,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   Future<void> _generate() async {
     if (_textController.text.isEmpty) return;
     if (_selectedChatterboxVoice == null) {
-      setState(() => _error = 'Please upload a voice sample first');
+      setState(
+        () => _error = 'Please add a voice first in the Voice Prompts tab',
+      );
       return;
     }
     if (_selectedChatterboxLanguage == 'he' &&
@@ -437,49 +476,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
   }
 
-  Future<void> _uploadVoice() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
-      allowMultiple: false,
-      withData: true,
-    );
-
-    if (result != null && result.files.single.bytes != null) {
-      final fileBytes = result.files.single.bytes!;
-      final fileName = result.files.single.name;
-      final dialogResult = await _showUploadDialog();
-      if (dialogResult != null) {
-        setState(() => _isUploading = true);
-        try {
-          await _api.uploadChatterboxVoice(
-            dialogResult['name']!,
-            fileBytes,
-            fileName,
-            dialogResult['transcript'] ?? '',
-          );
-          await _loadData();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Voice "${dialogResult['name']}" uploaded successfully',
-                ),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
-          }
-        } finally {
-          if (mounted) {
-            setState(() => _isUploading = false);
-          }
-        }
-      }
-    }
+  void _openVoicePromptsTab() {
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) return;
+    controller.animateTo(7);
   }
 
   Future<void> _playPregeneratedSample(Map<String, dynamic> sample) async {
@@ -508,61 +508,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to play sample: $e')));
       }
-    }
-  }
-
-  Future<Map<String, String>?> _showUploadDialog() async {
-    final nameController = TextEditingController();
-    final transcriptController = TextEditingController();
-
-    try {
-      return await showDialog<Map<String, String>>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Chatterbox Voice Sample'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Voice Name',
-                  hintText: 'e.g., Natasha',
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: transcriptController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Transcript (optional)',
-                  hintText: 'Reference audio transcript (optional)',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (nameController.text.isNotEmpty) {
-                  Navigator.pop(context, {
-                    'name': nameController.text,
-                    'transcript': transcriptController.text,
-                  });
-                }
-              },
-              child: const Text('Upload'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      nameController.dispose();
-      transcriptController.dispose();
     }
   }
 
@@ -905,9 +850,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       await destination.create(recursive: true);
       await destination.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -965,7 +910,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSidebar(),
+        _buildSidebarShell(),
         Expanded(
           child: SingleChildScrollView(
             primary: false,
@@ -1096,6 +1041,28 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand audio library',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
   }
 
   Widget _buildPregeneratedSamplesSection() {
@@ -1247,7 +1214,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Multilingual voice cloning from a reference sample.',
+              'Multilingual voice cloning from samples managed in Voice Prompts.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
             ),
             if (_systemInfo != null) ...[
@@ -1490,17 +1457,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             ),
             const Spacer(),
             FilledButton.tonalIcon(
-              onPressed: _isUploading ? null : _uploadVoice,
-              icon: _isUploading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload),
-              label: Text(
-                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
-              ),
+              onPressed: _openVoicePromptsTab,
+              icon: const Icon(Icons.mic_none_rounded),
+              label: const Text('Manage in Voice Prompts'),
             ),
           ],
         ),
@@ -1520,7 +1479,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Upload a 3+ second WAV clip to clone a voice',
+                    'Add voices in the Voice Prompts tab to clone with Chatterbox',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -1530,13 +1489,67 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           )
         else ...[
           if (defaults.isNotEmpty) ...[
-            const Text(
-              'Default Voices:',
-              style: TextStyle(fontWeight: FontWeight.bold),
+            InkWell(
+              onTap: () => setState(
+                () => _isDefaultVoicesCollapsed = !_isDefaultVoicesCollapsed,
+              ),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.library_music, size: 16),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Default Voices',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${defaults.length}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _isDefaultVoicesCollapsed
+                          ? Icons.expand_more_rounded
+                          : Icons.expand_less_rounded,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 8),
-            _buildVoiceList(defaults, showDefaultBadge: true),
-            const SizedBox(height: 12),
+            if (!_isDefaultVoicesCollapsed) ...[
+              _buildVoiceCards(defaults, showDefaultBadge: true),
+              const SizedBox(height: 12),
+            ],
           ],
           if (users.isNotEmpty) ...[
             const Text(
@@ -1551,7 +1564,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
               child: const Padding(
                 padding: EdgeInsets.all(12),
                 child: Text(
-                  'No user voices yet. Upload a sample to add your own voice.',
+                  'No user voices yet. Add one in the Voice Prompts tab.',
                   style: TextStyle(fontSize: 12),
                 ),
               ),
@@ -1559,6 +1572,206 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           ],
         ],
       ],
+    );
+  }
+
+  Widget _buildVoiceCards(
+    List<Map<String, dynamic>> voices, {
+    bool allowEdit = false,
+    bool showDefaultBadge = false,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        const spacing = 8.0;
+        const compactTargetWidth = 180.0;
+        const compactMinWidth = 150.0;
+        final columns = (width / (compactTargetWidth + spacing)).floor().clamp(
+          1,
+          8,
+        );
+        final computedWidth = ((width - ((columns - 1) * spacing)) / columns)
+            .toDouble();
+        final cardWidth = computedWidth.clamp(
+          compactMinWidth,
+          compactTargetWidth,
+        );
+        return Wrap(
+          spacing: spacing,
+          runSpacing: 8,
+          children: voices
+              .map((voice) {
+                return SizedBox(
+                  width: cardWidth,
+                  child: _buildVoiceCard(
+                    voice,
+                    allowEdit: allowEdit,
+                    showDefaultBadge: showDefaultBadge,
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+
+  Widget _buildVoiceCard(
+    Map<String, dynamic> voice, {
+    bool allowEdit = false,
+    bool showDefaultBadge = false,
+  }) {
+    final name = voice['name'] as String;
+    final transcript = voice['transcript'] as String? ?? '';
+    final isSelected = name == _selectedChatterboxVoice;
+    final isPreviewing = _previewVoiceName == name;
+    final accent = Theme.of(context).colorScheme.primary;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedChatterboxVoice = name),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accent.withValues(alpha: 0.12)
+              : Theme.of(context).colorScheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? accent : Theme.of(context).dividerColor,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_off_rounded,
+                  color: isSelected ? accent : muted,
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isSelected ? accent : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (showDefaultBadge)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              transcript.isNotEmpty
+                  ? (transcript.length > 24
+                        ? '${transcript.substring(0, 24)}...'
+                        : transcript)
+                  : 'No transcript',
+              style: TextStyle(
+                fontSize: 10,
+                fontStyle: transcript.isEmpty ? FontStyle.italic : null,
+                color: muted,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                  onPressed: (!isPreviewing || _isPreviewPaused)
+                      ? () => _previewVoice(voice)
+                      : null,
+                  tooltip: 'Play',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.pause_rounded, size: 16),
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreview
+                      : null,
+                  tooltip: 'Pause',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop_rounded, size: 16),
+                  onPressed: isPreviewing ? _stopPreview : null,
+                  tooltip: 'Stop',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                const Spacer(),
+                if (allowEdit) ...[
+                  IconButton(
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    onPressed: () => _editVoice(name, transcript),
+                    tooltip: 'Edit',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                    onPressed: () => _deleteVoice(name),
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1585,7 +1798,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
           child: ListTile(
             leading: Radio<String>(
               value: name,
+              // ignore: deprecated_member_use
               groupValue: _selectedChatterboxVoice,
+              // ignore: deprecated_member_use
               onChanged: (value) =>
                   setState(() => _selectedChatterboxVoice = value),
             ),
@@ -1821,6 +2036,12 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                   tooltip: 'Refresh',
                   visualDensity: VisualDensity.compact,
                 ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
             ),
           ),
@@ -1926,10 +2147,16 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
             ),
             subtitle: Text(meta, style: const TextStyle(fontSize: 10)),
             trailing: SizedBox(
-              width: 72,
+              width: 104,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.insights_rounded, size: 16),
+                    onPressed: () => _showGenerationMetrics(file),
+                    tooltip: 'Generation Metrics',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     onPressed: () => _downloadAudioFile(file),
@@ -1985,5 +2212,24 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showGenerationMetrics(Map<String, dynamic> file) async {
+    final filename = file['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
   }
 }

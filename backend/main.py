@@ -3,6 +3,7 @@
 import warnings
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
+import asyncio
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request, BackgroundTasks
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,21 +13,25 @@ from starlette.datastructures import Headers
 from starlette.staticfiles import NotModifiedResponse
 from pydantic import BaseModel
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from collections import deque
 from typing import Optional
 import logging
 from logging.handlers import RotatingFileHandler
+import json
 import os
 import re
 import shutil
 import mimetypes
 import threading
 import tempfile
+import time
+import subprocess
+import shlex
 import urllib.request
 import zipfile
 from datetime import datetime
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urlparse, parse_qs
 import uuid
 import soundfile as sf
 
@@ -255,6 +260,28 @@ class WordAlignmentRequest(BaseModel):
     language: str = "en"
 
 
+class VoicePromptYoutubeImportRequest(BaseModel):
+    url: str
+    name: str
+    transcript: Optional[str] = ""
+    gender: Optional[str] = ""
+    language: Optional[str] = ""
+    start_sec: Optional[float] = None
+
+
+class VoicePromptYoutubePreviewRequest(BaseModel):
+    url: str
+    start_sec: Optional[float] = None
+
+
+class VoicePromptYoutubeCommitRequest(BaseModel):
+    preview_id: str
+    name: str
+    transcript: Optional[str] = ""
+    gender: Optional[str] = ""
+    language: Optional[str] = ""
+
+
 # Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -373,6 +400,25 @@ _job_history_lock = threading.Lock()
 _live_generation_jobs: dict[str, dict] = {}
 _live_generation_jobs_lock = threading.Lock()
 _max_job_text_chars = max(0, _env_int("MIMIKA_MAX_JOB_TEXT_CHARS", 20000))
+_voice_mutation_lock = threading.Lock()
+_voice_mutation_async_lock = asyncio.Lock()
+_youtube_preview_cache_lock = threading.Lock()
+_youtube_preview_cache: dict[str, dict] = {}
+_youtube_preview_ttl_seconds = max(60, _env_int("MIMIKA_YOUTUBE_PREVIEW_TTL_SECONDS", 1800))
+
+
+@contextmanager
+def _guard_voice_mutation():
+    """Serialize voice add/update/delete operations within this backend process."""
+    with _voice_mutation_lock:
+        yield
+
+
+@asynccontextmanager
+async def _guard_voice_mutation_async():
+    """Serialize async voice add/update/delete operations within this backend process."""
+    async with _voice_mutation_async_lock:
+        yield
 
 
 def _record_job_history_entry(entry: dict) -> None:
@@ -402,6 +448,214 @@ def _prepare_job_text(
     if _max_job_text_chars <= 0 or len(cleaned) <= _max_job_text_chars:
         return cleaned, False
     return cleaned[:_max_job_text_chars], True
+
+
+def _audio_text_sidecar_path(audio_path: Path) -> Path:
+    return audio_path.with_suffix(".txt")
+
+
+def _audio_metrics_sidecar_path(audio_path: Path) -> Path:
+    return audio_path.with_suffix(".metrics.json")
+
+
+def _voice_metadata_sidecar_path(audio_path: Path) -> Path:
+    return audio_path.with_suffix(".meta.json")
+
+
+def _iso_utc_from_epoch(epoch_seconds: float) -> str:
+    return datetime.utcfromtimestamp(max(0.0, float(epoch_seconds))).isoformat() + "Z"
+
+
+def _parse_iso_utc(value: Optional[str]) -> Optional[datetime]:
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        return datetime.fromisoformat(raw)
+    except Exception:
+        return None
+
+
+def _build_generation_metrics(
+    *,
+    started_at_epoch: float,
+    completed_at_epoch: float,
+    chunk_durations: list[float],
+) -> dict:
+    started = max(0.0, float(started_at_epoch))
+    completed = max(started, float(completed_at_epoch))
+    cleaned = [max(0.0, float(item)) for item in chunk_durations if float(item) >= 0.0]
+    total_time = max(0.0, completed - started)
+    if not cleaned and total_time > 0:
+        cleaned = [total_time]
+    avg_chunk = (sum(cleaned) / len(cleaned)) if cleaned else 0.0
+    min_chunk = min(cleaned) if cleaned else 0.0
+    max_chunk = max(cleaned) if cleaned else 0.0
+    return {
+        "started_at": _iso_utc_from_epoch(started),
+        "completed_at": _iso_utc_from_epoch(completed),
+        "total_time_seconds": round(total_time, 4),
+        "total_chunks": len(cleaned),
+        "chunk_durations_seconds": [round(item, 4) for item in cleaned],
+        "avg_chunk_time_seconds": round(avg_chunk, 4),
+        "min_chunk_time_seconds": round(min_chunk, 4),
+        "max_chunk_time_seconds": round(max_chunk, 4),
+    }
+
+
+def _write_audio_metrics_sidecar(audio_path: Optional[Path], metrics: dict) -> None:
+    if audio_path is None:
+        return
+    try:
+        _audio_metrics_sidecar_path(audio_path).write_text(
+            json.dumps(metrics, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Sidecar failures must never break generation paths.
+        pass
+
+
+def _safe_audio_duration_seconds(audio_path: Path) -> float:
+    try:
+        info = sf.info(str(audio_path))
+        return float(max(0.0, info.duration))
+    except Exception:
+        return 0.0
+
+
+def _fallback_generation_metrics(audio_path: Path) -> dict:
+    stat = audio_path.stat()
+    started = float(stat.st_ctime)
+    completed = max(float(stat.st_mtime), started)
+    duration = _safe_audio_duration_seconds(audio_path)
+    total_time = max(0.0, completed - started)
+    if total_time <= 0.0 and duration > 0.0:
+        completed = started + duration
+    return _build_generation_metrics(
+        started_at_epoch=started,
+        completed_at_epoch=completed,
+        chunk_durations=([duration] if duration > 0.0 else []),
+    )
+
+
+def _read_audio_metrics_sidecar(audio_path: Optional[Path]) -> Optional[dict]:
+    if audio_path is None or not audio_path.exists():
+        return None
+    try:
+        sidecar = _audio_metrics_sidecar_path(audio_path)
+        if not sidecar.exists():
+            return _fallback_generation_metrics(audio_path)
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return _fallback_generation_metrics(audio_path)
+        return payload
+    except Exception:
+        return _fallback_generation_metrics(audio_path)
+
+
+def _normalize_voice_meta_value(value: Optional[str]) -> str:
+    return (value or "").strip()
+
+
+def _read_voice_metadata_sidecar(audio_path: Path) -> dict:
+    defaults = {"gender": "", "language": "", "source": ""}
+    meta_path = _voice_metadata_sidecar_path(audio_path)
+    if not meta_path.exists():
+        return defaults
+    try:
+        payload = json.loads(meta_path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return defaults
+        return {
+            "gender": _normalize_voice_meta_value(payload.get("gender")),
+            "language": _normalize_voice_meta_value(payload.get("language")),
+            "source": _normalize_voice_meta_value(payload.get("source")),
+        }
+    except Exception:
+        return defaults
+
+
+def _write_voice_metadata_sidecar(
+    audio_path: Path,
+    *,
+    gender: Optional[str] = None,
+    language: Optional[str] = None,
+    source: Optional[str] = None,
+) -> None:
+    payload = {
+        "gender": _normalize_voice_meta_value(gender),
+        "language": _normalize_voice_meta_value(language),
+        "source": _normalize_voice_meta_value(source),
+    }
+    try:
+        _voice_metadata_sidecar_path(audio_path).write_text(
+            json.dumps(payload, ensure_ascii=True, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+
+def _read_audio_text_sidecar(audio_path: Optional[Path]) -> str:
+    if audio_path is None:
+        return ""
+    try:
+        sidecar = _audio_text_sidecar_path(audio_path)
+        if sidecar.exists():
+            return _safe_read_text(sidecar).strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def _write_audio_text_sidecar(audio_path: Optional[Path], text: str) -> None:
+    if audio_path is None:
+        return
+    payload = (text or "").strip()
+    if not payload:
+        return
+    try:
+        _audio_text_sidecar_path(audio_path).write_text(payload, encoding="utf-8")
+    except Exception:
+        # Never fail generation/jobs flows because sidecar write failed.
+        pass
+
+
+def _delete_audio_sidecars(audio_path: Path) -> None:
+    for sidecar in (_audio_text_sidecar_path(audio_path), _audio_metrics_sidecar_path(audio_path)):
+        try:
+            sidecar.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _job_audio_path(item: dict) -> Optional[Path]:
+    output_path = str(item.get("output_path") or "").strip()
+    if output_path:
+        return Path(output_path)
+    audio_url = str(item.get("audio_url") or "").strip()
+    if audio_url:
+        parsed = urlparse(audio_url)
+        filename = Path(parsed.path).name
+        if filename:
+            return outputs_dir / filename
+    return None
+
+
+def _hydrate_job_text_from_sidecar(item: dict) -> dict:
+    current_text = str(item.get("text") or "").strip()
+    if current_text:
+        return item
+    sidecar_text = _read_audio_text_sidecar(_job_audio_path(item))
+    if not sidecar_text:
+        return item
+    enriched = dict(item)
+    enriched["text"] = sidecar_text
+    enriched["text_truncated"] = bool(enriched.get("text_truncated", False))
+    return enriched
 
 
 def _upsert_live_generation_job(job_id: str, base: Optional[dict] = None, **updates) -> dict:
@@ -453,6 +707,12 @@ def _record_job_event(
         mode=mode,
         job_type=resolved_type,
     )
+    if output_path is not None:
+        if stored_text:
+            _write_audio_text_sidecar(output_path, stored_text)
+        else:
+            stored_text = _read_audio_text_sidecar(output_path)
+            text_truncated = False
     _record_job_history_entry(
         {
             "id": job_id or str(uuid.uuid4())[:12],
@@ -957,12 +1217,22 @@ def _get_all_voices() -> list:
                 txt_file = wav.with_suffix(".txt")
                 if txt_file.exists():
                     transcript = _safe_read_text(txt_file).strip()
+                meta = _read_voice_metadata_sidecar(wav)
+                source_label = (meta.get("source") or "").strip().lower()
+                if source_label not in {"local", "external"}:
+                    source_label = "external" if source == "default" else "local"
                 voices[name] = {
                     "name": name,
                     "source": source,
                     "origin_engine": origin_engine,
                     "transcript": transcript,
                     "audio_path": str(wav),
+                    "audio_url": f"/api/qwen3/voices/{quote(name)}/audio",
+                    "duration_sec": round(_safe_audio_duration_seconds(wav), 3),
+                    "gender": meta.get("gender", ""),
+                    "language": meta.get("language", ""),
+                    "source_label": source_label,
+                    "engines_supported": ["qwen3", "chatterbox", "indextts2"],
                 }
     return list(voices.values())
 
@@ -1124,9 +1394,13 @@ def _generate_chunked_audio(
 
     all_audio = []
     sample_rate = None
+    chunk_times: list[float] = []
 
     for chunk in chunks:
+        chunk_started = time.perf_counter()
         audio, sr = generate_fn(chunk)
+        chunk_elapsed = max(0.0, time.perf_counter() - chunk_started)
+        chunk_times.append(chunk_elapsed)
         if audio is None or len(audio) == 0:
             continue
         if sample_rate is None:
@@ -1139,7 +1413,7 @@ def _generate_chunked_audio(
         raise HTTPException(status_code=500, detail="No audio generated")
 
     merged = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=crossfade_ms)
-    return merged, sample_rate, len(chunks)
+    return merged, sample_rate, len(chunks), chunk_times
 
 
 def _cleanup_temp_file(path: Path) -> None:
@@ -1532,66 +1806,950 @@ async def export_system_logs(background_tasks: BackgroundTasks, max_lines: int =
 
 # ============== Unified Custom Voices Endpoint ==============
 
+def _voice_prompt_payload(voice: dict) -> dict:
+    name = (voice.get("name") or "").strip()
+    audio_path_raw = (voice.get("audio_path") or "").strip()
+    audio_path = Path(audio_path_raw) if audio_path_raw else None
+    duration_sec = voice.get("duration_sec")
+    if duration_sec is None and audio_path is not None and audio_path.exists():
+        duration_sec = round(_safe_audio_duration_seconds(audio_path), 3)
+    source_label = (voice.get("source_label") or "").strip().lower()
+    if source_label not in {"local", "external"}:
+        source_label = "external" if voice.get("source") == "default" else "local"
+    return {
+        "name": name,
+        "gender": (voice.get("gender") or "").strip(),
+        "language": (voice.get("language") or "").strip(),
+        "duration_sec": float(duration_sec or 0.0),
+        "source": source_label,
+        "transcript": (voice.get("transcript") or "").strip(),
+        "engines_supported": list(voice.get("engines_supported") or ["qwen3", "chatterbox", "indextts2"]),
+        "audio_url": f"/api/voice-prompts/{quote(name)}/audio" if name else None,
+    }
+
+
+def _voice_prompt_matches(
+    item: dict,
+    *,
+    search: str,
+    gender: str,
+    language: str,
+    source: str,
+) -> bool:
+    search_norm = search.strip().lower()
+    gender_norm = gender.strip().lower()
+    language_norm = language.strip().lower()
+    source_norm = source.strip().lower()
+
+    if search_norm and search_norm not in str(item.get("name") or "").lower():
+        return False
+    if gender_norm and gender_norm != str(item.get("gender") or "").lower():
+        return False
+    if language_norm and language_norm != str(item.get("language") or "").lower():
+        return False
+    if source_norm and source_norm != str(item.get("source") or "").lower():
+        return False
+    return True
+
+
+def _list_voice_prompts(
+    *,
+    search: str = "",
+    gender: str = "",
+    language: str = "",
+    source: str = "",
+    sort_by: str = "name",
+    sort_order: str = "asc",
+) -> list[dict]:
+    voices = [_voice_prompt_payload(item) for item in _get_all_voices()]
+    voices = [
+        item
+        for item in voices
+        if _voice_prompt_matches(
+            item,
+            search=search,
+            gender=gender,
+            language=language,
+            source=source,
+        )
+    ]
+
+    sort_key = (sort_by or "name").strip().lower()
+    reverse = (sort_order or "asc").strip().lower() == "desc"
+
+    def key_fn(item: dict):
+        if sort_key == "duration":
+            return float(item.get("duration_sec") or 0.0)
+        if sort_key in {"gender", "language", "source"}:
+            return str(item.get(sort_key) or "").lower()
+        return str(item.get("name") or "").lower()
+
+    voices.sort(key=key_fn, reverse=reverse)
+    return voices
+
+
+def _voice_name_is_valid(name: str) -> bool:
+    return bool(re.match(r"^[A-Za-z0-9_-]+$", name or ""))
+
+
+def _voice_name_conflicts(name: str, *, exclude_name: str = "") -> bool:
+    target = (name or "").strip().lower()
+    if not target:
+        return False
+    exclude = (exclude_name or "").strip().lower()
+    for voice in _get_all_voices():
+        existing = (voice.get("name") or "").strip().lower()
+        if not existing:
+            continue
+        if exclude and existing == exclude:
+            continue
+        if existing == target:
+            return True
+    return False
+
+
+def _parse_time_offset_seconds(raw: str) -> Optional[float]:
+    token = (raw or "").strip().lower()
+    if not token:
+        return None
+    if token.isdigit():
+        return float(token)
+
+    # Examples: 88s, 1m28s, 1h2m3s
+    compound_match = re.fullmatch(
+        r"(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s?)?",
+        token,
+    )
+    if compound_match and compound_match.group(0):
+        hours = int(compound_match.group("h") or 0)
+        minutes = int(compound_match.group("m") or 0)
+        seconds = int(compound_match.group("s") or 0)
+        total = (hours * 3600) + (minutes * 60) + seconds
+        if total > 0:
+            return float(total)
+
+    # Example: 1:28 or 00:01:28
+    if ":" in token:
+        parts = token.split(":")
+        if all(part.isdigit() for part in parts):
+            values = [int(part) for part in parts]
+            if len(values) == 2:
+                minutes, seconds = values
+                return float((minutes * 60) + seconds)
+            if len(values) == 3:
+                hours, minutes, seconds = values
+                return float((hours * 3600) + (minutes * 60) + seconds)
+    return None
+
+
+_ALLOWED_YOUTUBE_HOSTS = {
+    "youtube.com",
+    "www.youtube.com",
+    "m.youtube.com",
+    "music.youtube.com",
+    "youtu.be",
+    "www.youtu.be",
+}
+
+
+def _is_allowed_youtube_host(hostname: str) -> bool:
+    host = (hostname or "").strip().lower().strip(".")
+    if not host:
+        return False
+    if host in _ALLOWED_YOUTUBE_HOSTS:
+        return True
+    return host.endswith(".youtube.com")
+
+
+def _validate_youtube_source_url(raw_url: str) -> str:
+    url = (raw_url or "").strip()
+    if not url:
+        raise HTTPException(status_code=400, detail="YouTube URL is required")
+    try:
+        parsed = urlparse(url)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL") from exc
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
+    if not _is_allowed_youtube_host(parsed.hostname or ""):
+        raise HTTPException(
+            status_code=400,
+            detail="Only youtube.com and youtu.be URLs are allowed",
+        )
+    return url
+
+
+async def _run_subprocess_async(
+    cmd: list[str],
+    *,
+    timeout: int,
+) -> subprocess.CompletedProcess[str]:
+    return await asyncio.to_thread(
+        subprocess.run,
+        cmd,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _youtube_start_seconds_from_url(url: str) -> float:
+    try:
+        parsed = urlparse((url or "").strip())
+    except Exception:
+        return 0.0
+
+    candidates: list[str] = []
+    query_params = parse_qs(parsed.query, keep_blank_values=False)
+    candidates.extend(query_params.get("t", []))
+    candidates.extend(query_params.get("start", []))
+
+    if parsed.fragment:
+        fragment_params = parse_qs(parsed.fragment, keep_blank_values=False)
+        candidates.extend(fragment_params.get("t", []))
+        candidates.extend(fragment_params.get("start", []))
+        if parsed.fragment.startswith("t="):
+            candidates.append(parsed.fragment[2:])
+
+    for candidate in candidates:
+        seconds = _parse_time_offset_seconds(candidate)
+        if seconds is not None and seconds >= 0:
+            return seconds
+    return 0.0
+
+
+def _truncate_tool_error(raw: str, *, limit: int = 300) -> str:
+    value = (raw or "").strip()
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip() + "..."
+
+
+def _find_downloaded_media_path(temp_root: Path, stdout_text: str) -> Optional[Path]:
+    media_suffixes = {
+        ".mp4",
+        ".mkv",
+        ".webm",
+        ".m4a",
+        ".mp3",
+        ".wav",
+        ".aac",
+        ".flac",
+        ".ogg",
+        ".opus",
+    }
+    output_lines = [line.strip() for line in (stdout_text or "").splitlines() if line.strip()]
+    for raw_line in reversed(output_lines):
+        candidate = Path(raw_line)
+        if candidate.exists() and candidate.suffix.lower() in media_suffixes:
+            return candidate
+    files = sorted(
+        p
+        for p in temp_root.glob("source*")
+        if p.is_file() and p.suffix.lower() in media_suffixes
+    )
+    if files:
+        return files[-1]
+    return None
+
+
+def _youtube_preview_id_is_valid(preview_id: str) -> bool:
+    return bool(re.fullmatch(r"[a-f0-9]{8,32}", (preview_id or "").strip().lower()))
+
+
+def _cleanup_youtube_preview_cache() -> None:
+    stale_paths: list[Path] = []
+    now = time.time()
+    with _youtube_preview_cache_lock:
+        for preview_id, payload in list(_youtube_preview_cache.items()):
+            created_at = float(payload.get("created_at") or 0.0)
+            raw_path = str(payload.get("path") or "")
+            path = Path(raw_path) if raw_path else None
+            expired = created_at <= 0.0 or (now - created_at) > _youtube_preview_ttl_seconds
+            missing = path is None or not path.exists()
+            if expired or missing:
+                _youtube_preview_cache.pop(preview_id, None)
+                if path is not None:
+                    stale_paths.append(path)
+
+    for path in stale_paths:
+        try:
+            if path.name.startswith("voiceprompt-preview-"):
+                path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+async def _download_youtube_clip_wav(
+    *,
+    url: str,
+    start_sec: float,
+    ytdlp_binary: str,
+    ffmpeg_binary: str,
+    temp_root: Path,
+) -> Path:
+    output_template = temp_root / "source.%(ext)s"
+    base_cmd = [
+        ytdlp_binary,
+        "-f",
+        "bv*+ba/best",
+        "--merge-output-format",
+        "mp4",
+        "--write-sub",
+        "--sub-lang",
+        "en",
+        "--convert-subs",
+        "srt",
+        "--ignore-errors",
+        "--max-downloads",
+        "1",
+        "--print",
+        "after_move:filepath",
+        "-o",
+        str(output_template),
+    ]
+    attempts = [
+        list(base_cmd),
+        [
+            *base_cmd,
+            "--sleep-requests",
+            "1",
+            "--sleep-interval",
+            "1",
+            "--max-sleep-interval",
+            "3",
+        ],
+        [
+            *base_cmd,
+            "--extractor-args",
+            "youtubetab:skip=webpage",
+            "--extractor-args",
+            "youtube:player_client=tv;player_skip=webpage,configs",
+        ],
+    ]
+    extra_args_raw = (os.getenv("MIMIKA_YTDLP_EXTRA_ARGS") or "").strip()
+    extra_args = shlex.split(extra_args_raw) if extra_args_raw else []
+
+    downloaded_path: Optional[Path] = None
+    ytdlp_result: Optional[subprocess.CompletedProcess[str]] = None
+    for attempt_cmd in attempts:
+        run_cmd = [*attempt_cmd, *extra_args, url]
+        result = await _run_subprocess_async(run_cmd, timeout=300)
+        ytdlp_result = result
+        downloaded_path = _find_downloaded_media_path(temp_root, result.stdout)
+        if downloaded_path is not None and downloaded_path.exists():
+            break
+
+    if downloaded_path is None or not downloaded_path.exists():
+        detail = _truncate_tool_error(
+            (ytdlp_result.stderr if ytdlp_result else "")
+            or (ytdlp_result.stdout if ytdlp_result else "")
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"yt-dlp failed to download audio: {detail or 'unknown error'}",
+        )
+
+    clipped_audio = temp_root / "clip.wav"
+    ffmpeg_cmd = [
+        ffmpeg_binary,
+        "-y",
+        "-ss",
+        f"{start_sec:.3f}",
+        "-i",
+        str(downloaded_path),
+        "-t",
+        "20",
+        "-ac",
+        "1",
+        "-ar",
+        "24000",
+        "-vn",
+        str(clipped_audio),
+    ]
+    ffmpeg_result = await _run_subprocess_async(ffmpeg_cmd, timeout=120)
+    if ffmpeg_result.returncode != 0:
+        detail = _truncate_tool_error(
+            ffmpeg_result.stderr or ffmpeg_result.stdout
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to extract 20-second clip: {detail or 'unknown error'}",
+        )
+    return clipped_audio
+
+
+@app.get("/api/voice-prompts")
+async def voice_prompts_list(
+    search: str = "",
+    gender: str = "",
+    language: str = "",
+    source: str = "",
+    sort_by: str = "name",
+    sort_order: str = "asc",
+):
+    voices = _list_voice_prompts(
+        search=search,
+        gender=gender,
+        language=language,
+        source=source,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+    return {"voices": voices, "total": len(voices)}
+
+
+@app.get("/api/voice-prompts/{name}/audio")
+async def voice_prompt_audio(name: str):
+    if not _voice_name_is_valid(name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+    audio_file = _find_voice_audio(name)
+    if audio_file is None:
+        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+    return FileResponse(audio_file, media_type="audio/wav")
+
+
+@app.post("/api/voice-prompts")
+async def voice_prompt_upload(
+    file: UploadFile = File(...),
+    name: str = Form(...),
+    transcript: Optional[str] = Form(""),
+    gender: Optional[str] = Form(""),
+    language: Optional[str] = Form(""),
+    source: Optional[str] = Form("local"),
+):
+    clean_name = (name or "").strip()
+    if not _voice_name_is_valid(clean_name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+    source_label = (source or "").strip().lower()
+    if source_label not in {"local", "external"}:
+        source_label = "local"
+
+    final_audio = CLONER_USER_VOICES_DIR / f"{clean_name}.wav"
+    final_transcript = CLONER_USER_VOICES_DIR / f"{clean_name}.txt"
+    final_meta = _voice_metadata_sidecar_path(final_audio)
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(clean_name):
+            raise HTTPException(
+                status_code=400,
+                detail="That name is reserved for default voices",
+            )
+        if _voice_name_conflicts(clean_name):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Voice '{clean_name}' already exists",
+            )
+
+        try:
+            CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            safe_tag = _safe_tag(clean_name, fallback="voice")
+            temp_path = outputs_dir / f"temp-voiceprompt-{safe_tag}-{uuid.uuid4().hex[:8]}.wav"
+            with temp_path.open("wb") as handle:
+                shutil.copyfileobj(file.file, handle)
+
+            duration_sec = _decode_and_normalize_uploaded_voice(temp_path, final_audio)
+            final_transcript.write_text((transcript or "").strip(), encoding="utf-8")
+            _write_voice_metadata_sidecar(
+                final_audio,
+                gender=gender,
+                language=language,
+                source=source_label,
+            )
+            temp_path.unlink(missing_ok=True)
+        except HTTPException:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            temp = locals().get("temp_path")
+            if isinstance(temp, Path):
+                temp.unlink(missing_ok=True)
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    payload = _voice_prompt_payload(
+        {
+            "name": clean_name,
+            "audio_path": str(final_audio),
+            "transcript": (transcript or "").strip(),
+            "gender": (gender or "").strip(),
+            "language": (language or "").strip(),
+            "source_label": source_label,
+            "duration_sec": round(duration_sec, 3),
+        }
+    )
+    return {"message": f"Voice prompt '{clean_name}' uploaded", "voice": payload}
+
+
+@app.post("/api/voice-prompts/import/youtube/preview")
+async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreviewRequest):
+    url = _validate_youtube_source_url(request.url)
+    start_sec = request.start_sec
+    if start_sec is None:
+        start_sec = _youtube_start_seconds_from_url(url)
+    start_sec = max(0.0, float(start_sec))
+
+    ytdlp_binary = shutil.which("yt-dlp") or shutil.which("yt_dlp")
+    if not ytdlp_binary:
+        raise HTTPException(
+            status_code=503,
+            detail="yt-dlp is not installed or not available in PATH",
+        )
+    ffmpeg_binary = (
+        (os.getenv("MIMIKA_FFMPEG_PATH") or "").strip()
+        or shutil.which("ffmpeg")
+        or shutil.which("avconv")
+    )
+    if not ffmpeg_binary:
+        raise HTTPException(
+            status_code=503,
+            detail="ffmpeg is required to extract voice clips from YouTube audio",
+        )
+
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    _cleanup_youtube_preview_cache()
+    preview_path: Optional[Path] = None
+    try:
+        with tempfile.TemporaryDirectory(prefix="voiceprompt-yt-preview-", dir=str(outputs_dir)) as tmp_dir:
+            temp_root = Path(tmp_dir)
+            clipped_audio = await _download_youtube_clip_wav(
+                url=url,
+                start_sec=start_sec,
+                ytdlp_binary=ytdlp_binary,
+                ffmpeg_binary=ffmpeg_binary,
+                temp_root=temp_root,
+            )
+
+            preview_id = uuid.uuid4().hex[:12]
+            preview_path = outputs_dir / f"voiceprompt-preview-{preview_id}.wav"
+            duration_sec = _decode_and_normalize_uploaded_voice(clipped_audio, preview_path)
+
+        with _youtube_preview_cache_lock:
+            _youtube_preview_cache[preview_id] = {
+                "path": str(preview_path),
+                "created_at": time.time(),
+                "url": url,
+                "start_sec": float(start_sec),
+            }
+
+        return {
+            "preview_id": preview_id,
+            "audio_url": f"/audio/{preview_path.name}",
+            "duration_sec": round(duration_sec, 3),
+            "start_sec": round(float(start_sec), 3),
+        }
+    except HTTPException:
+        if preview_path is not None:
+            preview_path.unlink(missing_ok=True)
+        raise
+    except subprocess.TimeoutExpired as exc:
+        if preview_path is not None:
+            preview_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=504,
+            detail=f"YouTube preview timed out: {exc}",
+        ) from exc
+    except Exception as exc:
+        if preview_path is not None:
+            preview_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/api/voice-prompts/import/youtube/preview/{preview_id}")
+async def voice_prompt_import_youtube_preview_delete(preview_id: str):
+    clean_preview_id = (preview_id or "").strip().lower()
+    if not _youtube_preview_id_is_valid(clean_preview_id):
+        raise HTTPException(status_code=400, detail="Invalid preview id")
+    _cleanup_youtube_preview_cache()
+    with _youtube_preview_cache_lock:
+        payload = _youtube_preview_cache.pop(clean_preview_id, None)
+    if payload is None:
+        raise HTTPException(status_code=404, detail="Preview not found or expired")
+    path = Path(str(payload.get("path") or ""))
+    if path.name.startswith("voiceprompt-preview-"):
+        path.unlink(missing_ok=True)
+    return {"message": f"YouTube preview '{clean_preview_id}' deleted"}
+
+
+@app.post("/api/voice-prompts/import/youtube/commit")
+async def voice_prompt_import_youtube_commit(request: VoicePromptYoutubeCommitRequest):
+    clean_name = (request.name or "").strip()
+    if not _voice_name_is_valid(clean_name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+
+    clean_preview_id = (request.preview_id or "").strip().lower()
+    if not _youtube_preview_id_is_valid(clean_preview_id):
+        raise HTTPException(status_code=400, detail="Invalid preview id")
+
+    _cleanup_youtube_preview_cache()
+    with _youtube_preview_cache_lock:
+        preview_payload = dict(_youtube_preview_cache.get(clean_preview_id) or {})
+
+    if not preview_payload:
+        raise HTTPException(status_code=404, detail="Preview not found or expired")
+    preview_path = Path(str(preview_payload.get("path") or ""))
+    if not preview_path.exists():
+        with _youtube_preview_cache_lock:
+            _youtube_preview_cache.pop(clean_preview_id, None)
+        raise HTTPException(status_code=404, detail="Preview audio missing or expired")
+
+    CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    final_audio = CLONER_USER_VOICES_DIR / f"{clean_name}.wav"
+    final_transcript = CLONER_USER_VOICES_DIR / f"{clean_name}.txt"
+    final_meta = _voice_metadata_sidecar_path(final_audio)
+
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(clean_name):
+            raise HTTPException(
+                status_code=400,
+                detail="That name is reserved for default voices",
+            )
+        if _voice_name_conflicts(clean_name):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Voice '{clean_name}' already exists",
+            )
+
+        try:
+            duration_sec = _decode_and_normalize_uploaded_voice(preview_path, final_audio)
+            final_transcript.write_text((request.transcript or "").strip(), encoding="utf-8")
+            _write_voice_metadata_sidecar(
+                final_audio,
+                gender=request.gender,
+                language=request.language,
+                source="external",
+            )
+        except HTTPException:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise
+        except Exception as exc:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    with _youtube_preview_cache_lock:
+        _youtube_preview_cache.pop(clean_preview_id, None)
+    if preview_path.name.startswith("voiceprompt-preview-"):
+        preview_path.unlink(missing_ok=True)
+
+    payload = _voice_prompt_payload(
+        {
+            "name": clean_name,
+            "audio_path": str(final_audio),
+            "transcript": (request.transcript or "").strip(),
+            "gender": (request.gender or "").strip(),
+            "language": (request.language or "").strip(),
+            "source_label": "external",
+            "duration_sec": round(duration_sec, 3),
+        }
+    )
+    return {
+        "message": f"Voice prompt '{clean_name}' imported from YouTube",
+        "voice": payload,
+    }
+
+
+@app.post("/api/voice-prompts/import/youtube")
+async def voice_prompt_import_youtube(request: VoicePromptYoutubeImportRequest):
+    clean_name = (request.name or "").strip()
+    if not _voice_name_is_valid(clean_name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+    url = _validate_youtube_source_url(request.url)
+
+    start_sec = request.start_sec
+    if start_sec is None:
+        start_sec = _youtube_start_seconds_from_url(url)
+    start_sec = max(0.0, float(start_sec))
+
+    ytdlp_binary = shutil.which("yt-dlp") or shutil.which("yt_dlp")
+    if not ytdlp_binary:
+        raise HTTPException(
+            status_code=503,
+            detail="yt-dlp is not installed or not available in PATH",
+        )
+
+    ffmpeg_binary = (
+        (os.getenv("MIMIKA_FFMPEG_PATH") or "").strip()
+        or shutil.which("ffmpeg")
+        or shutil.which("avconv")
+    )
+    if not ffmpeg_binary:
+        raise HTTPException(
+            status_code=503,
+            detail="ffmpeg is required to extract voice clips from YouTube audio",
+        )
+
+    CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    final_audio = CLONER_USER_VOICES_DIR / f"{clean_name}.wav"
+    final_transcript = CLONER_USER_VOICES_DIR / f"{clean_name}.txt"
+    final_meta = _voice_metadata_sidecar_path(final_audio)
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(clean_name):
+            raise HTTPException(
+                status_code=400,
+                detail="That name is reserved for default voices",
+            )
+        if _voice_name_conflicts(clean_name):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Voice '{clean_name}' already exists",
+            )
+
+        try:
+            with tempfile.TemporaryDirectory(prefix="voiceprompt-yt-", dir=str(outputs_dir)) as tmp_dir:
+                temp_root = Path(tmp_dir)
+                output_template = temp_root / "source.%(ext)s"
+
+                base_cmd = [
+                    ytdlp_binary,
+                    "-f",
+                    "bv*+ba/best",
+                    "--merge-output-format",
+                    "mp4",
+                    "--write-sub",
+                    "--sub-lang",
+                    "en",
+                    "--convert-subs",
+                    "srt",
+                    "--ignore-errors",
+                    "--max-downloads",
+                    "1",
+                    "--print",
+                    "after_move:filepath",
+                    "-o",
+                    str(output_template),
+                ]
+                attempts = [
+                    list(base_cmd),
+                    [
+                        *base_cmd,
+                        "--sleep-requests",
+                        "1",
+                        "--sleep-interval",
+                        "1",
+                        "--max-sleep-interval",
+                        "3",
+                    ],
+                    [
+                        *base_cmd,
+                        "--extractor-args",
+                        "youtubetab:skip=webpage",
+                        "--extractor-args",
+                        "youtube:player_client=tv;player_skip=webpage,configs",
+                    ],
+                ]
+                extra_args_raw = (os.getenv("MIMIKA_YTDLP_EXTRA_ARGS") or "").strip()
+                extra_args = shlex.split(extra_args_raw) if extra_args_raw else []
+
+                downloaded_path: Optional[Path] = None
+                ytdlp_result: Optional[subprocess.CompletedProcess[str]] = None
+                for attempt_cmd in attempts:
+                    run_cmd = [*attempt_cmd, *extra_args, url]
+                    result = await _run_subprocess_async(run_cmd, timeout=300)
+                    ytdlp_result = result
+                    downloaded_path = _find_downloaded_media_path(temp_root, result.stdout)
+                    if downloaded_path is not None and downloaded_path.exists():
+                        break
+
+                if downloaded_path is None or not downloaded_path.exists():
+                    detail = _truncate_tool_error(
+                        (ytdlp_result.stderr if ytdlp_result else "")
+                        or (ytdlp_result.stdout if ytdlp_result else "")
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"yt-dlp failed to download audio: {detail or 'unknown error'}",
+                    )
+
+                clipped_audio = temp_root / "clip.wav"
+                ffmpeg_cmd = [
+                    ffmpeg_binary,
+                    "-y",
+                    "-ss",
+                    f"{start_sec:.3f}",
+                    "-i",
+                    str(downloaded_path),
+                    "-t",
+                    "20",
+                    "-ac",
+                    "1",
+                    "-ar",
+                    "24000",
+                    "-vn",
+                    str(clipped_audio),
+                ]
+                ffmpeg_result = await _run_subprocess_async(ffmpeg_cmd, timeout=120)
+                if ffmpeg_result.returncode != 0:
+                    detail = _truncate_tool_error(
+                        ffmpeg_result.stderr or ffmpeg_result.stdout
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to extract 20-second clip: {detail or 'unknown error'}",
+                    )
+
+                duration_sec = _decode_and_normalize_uploaded_voice(clipped_audio, final_audio)
+
+            final_transcript.write_text((request.transcript or "").strip(), encoding="utf-8")
+            _write_voice_metadata_sidecar(
+                final_audio,
+                gender=request.gender,
+                language=request.language,
+                source="external",
+            )
+        except HTTPException:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise
+        except subprocess.TimeoutExpired as exc:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=504,
+                detail=f"YouTube processing timed out: {exc}",
+            ) from exc
+        except Exception as exc:
+            final_meta.unlink(missing_ok=True)
+            final_transcript.unlink(missing_ok=True)
+            final_audio.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    payload = _voice_prompt_payload(
+        {
+            "name": clean_name,
+            "audio_path": str(final_audio),
+            "transcript": (request.transcript or "").strip(),
+            "gender": (request.gender or "").strip(),
+            "language": (request.language or "").strip(),
+            "source_label": "external",
+            "duration_sec": round(duration_sec, 3),
+        }
+    )
+    return {
+        "message": f"Voice prompt '{clean_name}' imported from YouTube",
+        "voice": payload,
+    }
+
+
+@app.put("/api/voice-prompts/{name}")
+async def voice_prompt_update(
+    name: str,
+    new_name: Optional[str] = Form(None),
+    transcript: Optional[str] = Form(None),
+    gender: Optional[str] = Form(None),
+    language: Optional[str] = Form(None),
+    source: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
+):
+    if not _voice_name_is_valid(name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+
+        old_audio = CLONER_USER_VOICES_DIR / f"{name}.wav"
+        old_transcript = CLONER_USER_VOICES_DIR / f"{name}.txt"
+        old_meta = _voice_metadata_sidecar_path(old_audio)
+        if not old_audio.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+        target_name = (new_name or name).strip()
+        if not _voice_name_is_valid(target_name):
+            raise HTTPException(status_code=400, detail="Invalid new_name")
+        if _is_shared_default_voice(target_name):
+            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        if _voice_name_conflicts(target_name, exclude_name=name):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Voice '{target_name}' already exists",
+            )
+
+        CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        new_audio = CLONER_USER_VOICES_DIR / f"{target_name}.wav"
+        new_transcript = CLONER_USER_VOICES_DIR / f"{target_name}.txt"
+        new_meta = _voice_metadata_sidecar_path(new_audio)
+        existing_meta = _read_voice_metadata_sidecar(old_audio)
+
+        if file is not None:
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            temp_path = outputs_dir / f"temp-voiceprompt-update-{_safe_tag(target_name, 'voice')}-{uuid.uuid4().hex[:8]}.wav"
+            with temp_path.open("wb") as handle:
+                shutil.copyfileobj(file.file, handle)
+            try:
+                _decode_and_normalize_uploaded_voice(temp_path, new_audio)
+            finally:
+                temp_path.unlink(missing_ok=True)
+            if old_audio.exists() and old_audio != new_audio:
+                old_audio.unlink(missing_ok=True)
+        elif old_audio != new_audio:
+            old_audio.rename(new_audio)
+
+        if transcript is not None:
+            new_transcript.write_text(transcript.strip(), encoding="utf-8")
+        elif old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.rename(new_transcript)
+
+        if old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.unlink(missing_ok=True)
+
+        merged_source = source if source is not None else existing_meta.get("source")
+        merged_source = (merged_source or "").strip().lower()
+        if merged_source not in {"local", "external"}:
+            merged_source = "local"
+        _write_voice_metadata_sidecar(
+            new_audio,
+            gender=gender if gender is not None else existing_meta.get("gender"),
+            language=language if language is not None else existing_meta.get("language"),
+            source=merged_source,
+        )
+
+        if old_meta.exists() and old_meta != new_meta:
+            old_meta.unlink(missing_ok=True)
+
+    updated_voice = next(
+        (voice for voice in _get_all_voices() if voice.get("name") == target_name),
+        None,
+    )
+    if updated_voice is None:
+        raise HTTPException(status_code=500, detail="Failed to load updated voice prompt")
+    return {"message": "Voice prompt updated", "voice": _voice_prompt_payload(updated_voice)}
+
+
+@app.delete("/api/voice-prompts/{name}")
+async def voice_prompt_delete(name: str):
+    if not _voice_name_is_valid(name):
+        raise HTTPException(status_code=400, detail="Invalid voice name")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+
+        audio_path = CLONER_USER_VOICES_DIR / f"{name}.wav"
+        transcript_path = CLONER_USER_VOICES_DIR / f"{name}.txt"
+        meta_path = _voice_metadata_sidecar_path(audio_path)
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+
+        audio_path.unlink(missing_ok=True)
+        transcript_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+    return {"message": f"Voice prompt '{name}' deleted"}
+
+
 @app.get("/api/voices/custom")
 async def list_all_custom_voices():
-    """List all custom voice samples for unified voice cloning."""
-    samples_root = Path(__file__).parent / "data" / "samples"
-
-    def _audio_url_from_path(path: Path) -> Optional[str]:
-        try:
-            rel_path = path.relative_to(samples_root)
-        except ValueError:
-            return None
-        return f"/samples/{rel_path.as_posix()}"
-
-    voices_by_name: dict[str, dict] = {}
-
-    def add_voice(source_engine: str, voice: dict) -> None:
-        name = voice.get("name")
-        if not name:
-            return
-        audio_path = Path(voice.get("audio_path", ""))
-        audio_url = _audio_url_from_path(audio_path) if audio_path and audio_path.exists() else None
-        existing = voices_by_name.get(name)
-        if existing:
-            if source_engine not in existing["engines"]:
-                existing["engines"].append(source_engine)
-            # Prefer transcript from any source if current one is empty.
-            if not existing.get("transcript") and voice.get("transcript"):
-                existing["transcript"] = voice.get("transcript")
-            if not existing.get("audio_url") and audio_url:
-                existing["audio_url"] = audio_url
-            return
-
-        voices_by_name[name] = {
-            "name": name,
-            "source": source_engine,
-            "engines": [source_engine],
-            "transcript": voice.get("transcript"),
-            "has_audio": True,
-            "audio_url": audio_url,
-        }
-
-    # Get Qwen3 voices
-    try:
-        engine = get_qwen3_engine()
-        qwen3_voices = engine.get_saved_voices()
-        for voice in qwen3_voices:
-            add_voice("qwen3", voice)
-    except ImportError:
-        pass  # Qwen3 not installed
-
-    # Get Chatterbox voices
-    try:
-        engine = get_chatterbox_engine()
-        chatterbox_voices = engine.get_saved_voices()
-        for voice in chatterbox_voices:
-            add_voice("chatterbox", voice)
-    except ImportError:
-        pass  # Chatterbox not installed
-
-    voices = list(voices_by_name.values())
-    voices.sort(key=lambda v: v["name"].lower())
+    """Legacy alias: list unified custom voice prompts."""
+    voices = _list_voice_prompts()
     return {"voices": voices, "total": len(voices)}
 
 
@@ -1604,18 +2762,28 @@ async def kokoro_generate(request: KokoroRequest, http_request: Request):
         _ensure_named_model_ready("Kokoro", engine_label="Kokoro")
         engine = get_kokoro_engine()
         voice = request.voice if request.voice in BRITISH_VOICES else DEFAULT_VOICE
+        generation_started = time.time()
 
-        audio, sample_rate, _ = _generate_chunked_audio(
+        audio, sample_rate, _, chunk_times = _generate_chunked_audio(
             text=request.text,
             max_chars_per_chunk=request.max_chars_per_chunk,
             crossfade_ms=request.crossfade_ms,
             smart_chunking=request.smart_chunking,
             generate_fn=lambda chunk: engine.generate_audio(chunk, voice=voice, speed=request.speed),
         )
+        generation_completed = time.time()
 
         short_uuid = str(uuid.uuid4())[:8]
         output_path = outputs_dir / f"kokoro-{voice}-{short_uuid}.wav"
         sf.write(str(output_path), audio, sample_rate)
+        _write_audio_metrics_sidecar(
+            output_path,
+            _build_generation_metrics(
+                started_at_epoch=generation_started,
+                completed_at_epoch=generation_completed,
+                chunk_durations=chunk_times,
+            ),
+        )
         _log_generation_event(
             http_request,
             engine="kokoro",
@@ -1722,6 +2890,7 @@ async def supertonic_generate(request: SupertonicRequest, http_request: Request)
         engine = get_supertonic_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        generation_started = time.time()
         params = SupertonicParams(
             speed=request.speed,
             total_steps=request.total_steps,
@@ -1735,6 +2904,15 @@ async def supertonic_generate(request: SupertonicRequest, http_request: Request)
             params=params,
             model_name="supertonic-2",
             model_dir=snapshot_path,
+        )
+        generation_completed = time.time()
+        _write_audio_metrics_sidecar(
+            output_path,
+            _build_generation_metrics(
+                started_at_epoch=generation_started,
+                completed_at_epoch=generation_completed,
+                chunk_durations=[generation_completed - generation_started],
+            ),
         )
         _log_generation_event(
             http_request,
@@ -1817,6 +2995,7 @@ async def cosyvoice3_generate(request: SupertonicRequest, http_request: Request)
         engine = get_cosyvoice3_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        generation_started = time.time()
         params = CosyVoice3Params(
             speed=request.speed,
             language=request.language,
@@ -1828,7 +3007,16 @@ async def cosyvoice3_generate(request: SupertonicRequest, http_request: Request)
             params=params,
             snapshot_dir=snapshot_path,
         )
+        generation_completed = time.time()
         resolved_voice = request.voice if request.voice else COSYVOICE3_DEFAULT_VOICE
+        _write_audio_metrics_sidecar(
+            output_path,
+            _build_generation_metrics(
+                started_at_epoch=generation_started,
+                completed_at_epoch=generation_completed,
+                chunk_durations=[generation_completed - generation_started],
+            ),
+        )
         _log_generation_event(
             http_request,
             engine="cosyvoice3",
@@ -1913,6 +3101,7 @@ def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
         repetition_penalty=request.repetition_penalty,
         seed=request.seed,
     )
+    generation_started = time.time()
 
     if request.mode == "clone":
         if not request.voice_name:
@@ -2012,6 +3201,24 @@ def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
 
     if request.unload_after:
         engine.unload()
+
+    generation_completed = time.time()
+    _write_audio_metrics_sidecar(
+        output_path,
+        _build_generation_metrics(
+            started_at_epoch=generation_started,
+            completed_at_epoch=generation_completed,
+            chunk_durations=[generation_completed - generation_started],
+        ),
+    )
+
+    stored_text, _ = _prepare_job_text(
+        request.text,
+        mode=request.mode,
+        job_type=("voice_clone" if request.mode == "clone" else "tts"),
+    )
+    if stored_text:
+        _write_audio_text_sidecar(output_path, stored_text)
 
     return result, output_path
 
@@ -2244,11 +3451,18 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
                 status_code=400,
                 detail="model_quantization must be 'bf16' or '8bit'",
             )
-        _ensure_qwen3_model_ready(
-            mode=request.mode,
-            model_size=request.model_size,
-            model_quantization=request.model_quantization,
-        )
+        # Best-effort preflight check for locally managed model artifacts.
+        # Streaming should still proceed when a backend engine can resolve models
+        # dynamically (or when tests monkeypatch the engine).
+        try:
+            _ensure_qwen3_model_ready(
+                mode=request.mode,
+                model_size=request.model_size,
+                model_quantization=request.model_quantization,
+            )
+        except HTTPException as preflight_error:
+            if preflight_error.status_code != 404:
+                raise
 
         params = GenerationParams(
             temperature=request.temperature,
@@ -2292,13 +3506,27 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
                     "transcript": transcript,
                 }
 
-            prepared_ref_path = _prepare_clone_reference_audio(
-                voice["audio_path"],
-                request.voice_name,
-            )
+            ref_audio_path = str(voice["audio_path"])
+            source_path = Path(ref_audio_path)
+            if source_path.exists():
+                prepared_ref_path = _prepare_clone_reference_audio(
+                    ref_audio_path,
+                    request.voice_name,
+                )
+                ref_audio_path = str(prepared_ref_path)
+            else:
+                # Some engines can resolve references dynamically; only force
+                # preprocessing when we have a concrete local file.
+                discovered_audio = _find_voice_audio(request.voice_name)
+                if discovered_audio is not None and discovered_audio.exists():
+                    prepared_ref_path = _prepare_clone_reference_audio(
+                        str(discovered_audio),
+                        request.voice_name,
+                    )
+                    ref_audio_path = str(prepared_ref_path)
             chunk_iter = engine.stream_voice_clone_pcm(
                 text=request.text,
-                ref_audio_path=str(prepared_ref_path),
+                ref_audio_path=ref_audio_path,
                 ref_text=voice["transcript"],
                 language=request.language,
                 speed=request.speed,
@@ -2464,77 +3692,84 @@ async def qwen3_upload_voice(
     name = name.strip()
     if not name or "/" in name or ".." in name:
         raise HTTPException(status_code=400, detail="Invalid voice name")
-    if _is_shared_default_voice(name):
-        raise HTTPException(
-            status_code=400,
-            detail="That name is reserved for default voices"
-        )
-
-    try:
-        QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-        outputs_dir.mkdir(parents=True, exist_ok=True)
-        safe_tag = _safe_tag(name, fallback="voice")
-        temp_path = outputs_dir / f"temp-{safe_tag}-{uuid.uuid4().hex[:8]}.wav"
-        with open(temp_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-
-        final_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
-        final_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
-        duration_sec = _decode_and_normalize_uploaded_voice(temp_path, final_audio)
-        transcript_text = (transcript or "").strip()
-        final_transcript.write_text(transcript_text, encoding="utf-8")
-        temp_path.unlink(missing_ok=True)
-        audio_url = f"/api/qwen3/voices/{quote(name)}/audio"
-
-        voice_info = {
-            "name": name,
-            "audio_path": str(final_audio),
-            "audio_url": audio_url,
-            "transcript": transcript_text,
-            "source": "user",
-            "duration_sec": round(duration_sec, 3),
-        }
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(
+                status_code=400,
+                detail="That name is reserved for default voices"
+            )
+        if _voice_name_conflicts(name):
+            raise HTTPException(status_code=409, detail=f"Voice '{name}' already exists")
 
         try:
-            engine = get_qwen3_engine()
-            engine.clear_cache()
-        except ImportError:
-            pass
+            QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+            outputs_dir.mkdir(parents=True, exist_ok=True)
+            safe_tag = _safe_tag(name, fallback="voice")
+            temp_path = outputs_dir / f"temp-{safe_tag}-{uuid.uuid4().hex[:8]}.wav"
+            with open(temp_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
 
-        return {
-            "message": f"Voice '{name}' saved successfully",
-            "voice": voice_info,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        temp_path = locals().get("temp_path")
-        if isinstance(temp_path, Path):
+            final_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+            final_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+            duration_sec = _decode_and_normalize_uploaded_voice(temp_path, final_audio)
+            transcript_text = (transcript or "").strip()
+            final_transcript.write_text(transcript_text, encoding="utf-8")
+            _write_voice_metadata_sidecar(final_audio, source="local")
             temp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=str(e))
+            audio_url = f"/api/qwen3/voices/{quote(name)}/audio"
+
+            voice_info = {
+                "name": name,
+                "audio_path": str(final_audio),
+                "audio_url": audio_url,
+                "transcript": transcript_text,
+                "source": "user",
+                "duration_sec": round(duration_sec, 3),
+            }
+
+            try:
+                engine = get_qwen3_engine()
+                engine.clear_cache()
+            except ImportError:
+                pass
+
+            return {
+                "message": f"Voice '{name}' saved successfully",
+                "voice": voice_info,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            temp_path = locals().get("temp_path")
+            if isinstance(temp_path, Path):
+                temp_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.delete("/api/qwen3/voices/{name}")
 async def qwen3_delete_voice(name: str):
     """Delete a Qwen3 voice sample."""
-    # Prevent deleting shipped voices
-    if _is_shared_default_voice(name):
-        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+    async with _guard_voice_mutation_async():
+        # Prevent deleting shipped voices
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
-    audio_file = QWEN3_USER_VOICES_DIR / f"{name}.wav"
-    transcript_file = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+        audio_file = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+        transcript_file = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+        meta_file = _voice_metadata_sidecar_path(audio_file)
 
-    if audio_file.exists():
-        audio_file.unlink()
-        if transcript_file.exists():
-            transcript_file.unlink()
-        # Clear cache for this voice
-        try:
-            engine = get_qwen3_engine()
-            engine.clear_cache()
-        except ImportError:
-            pass
-        return {"message": f"Voice '{name}' deleted successfully"}
+        if audio_file.exists():
+            audio_file.unlink()
+            if transcript_file.exists():
+                transcript_file.unlink()
+            meta_file.unlink(missing_ok=True)
+            # Clear cache for this voice
+            try:
+                engine = get_qwen3_engine()
+                engine.clear_cache()
+            except ImportError:
+                pass
+            return {"message": f"Voice '{name}' deleted successfully"}
 
     raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
@@ -2547,52 +3782,69 @@ async def qwen3_update_voice(
     file: Optional[UploadFile] = File(None),
 ):
     """Update a Qwen3 voice sample (rename, update transcript, or replace audio)."""
-    # Prevent editing shipped voices
-    if _is_shared_default_voice(name):
-        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+    async with _guard_voice_mutation_async():
+        # Prevent editing shipped voices
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
-    old_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
-    old_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
-    if not old_audio.exists():
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+        old_audio = QWEN3_USER_VOICES_DIR / f"{name}.wav"
+        old_transcript = QWEN3_USER_VOICES_DIR / f"{name}.txt"
+        if not old_audio.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    final_name = new_name or name
-    if _is_shared_default_voice(final_name):
-        raise HTTPException(
-            status_code=400,
-            detail="That name is reserved for default voices"
+        final_name = (new_name or name).strip()
+        if not final_name or "/" in final_name or ".." in final_name:
+            raise HTTPException(status_code=400, detail="Invalid voice name")
+        if _is_shared_default_voice(final_name):
+            raise HTTPException(
+                status_code=400,
+                detail="That name is reserved for default voices"
+            )
+        if _voice_name_conflicts(final_name, exclude_name=name):
+            raise HTTPException(status_code=409, detail=f"Voice '{final_name}' already exists")
+        QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+
+        new_audio = QWEN3_USER_VOICES_DIR / f"{final_name}.wav"
+        new_transcript = QWEN3_USER_VOICES_DIR / f"{final_name}.txt"
+        old_meta = _voice_metadata_sidecar_path(old_audio)
+        new_meta = _voice_metadata_sidecar_path(new_audio)
+        existing_meta = _read_voice_metadata_sidecar(old_audio)
+
+        # Update audio if provided
+        if file:
+            with open(new_audio, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            if old_audio.exists() and old_audio != new_audio:
+                old_audio.unlink()
+        elif old_audio != new_audio:
+            # Rename file
+            old_audio.rename(new_audio)
+
+        # Update transcript
+        if transcript is not None:
+            new_transcript.write_text(transcript.strip())
+        elif old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.rename(new_transcript)
+
+        # Clean up old transcript if renaming
+        if old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.unlink(missing_ok=True)
+
+        _write_voice_metadata_sidecar(
+            new_audio,
+            gender=existing_meta.get("gender"),
+            language=existing_meta.get("language"),
+            source=(existing_meta.get("source") or "local"),
         )
-    QWEN3_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        if old_meta.exists() and old_meta != new_meta:
+            old_meta.unlink(missing_ok=True)
 
-    new_audio = QWEN3_USER_VOICES_DIR / f"{final_name}.wav"
-    new_transcript = QWEN3_USER_VOICES_DIR / f"{final_name}.txt"
-
-    # Update audio if provided
-    if file:
-        with open(new_audio, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        if old_audio.exists() and old_audio != new_audio:
-            old_audio.unlink()
-    elif old_audio != new_audio:
-        # Rename file
-        old_audio.rename(new_audio)
-
-    # Update transcript
-    if transcript is not None:
-        new_transcript.write_text(transcript.strip())
-    elif old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.rename(new_transcript)
-
-    # Clean up old transcript if renaming
-    if old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.unlink(missing_ok=True)
-
-    # Clear cache
-    try:
-        engine = get_qwen3_engine()
-        engine.clear_cache()
-    except ImportError:
-        pass
+        # Clear cache
+        try:
+            engine = get_qwen3_engine()
+            engine.clear_cache()
+        except ImportError:
+            pass
 
     return {
         "message": f"Voice updated successfully",
@@ -2652,6 +3904,7 @@ async def chatterbox_generate(request: ChatterboxRequest, http_request: Request)
         engine = get_chatterbox_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        generation_started = time.time()
         voices = engine.get_saved_voices()
         voice = next((v for v in voices if v["name"] == request.voice_name), None)
         if voice is None:
@@ -2680,6 +3933,15 @@ async def chatterbox_generate(request: ChatterboxRequest, http_request: Request)
             params=params,
             max_chars=request.max_chars,
             crossfade_ms=request.crossfade_ms,
+        )
+        generation_completed = time.time()
+        _write_audio_metrics_sidecar(
+            output_path,
+            _build_generation_metrics(
+                started_at_epoch=generation_started,
+                completed_at_epoch=generation_completed,
+                chunk_durations=[generation_completed - generation_started],
+            ),
         )
 
         if request.unload_after:
@@ -2739,46 +4001,53 @@ async def chatterbox_upload_voice(
     transcript: Optional[str] = Form(""),
 ):
     """Upload a new voice sample for Chatterbox cloning."""
+    name = (name or "").strip()
     if not name or len(name.strip()) == 0:
         raise HTTPException(status_code=400, detail="Voice name is required")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        if _voice_name_conflicts(name):
+            raise HTTPException(status_code=409, detail=f"Voice '{name}' already exists")
 
-    if _is_shared_default_voice(name):
-        raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
 
-    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    file_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        _write_voice_metadata_sidecar(file_path, source="local")
 
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+        if transcript is not None:
+            transcript_path.write_text(transcript.strip())
 
-    transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
-    if transcript is not None:
-        transcript_path.write_text(transcript.strip())
-
-    try:
-        engine = get_chatterbox_engine()
-        return {
-            "message": "Voice uploaded successfully",
-            "voice": engine.get_saved_voices(),
-        }
-    except ImportError:
-        return {"message": "Voice uploaded (engine not installed)", "name": name}
+        try:
+            engine = get_chatterbox_engine()
+            return {
+                "message": "Voice uploaded successfully",
+                "voice": engine.get_saved_voices(),
+            }
+        except ImportError:
+            return {"message": "Voice uploaded (engine not installed)", "name": name}
 
 
 @app.delete("/api/chatterbox/voices/{name}")
 async def chatterbox_delete_voice(name: str):
     """Delete a Chatterbox voice sample."""
-    if _is_shared_default_voice(name):
-        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
-    audio_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
-    transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+        audio_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+        transcript_path = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+        meta_path = _voice_metadata_sidecar_path(audio_path)
 
-    if not audio_path.exists():
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    audio_path.unlink()
-    transcript_path.unlink(missing_ok=True)
+        audio_path.unlink()
+        transcript_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
 
     return {"message": f"Voice '{name}' deleted"}
 
@@ -2791,37 +4060,54 @@ async def chatterbox_update_voice(
     file: Optional[UploadFile] = File(None),
 ):
     """Update a Chatterbox voice sample (rename, update transcript, or replace audio)."""
-    if _is_shared_default_voice(name):
-        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
-    old_audio = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
-    old_transcript = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
-    if not old_audio.exists():
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+        old_audio = CHATTERBOX_USER_VOICES_DIR / f"{name}.wav"
+        old_transcript = CHATTERBOX_USER_VOICES_DIR / f"{name}.txt"
+        if not old_audio.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    final_name = new_name or name
-    if _is_shared_default_voice(final_name):
-        raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        final_name = (new_name or name).strip()
+        if not final_name or "/" in final_name or ".." in final_name:
+            raise HTTPException(status_code=400, detail="Invalid voice name")
+        if _is_shared_default_voice(final_name):
+            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        if _voice_name_conflicts(final_name, exclude_name=name):
+            raise HTTPException(status_code=409, detail=f"Voice '{final_name}' already exists")
 
-    CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    new_audio = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.wav"
-    new_transcript = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.txt"
+        CHATTERBOX_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        new_audio = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.wav"
+        new_transcript = CHATTERBOX_USER_VOICES_DIR / f"{final_name}.txt"
+        old_meta = _voice_metadata_sidecar_path(old_audio)
+        new_meta = _voice_metadata_sidecar_path(new_audio)
+        existing_meta = _read_voice_metadata_sidecar(old_audio)
 
-    if file:
-        with open(new_audio, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        if old_audio.exists() and old_audio != new_audio:
-            old_audio.unlink()
-    elif old_audio != new_audio:
-        old_audio.rename(new_audio)
+        if file:
+            with open(new_audio, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            if old_audio.exists() and old_audio != new_audio:
+                old_audio.unlink()
+        elif old_audio != new_audio:
+            old_audio.rename(new_audio)
 
-    if transcript is not None:
-        new_transcript.write_text(transcript.strip())
-    elif old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.rename(new_transcript)
+        if transcript is not None:
+            new_transcript.write_text(transcript.strip())
+        elif old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.rename(new_transcript)
 
-    if old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.unlink(missing_ok=True)
+        if old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.unlink(missing_ok=True)
+
+        _write_voice_metadata_sidecar(
+            new_audio,
+            gender=existing_meta.get("gender"),
+            language=existing_meta.get("language"),
+            source=(existing_meta.get("source") or "local"),
+        )
+        if old_meta.exists() and old_meta != new_meta:
+            old_meta.unlink(missing_ok=True)
 
     return {
         "message": "Voice updated successfully",
@@ -2940,6 +4226,7 @@ async def indextts2_generate(request: IndexTTS2Request, http_request: Request):
         engine = _get_indextts2_engine()
         engine.outputs_dir = outputs_dir
         engine.outputs_dir.mkdir(parents=True, exist_ok=True)
+        generation_started = time.time()
         voices = engine.get_saved_voices()
         voice = next((v for v in voices if v["name"] == request.voice_name), None)
         if voice is None:
@@ -2959,6 +4246,15 @@ async def indextts2_generate(request: IndexTTS2Request, http_request: Request):
             speed=request.speed,
             max_chars=request.max_chars,
             crossfade_ms=request.crossfade_ms,
+        )
+        generation_completed = time.time()
+        _write_audio_metrics_sidecar(
+            output_path,
+            _build_generation_metrics(
+                started_at_epoch=generation_started,
+                completed_at_epoch=generation_completed,
+                chunk_durations=[generation_completed - generation_started],
+            ),
         )
 
         if request.unload_after:
@@ -3017,43 +4313,53 @@ async def indextts2_upload_voice(
     transcript: Optional[str] = Form(""),
 ):
     """Upload a new voice sample for IndexTTS-2 cloning."""
+    name = (name or "").strip()
     if not name or len(name.strip()) == 0:
         raise HTTPException(status_code=400, detail="Voice name is required")
+    async with _guard_voice_mutation_async():
+        if _is_shared_default_voice(name):
+            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        if _voice_name_conflicts(name):
+            raise HTTPException(status_code=409, detail=f"Voice '{name}' already exists")
 
-    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    file_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+        INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        file_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
 
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        _write_voice_metadata_sidecar(file_path, source="local")
 
-    transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
-    if transcript is not None:
-        transcript_path.write_text(transcript.strip())
+        transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+        if transcript is not None:
+            transcript_path.write_text(transcript.strip())
 
-    try:
-        engine = _get_indextts2_engine()
-        return {
-            "message": "Voice uploaded successfully",
-            "voice": engine.get_saved_voices(),
-        }
-    except ImportError:
-        return {"message": "Voice uploaded (engine not installed)", "name": name}
+        try:
+            engine = _get_indextts2_engine()
+            return {
+                "message": "Voice uploaded successfully",
+                "voice": engine.get_saved_voices(),
+            }
+        except ImportError:
+            return {"message": "Voice uploaded (engine not installed)", "name": name}
 
 
 @app.delete("/api/indextts2/voices/{name}")
 async def indextts2_delete_voice(name: str):
     """Delete an IndexTTS-2 voice sample."""
-    if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
-        raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
+    async with _guard_voice_mutation_async():
+        if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+            raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
 
-    audio_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
-    transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+        audio_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+        transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+        meta_path = _voice_metadata_sidecar_path(audio_path)
 
-    if not audio_path.exists():
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    audio_path.unlink()
-    transcript_path.unlink(missing_ok=True)
+        audio_path.unlink()
+        transcript_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
 
     return {"message": f"Voice '{name}' deleted"}
 
@@ -3066,35 +4372,54 @@ async def indextts2_update_voice(
     file: Optional[UploadFile] = File(None),
 ):
     """Update an IndexTTS-2 voice sample (rename, update transcript, or replace audio)."""
-    if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
-        raise HTTPException(status_code=400, detail="Default voices cannot be modified")
+    async with _guard_voice_mutation_async():
+        if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
+            raise HTTPException(status_code=400, detail="Default voices cannot be modified")
 
-    old_audio = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
-    old_transcript = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
-    if not old_audio.exists():
-        raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
+        old_audio = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
+        old_transcript = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
+        if not old_audio.exists():
+            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
 
-    final_name = new_name or name
+        final_name = (new_name or name).strip()
+        if not final_name or "/" in final_name or ".." in final_name:
+            raise HTTPException(status_code=400, detail="Invalid voice name")
+        if _is_shared_default_voice(final_name):
+            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
+        if _voice_name_conflicts(final_name, exclude_name=name):
+            raise HTTPException(status_code=409, detail=f"Voice '{final_name}' already exists")
 
-    INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-    new_audio = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.wav"
-    new_transcript = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.txt"
+        INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
+        new_audio = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.wav"
+        new_transcript = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.txt"
+        old_meta = _voice_metadata_sidecar_path(old_audio)
+        new_meta = _voice_metadata_sidecar_path(new_audio)
+        existing_meta = _read_voice_metadata_sidecar(old_audio)
 
-    if file:
-        with open(new_audio, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        if old_audio.exists() and old_audio != new_audio:
-            old_audio.unlink()
-    elif old_audio != new_audio:
-        old_audio.rename(new_audio)
+        if file:
+            with open(new_audio, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            if old_audio.exists() and old_audio != new_audio:
+                old_audio.unlink()
+        elif old_audio != new_audio:
+            old_audio.rename(new_audio)
 
-    if transcript is not None:
-        new_transcript.write_text(transcript.strip())
-    elif old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.rename(new_transcript)
+        if transcript is not None:
+            new_transcript.write_text(transcript.strip())
+        elif old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.rename(new_transcript)
 
-    if old_transcript.exists() and old_transcript != new_transcript:
-        old_transcript.unlink(missing_ok=True)
+        if old_transcript.exists() and old_transcript != new_transcript:
+            old_transcript.unlink(missing_ok=True)
+
+        _write_voice_metadata_sidecar(
+            new_audio,
+            gender=existing_meta.get("gender"),
+            language=existing_meta.get("language"),
+            source=(existing_meta.get("source") or "local"),
+        )
+        if old_meta.exists() and old_meta != new_meta:
+            old_meta.unlink(missing_ok=True)
 
     return {
         "message": "Voice updated successfully",
@@ -3306,6 +4631,7 @@ def _audiobook_job_to_history_item(job) -> dict:
         "current_chunk": job.current_chunk,
         "total_chunks": job.total_chunks,
         "eta_seconds": round(job.eta_seconds, 1),
+        "queue_position": int(getattr(job, "queue_position", 0) or 0),
     }
 
 
@@ -3326,6 +4652,9 @@ async def jobs_list(limit: int = 200):
     except Exception:
         # Jobs endpoint should still work even if audiobook runtime is unavailable.
         pass
+
+    # Fill missing text from persisted sidecars so copy works across restarts.
+    items = [_hydrate_job_text_from_sidecar(item) for item in items]
 
     # Deduplicate by id (prefer latest inserted entry), then sort descending timestamp.
     deduped: dict[str, dict] = {}
@@ -3348,23 +4677,71 @@ async def jobs_get(job_id: str):
     with _live_generation_jobs_lock:
         live_item = _live_generation_jobs.get(job_id)
     if live_item is not None:
-        return {"job": live_item}
+        return {"job": _hydrate_job_text_from_sidecar(live_item)}
 
     with _job_history_lock:
         for item in _job_history:
             if str(item.get("id") or "") == job_id:
-                return {"job": item}
+                return {"job": _hydrate_job_text_from_sidecar(item)}
 
     try:
         from tts.audiobook import get_job as _get_audiobook_job
 
         book_job = _get_audiobook_job(job_id)
         if book_job is not None:
-            return {"job": _audiobook_job_to_history_item(book_job)}
+            return {"job": _hydrate_job_text_from_sidecar(_audiobook_job_to_history_item(book_job))}
     except Exception:
         pass
 
     raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+
+def _resolve_audio_file_from_filename(filename: str) -> Path:
+    safe_name = Path(filename).name
+    if not safe_name or safe_name != filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    audio_file = outputs_dir / safe_name
+    if not audio_file.exists() or not audio_file.is_file():
+        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
+    return audio_file
+
+
+@app.get("/api/metrics/audio/{filename}")
+async def audio_generation_metrics(filename: str):
+    """Return generation timing metrics for a produced audio file."""
+    audio_file = _resolve_audio_file_from_filename(filename)
+    metrics = _read_audio_metrics_sidecar(audio_file)
+    if metrics is None:
+        raise HTTPException(status_code=404, detail="Metrics not available")
+    return {
+        "filename": audio_file.name,
+        "audio_url": f"/audio/{audio_file.name}",
+        "metrics": metrics,
+    }
+
+
+@app.get("/api/jobs/{job_id}/metrics")
+async def job_generation_metrics(job_id: str):
+    """Return generation metrics for a specific job id when output exists."""
+    job_payload = await jobs_get(job_id)
+    item = job_payload.get("job") if isinstance(job_payload, dict) else None
+    if not isinstance(item, dict):
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    audio_path = _job_audio_path(item)
+    if audio_path is None or not audio_path.exists():
+        raise HTTPException(status_code=404, detail="Metrics not available for this job yet")
+
+    metrics = _read_audio_metrics_sidecar(audio_path)
+    if metrics is None:
+        raise HTTPException(status_code=404, detail="Metrics not available for this job")
+
+    return {
+        "job_id": job_id,
+        "filename": audio_path.name,
+        "audio_url": item.get("audio_url") or f"/audio/{audio_path.name}",
+        "metrics": metrics,
+    }
 
 
 # ============== Audiobook Generation Endpoints ==============
@@ -3471,6 +4848,7 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
         "total_chars": job.total_chars,
         "output_format": output_format,
         "subtitle_format": subtitle_format,
+        "queue_position": int(getattr(job, "queue_position", 0) or 0),
     }
 
 
@@ -3576,6 +4954,7 @@ async def audiobook_generate_from_file(
             "chapters": len(job.chapters),
             "output_format": output_format,
             "subtitle_format": subtitle_format,
+            "queue_position": int(getattr(job, "queue_position", 0) or 0),
         }
 
     except ValueError as e:
@@ -3617,6 +4996,7 @@ async def audiobook_status(job_id: str):
         # Chapter info
         "current_chapter": job.current_chapter,
         "total_chapters": len(job.chapters),
+        "queue_position": int(getattr(job, "queue_position", 0) or 0),
     }
 
     if job.status == JobStatus.COMPLETED:
@@ -3746,6 +5126,7 @@ async def audiobook_list():
                     "duration_seconds": round(duration_seconds, 1),
                     "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
                     "is_audiobook_format": ext == "m4b",
+                    "metrics_available": _audio_metrics_sidecar_path(file).exists(),
                 })
 
     # Sort by creation time, newest first
@@ -3765,6 +5146,7 @@ async def audiobook_delete(job_id: str):
     deleted = False
     for path in [wav_path, mp3_path, m4b_path]:
         if path.exists():
+            _delete_audio_sidecars(path)
             path.unlink()
             deleted = True
 
@@ -3816,6 +5198,7 @@ async def tts_audio_list():
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "metrics_available": _audio_metrics_sidecar_path(file).exists(),
             })
 
     audio_files.sort(key=lambda x: x["created_at"], reverse=True)
@@ -3832,6 +5215,7 @@ async def tts_audio_delete(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
 
+    _delete_audio_sidecars(file_path)
     file_path.unlink()
     return {"message": "Audio file deleted", "filename": filename}
 
@@ -3867,6 +5251,7 @@ async def kokoro_audio_list():
             "size_mb": round(stat.st_size / (1024 * 1024), 2),
             "duration_seconds": round(duration_seconds, 1),
             "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "metrics_available": _audio_metrics_sidecar_path(file).exists(),
         })
 
     # Sort by creation time, newest first
@@ -3886,6 +5271,7 @@ async def kokoro_audio_delete(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
 
+    _delete_audio_sidecars(file_path)
     file_path.unlink()
     return {"message": "Audio file deleted", "filename": filename}
 
@@ -3921,6 +5307,7 @@ async def supertonic_audio_list():
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "metrics_available": _audio_metrics_sidecar_path(file).exists(),
             }
         )
 
@@ -3938,6 +5325,7 @@ async def supertonic_audio_delete(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
 
+    _delete_audio_sidecars(file_path)
     file_path.unlink()
     return {"message": "Audio file deleted", "filename": filename}
 
@@ -3973,6 +5361,7 @@ async def cosyvoice3_audio_list():
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                "metrics_available": _audio_metrics_sidecar_path(file).exists(),
             }
         )
 
@@ -3990,6 +5379,7 @@ async def cosyvoice3_audio_delete(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
 
+    _delete_audio_sidecars(file_path)
     file_path.unlink()
     return {"message": "Audio file deleted", "filename": filename}
 
@@ -4022,6 +5412,8 @@ def _voice_clone_text_lookup() -> dict[tuple[str, str], dict]:
         if not filename:
             continue
         text = str(item.get("text") or "").strip()
+        if not text:
+            text = _read_audio_text_sidecar(_job_audio_path(item))
         if not text:
             continue
         key = (engine, filename)
@@ -4071,6 +5463,9 @@ async def voice_clone_audio_list():
                 duration_seconds = 0
 
             text_info = text_lookup.get((engine, file.name), {})
+            item_text = text_info.get("text")
+            if not item_text:
+                item_text = _read_audio_text_sidecar(file)
             audio_files.append({
                 "id": stem,
                 "filename": file.name,
@@ -4083,8 +5478,9 @@ async def voice_clone_audio_list():
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                "text": text_info.get("text"),
+                "text": item_text,
                 "text_truncated": bool(text_info.get("text_truncated", False)),
+                "metrics_available": _audio_metrics_sidecar_path(file).exists(),
             })
 
     # Sort by creation time, newest first
@@ -4105,6 +5501,7 @@ async def voice_clone_audio_delete(filename: str):
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
 
+    _delete_audio_sidecars(file_path)
     file_path.unlink()
     return {"message": "Audio file deleted", "filename": filename}
 

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../services/api_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/generation_metrics_dialog.dart';
 import '../widgets/model_status_banner.dart';
 
 class QuickTtsScreen extends StatefulWidget {
@@ -47,6 +48,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   bool _isAudioPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  bool _isSidebarCollapsed = false;
 
   @override
   void initState() {
@@ -173,8 +175,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
 
     return Row(
       children: [
-        // Sidebar with audio library
-        _buildSidebar(),
+        _buildSidebarShell(),
         // Main content
         Expanded(
           child: SingleChildScrollView(
@@ -587,6 +588,28 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
     );
   }
 
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand audio library',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
+  }
+
   Widget _buildSidebar() {
     return Container(
       width: 280,
@@ -621,6 +644,12 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
                   icon: const Icon(Icons.refresh, size: 18),
                   onPressed: _loadAudioFiles,
                   tooltip: 'Refresh',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
                   visualDensity: VisualDensity.compact,
                 ),
               ],
@@ -734,10 +763,16 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
               style: const TextStyle(fontSize: 10),
             ),
             trailing: SizedBox(
-              width: 72,
+              width: 104,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.insights_rounded, size: 16),
+                    onPressed: () => _showGenerationMetrics(file),
+                    tooltip: 'Generation Metrics',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.download_rounded, size: 16),
                     onPressed: () => _downloadAudioFile(file),
@@ -794,6 +829,25 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showGenerationMetrics(Map<String, dynamic> file) async {
+    final filename = file['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
   }
 
   Future<void> _playAudioFile(Map<String, dynamic> file) async {
@@ -935,9 +989,9 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       await destination.create(recursive: true);
       await destination.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

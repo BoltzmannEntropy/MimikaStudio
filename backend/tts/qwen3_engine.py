@@ -16,7 +16,11 @@ import numpy as np
 import soundfile as sf
 from scipy import signal
 
-from .runtime_paths import get_cloner_user_voices_dir, get_runtime_output_dir
+from .runtime_paths import (
+    ensure_valid_cwd,
+    get_cloner_user_voices_dir,
+    get_runtime_output_dir,
+)
 
 # Keep MLX import lazy to avoid backend startup aborts on machines without a
 # usable Metal device context.
@@ -164,6 +168,10 @@ class Qwen3TTSEngine:
         """Load the Qwen3-TTS model."""
         if self.model is not None:
             return self.model
+
+        # Packaged macOS app launch directories can become invalid. Ensure CWD
+        # exists before importing transformers through mlx_audio/mlx_lm.
+        ensure_valid_cwd(Path(__file__).resolve().parent.parent)
 
         try:
             from mlx_audio.tts import load as load_tts_model

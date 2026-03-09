@@ -8,12 +8,16 @@ from typing import Optional
 
 import numpy as np
 import soundfile as sf
-import torch
 from scipy import signal
 
 from .audio_utils import merge_audio_chunks
 from .runtime_paths import get_cloner_user_voices_dir, get_runtime_output_dir
 from .text_chunking import smart_chunk_text
+
+try:
+    import torch as _torch
+except Exception:  # pragma: no cover - torch is optional in MLX-only builds
+    _torch = None
 
 
 class IndexTTS2Engine:
@@ -37,7 +41,7 @@ class IndexTTS2Engine:
         self.user_voices_dir = get_cloner_user_voices_dir()
 
     def _get_device(self) -> str:
-        if torch.cuda.is_available():
+        if _torch is not None and _torch.cuda.is_available():
             return "cuda"
         return "cpu"
 
@@ -70,8 +74,8 @@ class IndexTTS2Engine:
     def unload(self) -> None:
         """Free memory by unloading the model."""
         self.model = None
-        if self.device and self.device.startswith("cuda"):
-            torch.cuda.empty_cache()
+        if self.device and self.device.startswith("cuda") and _torch is not None:
+            _torch.cuda.empty_cache()
 
     def _adjust_speed(self, audio: np.ndarray, speed: float) -> np.ndarray:
         if speed == 1.0:

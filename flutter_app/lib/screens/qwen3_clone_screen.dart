@@ -7,6 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
 import '../services/settings_service.dart';
 import '../widgets/audio_player_widget.dart';
+import '../widgets/generation_metrics_dialog.dart';
 import '../widgets/model_status_banner.dart';
 
 // Speaker data with colors for CustomVoice mode
@@ -91,10 +92,8 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
   // Qwen3 state
   List<Map<String, dynamic>> _qwen3Voices = [];
-  List<String> _qwen3Languages = [];
   List<Map<String, dynamic>> _pregeneratedSamples = [];
   String? _selectedQwen3Voice;
-  Map<String, dynamic>? _qwen3Info;
   Map<String, dynamic>? _systemInfo;
   String _selectedLanguage = 'Auto';
   double _speed = 1.0;
@@ -110,7 +109,6 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
   bool _isLoading = false;
   bool _isGenerating = false;
-  bool _isUploading = false;
   String? _audioUrl;
   String? _audioFilename;
   String _outputFolder = 'backend/outputs';
@@ -125,6 +123,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   bool _isPreviewPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
+  bool _isSidebarCollapsed = false;
+  bool _isDefaultVoicesCollapsed = false;
+  TabController? _tabController;
+  int _lastTabIndex = -1;
 
   @override
   void initState() {
@@ -136,8 +138,39 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) {
+      _tabController?.animation?.removeListener(_onTabChanged);
+      _tabController = null;
+      _lastTabIndex = -1;
+      return;
+    }
+    if (_tabController == controller) {
+      return;
+    }
+    _tabController?.animation?.removeListener(_onTabChanged);
+    _tabController = controller;
+    _lastTabIndex = controller.index;
+    _tabController?.animation?.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    final controller = _tabController;
+    if (controller == null) return;
+    final index = controller.index;
+    if (index == _lastTabIndex) return;
+    _lastTabIndex = index;
+    if (index == 3) {
+      unawaited(_refreshQwen3Voices(preferredVoiceName: _selectedQwen3Voice));
+    }
+  }
+
+  @override
   void dispose() {
     _playerSubscription?.cancel();
+    _tabController?.animation?.removeListener(_onTabChanged);
     _audioPlayer.dispose();
     _textController.dispose();
     _instructController.dispose();
@@ -185,15 +218,6 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         debugPrint('System info not available: $e');
       }
 
-      List<String> qwen3Languages = [];
-      Map<String, dynamic>? qwen3Info;
-      try {
-        qwen3Languages = await _api.getQwen3Languages();
-        qwen3Info = await _api.getQwen3Info();
-      } catch (e) {
-        debugPrint('Qwen3 not available: $e');
-      }
-
       List<Map<String, dynamic>> qwen3Voices = [];
       try {
         final qwen3VoiceResponse = await _api.getQwen3Voices();
@@ -217,9 +241,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       setState(() {
         _systemInfo = systemInfo;
         _qwen3Voices = qwen3Voices;
-        _qwen3Languages = qwen3Languages;
         _pregeneratedSamples = pregeneratedSamples;
-        _qwen3Info = qwen3Info;
         if (qwen3Voices.isNotEmpty) {
           final keepCurrent =
               existingSelectedVoice != null &&
@@ -252,7 +274,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
       if (_qwen3Mode == 'clone') {
         if (_selectedQwen3Voice == null) {
-          throw Exception('Please upload a voice sample first');
+          throw Exception('Please add a voice first in the Voice Prompts tab');
         }
         audioUrl = await _api.generateQwen3(
           text: _textController.text,
@@ -320,86 +342,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     }
   }
 
-  Future<void> _uploadVoice() async {
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: const ['wav', 'wave'],
-      allowMultiple: false,
-      withData: true,
-    );
-
-    if (result != null && result.files.single.bytes != null) {
-      final fileBytes = result.files.single.bytes!;
-      final fileName = result.files.single.name;
-      final dialogResult = await _showUploadDialog();
-      if (dialogResult != null) {
-        setState(() => _isUploading = true);
-        try {
-          final uploadResponse = await _api.uploadQwen3Voice(
-            dialogResult['name']!,
-            fileBytes,
-            fileName,
-            dialogResult['transcript'] ?? '',
-          );
-          final uploadedName = dialogResult['name']!;
-          final uploadedVoice = uploadResponse['voice'];
-          if (uploadedVoice is Map<String, dynamic>) {
-            if (mounted) {
-              setState(() {
-                _qwen3Voices = _upsertVoice(_qwen3Voices, uploadedVoice);
-                _selectedQwen3Voice =
-                    uploadedVoice['name']?.toString() ?? uploadedName;
-              });
-            }
-          }
-          await _refreshQwen3Voices(preferredVoiceName: uploadedName);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Voice "${dialogResult['name']}" uploaded successfully',
-                ),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Failed to upload: $e')));
-          }
-        } finally {
-          if (mounted) {
-            setState(() => _isUploading = false);
-          }
-        }
-      }
-    }
-  }
-
-  List<Map<String, dynamic>> _upsertVoice(
-    List<Map<String, dynamic>> current,
-    Map<String, dynamic> incoming,
-  ) {
-    final name = incoming['name']?.toString().trim() ?? '';
-    if (name.isEmpty) {
-      return current;
-    }
-    final normalized = Map<String, dynamic>.from(incoming);
-    normalized['name'] = name;
-    normalized['source'] = normalized['source'] ?? 'user';
-    normalized['transcript'] = normalized['transcript'] ?? '';
-    normalized['audio_url'] =
-        normalized['audio_url'] ??
-        '/api/qwen3/voices/${Uri.encodeComponent(name)}/audio';
-
-    final next = List<Map<String, dynamic>>.from(current)
-      ..removeWhere((voice) {
-        final candidate = voice['name']?.toString().toLowerCase() ?? '';
-        return candidate == name.toLowerCase();
-      })
-      ..add(normalized);
-    return next;
+  void _openVoicePromptsTab() {
+    final controller = DefaultTabController.maybeOf(context);
+    if (controller == null) return;
+    controller.animateTo(7);
   }
 
   Future<void> _refreshQwen3Voices({String? preferredVoiceName}) async {
@@ -456,63 +402,6 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to play sample: $e')));
       }
-    }
-  }
-
-  Future<Map<String, String>?> _showUploadDialog() async {
-    final nameController = TextEditingController();
-    final transcriptController = TextEditingController();
-
-    try {
-      return await showDialog<Map<String, String>>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Qwen3 Voice Sample'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Voice Name',
-                  hintText: 'e.g., "MyVoice"',
-                ),
-                autofocus: true,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: transcriptController,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: 'Transcript (Optional)',
-                  hintText: 'What is said in the audio file...',
-                  helperText: 'Optional, but improves clone quality',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (nameController.text.trim().isNotEmpty) {
-                  Navigator.pop(context, {
-                    'name': nameController.text.trim(),
-                    'transcript': transcriptController.text.trim(),
-                  });
-                }
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      nameController.dispose();
-      transcriptController.dispose();
     }
   }
 
@@ -940,7 +829,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSidebar(),
+        _buildSidebarShell(),
         Expanded(
           child: SingleChildScrollView(
             primary: false,
@@ -1068,6 +957,28 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         ),
       ],
     );
+  }
+
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand audio library',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
   }
 
   Widget _buildPregeneratedSamplesSection(List<Map<String, dynamic>> samples) {
@@ -1253,7 +1164,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
             const SizedBox(height: 8),
             Text(
               _qwen3Mode == 'clone'
-                  ? 'Clone a voice from your audio samples (3+ seconds).'
+                  ? 'Clone a voice from samples managed in the Voice Prompts tab.'
                   : 'Use preset premium speakers - no audio required.',
               style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
             ),
@@ -1411,7 +1322,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           child: ListView.separated(
             scrollDirection: Axis.horizontal,
             itemCount: kSpeakers.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 8),
+            separatorBuilder: (context, index) => const SizedBox(width: 8),
             itemBuilder: (context, index) {
               final speaker = kSpeakers[index];
               final isSelected = _selectedSpeaker == speaker.name;
@@ -1537,17 +1448,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
             ),
             const Spacer(),
             FilledButton.tonalIcon(
-              onPressed: _isUploading ? null : _uploadVoice,
-              icon: _isUploading
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload),
-              label: Text(
-                _isUploading ? 'Uploading...' : 'Upload Voice (WAV only)',
-              ),
+              onPressed: _openVoicePromptsTab,
+              icon: const Icon(Icons.mic_none_rounded),
+              label: const Text('Manage in Voice Prompts'),
             ),
           ],
         ),
@@ -1567,7 +1470,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                   ),
                   SizedBox(height: 4),
                   Text(
-                    'Upload a 3+ second WAV clip to clone a voice',
+                    'Add voices in the Voice Prompts tab to clone with Qwen3',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
@@ -1577,13 +1480,67 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           )
         else ...[
           if (defaults.isNotEmpty) ...[
-            const Text(
-              'Default Voices:',
-              style: TextStyle(fontWeight: FontWeight.bold),
+            InkWell(
+              onTap: () => setState(
+                () => _isDefaultVoicesCollapsed = !_isDefaultVoicesCollapsed,
+              ),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Theme.of(
+                      context,
+                    ).dividerColor.withValues(alpha: 0.45),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.library_music, size: 16),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'Default Voices',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${defaults.length}',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey.shade700,
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    Icon(
+                      _isDefaultVoicesCollapsed
+                          ? Icons.expand_more_rounded
+                          : Icons.expand_less_rounded,
+                      size: 18,
+                    ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 8),
-            _buildVoiceList(defaults, showDefaultBadge: true),
-            const SizedBox(height: 12),
+            if (!_isDefaultVoicesCollapsed) ...[
+              _buildVoiceCards(defaults, showDefaultBadge: true),
+              const SizedBox(height: 12),
+            ],
           ],
           if (users.isNotEmpty) ...[
             const Text(
@@ -1598,7 +1555,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
               child: const Padding(
                 padding: EdgeInsets.all(12),
                 child: Text(
-                  'No user voices yet. Upload a sample to add your own voice.',
+                  'No user voices yet. Add one in the Voice Prompts tab.',
                   style: TextStyle(fontSize: 12),
                 ),
               ),
@@ -1606,6 +1563,206 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           ],
         ],
       ],
+    );
+  }
+
+  Widget _buildVoiceCards(
+    List<Map<String, dynamic>> voices, {
+    bool allowEdit = false,
+    bool showDefaultBadge = false,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        const spacing = 8.0;
+        const compactTargetWidth = 180.0;
+        const compactMinWidth = 150.0;
+        final columns = (width / (compactTargetWidth + spacing)).floor().clamp(
+          1,
+          8,
+        );
+        final computedWidth = ((width - ((columns - 1) * spacing)) / columns)
+            .toDouble();
+        final cardWidth = computedWidth.clamp(
+          compactMinWidth,
+          compactTargetWidth,
+        );
+        return Wrap(
+          spacing: spacing,
+          runSpacing: 8,
+          children: voices
+              .map((voice) {
+                return SizedBox(
+                  width: cardWidth,
+                  child: _buildVoiceCard(
+                    voice,
+                    allowEdit: allowEdit,
+                    showDefaultBadge: showDefaultBadge,
+                  ),
+                );
+              })
+              .toList(growable: false),
+        );
+      },
+    );
+  }
+
+  Widget _buildVoiceCard(
+    Map<String, dynamic> voice, {
+    bool allowEdit = false,
+    bool showDefaultBadge = false,
+  }) {
+    final name = voice['name'] as String;
+    final transcript = voice['transcript'] as String? ?? '';
+    final isSelected = name == _selectedQwen3Voice;
+    final isPreviewing = _previewVoiceName == name;
+    final accent = Theme.of(context).colorScheme.primary;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+
+    return GestureDetector(
+      onTap: () => setState(() => _selectedQwen3Voice = name),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? accent.withValues(alpha: 0.12)
+              : Theme.of(context).colorScheme.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? accent : Theme.of(context).dividerColor,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  isSelected
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_off_rounded,
+                  color: isSelected ? accent : muted,
+                  size: 16,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    name,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isSelected ? accent : null,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (showDefaultBadge)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade200,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'DEFAULT',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              transcript.isNotEmpty
+                  ? (transcript.length > 24
+                        ? '${transcript.substring(0, 24)}...'
+                        : transcript)
+                  : 'No transcript',
+              style: TextStyle(
+                fontSize: 10,
+                fontStyle: transcript.isEmpty ? FontStyle.italic : null,
+                color: muted,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                  onPressed: (!isPreviewing || _isPreviewPaused)
+                      ? () => _previewVoice(voice)
+                      : null,
+                  tooltip: 'Play',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.pause_rounded, size: 16),
+                  onPressed: (isPreviewing && !_isPreviewPaused)
+                      ? _pausePreview
+                      : null,
+                  tooltip: 'Pause',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.stop_rounded, size: 16),
+                  onPressed: isPreviewing ? _stopPreview : null,
+                  tooltip: 'Stop',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 24,
+                    minHeight: 24,
+                  ),
+                  padding: EdgeInsets.zero,
+                ),
+                const Spacer(),
+                if (allowEdit) ...[
+                  IconButton(
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    onPressed: () => _editVoice(name, transcript),
+                    tooltip: 'Edit',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline_rounded, size: 16),
+                    onPressed: () => _deleteVoice(name),
+                    tooltip: 'Delete',
+                    visualDensity: VisualDensity.compact,
+                    constraints: const BoxConstraints(
+                      minWidth: 24,
+                      minHeight: 24,
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1632,7 +1789,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
           child: ListTile(
             leading: Radio<String>(
               value: name,
+              // ignore: deprecated_member_use
               groupValue: _selectedQwen3Voice,
+              // ignore: deprecated_member_use
               onChanged: (value) => setState(() => _selectedQwen3Voice = value),
             ),
             title: Row(
@@ -1880,6 +2039,12 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                   tooltip: 'Refresh',
                   visualDensity: VisualDensity.compact,
                 ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
+                  visualDensity: VisualDensity.compact,
+                ),
               ],
             ),
           ),
@@ -2006,10 +2171,16 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
               ],
             ),
             trailing: SizedBox(
-              width: 108,
+              width: 140,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
+                  IconButton(
+                    icon: const Icon(Icons.insights_rounded, size: 16),
+                    onPressed: () => _showGenerationMetrics(file),
+                    tooltip: 'Generation Metrics',
+                    visualDensity: VisualDensity.compact,
+                  ),
                   IconButton(
                     icon: const Icon(Icons.content_copy_rounded, size: 16),
                     onPressed: hasText ? () => _copyAudioFileText(file) : null,
@@ -2071,5 +2242,24 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _showGenerationMetrics(Map<String, dynamic> file) async {
+    final filename = file['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
   }
 }

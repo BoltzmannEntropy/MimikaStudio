@@ -11,6 +11,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import '../services/api_service.dart';
+import '../widgets/generation_metrics_dialog.dart';
 
 class _SearchQueryCandidate {
   const _SearchQueryCandidate({
@@ -82,6 +83,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   int _currentPage = 1;
   int _totalPages = 0;
   String? _selectedText;
+  int? _readStartOffset;
+  String? _readStartAnchorText;
+  int _readStartPageHint = 1;
   List<String> _sentences = [];
   int _currentSentenceIndex = -1;
   String _currentReadingText = '';
@@ -98,8 +102,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
       []; // Searchable words with punctuation context
   List<int> _globalWordAnchorIndices = [];
   List<_PdfWordAnchor> _pdfWordAnchors = [];
+  Map<String, List<int>> _pdfAnchorIndicesByWord = <String, List<int>>{};
   final List<Annotation> _activeReadAloudAnnotations = <Annotation>[];
   int _activeReadAloudAnchorIndex = -1;
+  int _lastResolvedPdfAnchorIndex = -1;
   int _pdfWordAnchorBuildId = 0;
   List<int> _sentenceWordStart = [];
   final Map<String, int> _queryOccurrenceProgress = <String, int>{};
@@ -113,10 +119,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   // Audiobook generation state
   bool _isGeneratingAudiobook = false;
-  String? _audiobookJobId;
-  int _audiobookCurrentChunk = 0;
-  int _audiobookTotalChunks = 0;
-  Timer? _audiobookPollTimer;
   String _audiobookOutputFormat = 'mp3'; // 'wav', 'mp3', or 'm4b'
   String _audiobookSubtitleFormat = 'none'; // 'none', 'srt', or 'vtt'
   bool _audiobookSmartChunking = true;
@@ -306,6 +308,19 @@ Paste your long text here.
   bool _isLoadingPdfBytes = false;
   String? _selectedPdfNetworkUrl; // Full URL for SfPdfViewer.network on web
   bool _freeTextEditMode = false;
+  bool _isSidebarCollapsed = false;
+  bool _isDocumentsDeckCollapsed = false;
+  bool _isAudiobooksDeckCollapsed = false;
+
+  void _resetPdfWordHighlightState() {
+    _pdfWordAnchors = [];
+    _pdfAnchorIndicesByWord = <String, List<int>>{};
+    _globalWordAnchorIndices = [];
+    _activeReadAloudAnnotations.clear();
+    _activeReadAloudAnchorIndex = -1;
+    _lastResolvedPdfAnchorIndex = -1;
+    _pdfWordAnchorBuildId++;
+  }
 
   /// Select a PDF by fetching its bytes from the backend (for web).
   Future<void> _selectPdfFromUrl(String urlPath, String name) async {
@@ -320,11 +335,7 @@ Paste your long text here.
       _isLoadingPdfBytes = true;
       _textFileContent = null;
       _pdfExtractedText = null;
-      _pdfWordAnchors = [];
-      _globalWordAnchorIndices = [];
-      _activeReadAloudAnnotations.clear();
-      _activeReadAloudAnchorIndex = -1;
-      _pdfWordAnchorBuildId++;
+      _resetPdfWordHighlightState();
     });
 
     // Also fetch bytes for text extraction (read-aloud)
@@ -361,7 +372,6 @@ Paste your long text here.
   @override
   void dispose() {
     _positionSubscription?.cancel();
-    _audiobookPollTimer?.cancel();
     _audiobookPlayerSubscription?.cancel();
     _audioPlayer.dispose();
     _freeTextController.dispose();
@@ -396,87 +406,136 @@ Paste your long text here.
   }
 
   Future<void> _openManualTextInput() async {
+    final titleController = TextEditingController(
+      text: 'manual_read_aloud_${DateTime.now().millisecondsSinceEpoch}',
+    );
     final controller = TextEditingController(text: _defaultManualMarkdown);
     String extension = 'md';
 
     final result = await showDialog<Map<String, String>>(
       context: context,
+      barrierDismissible: false,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setStateDialog) {
-            return AlertDialog(
-              title: const Text('Paste Text for Read Aloud'),
-              content: SizedBox(
-                width: 640,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('Format:'),
-                        const SizedBox(width: 12),
-                        SegmentedButton<String>(
-                          segments: const [
-                            ButtonSegment<String>(
-                              value: 'md',
-                              label: Text('Markdown'),
-                            ),
-                            ButtonSegment<String>(
-                              value: 'txt',
-                              label: Text('Text'),
-                            ),
-                          ],
-                          selected: {extension},
-                          showSelectedIcon: false,
-                          onSelectionChanged: (selection) {
-                            setStateDialog(() => extension = selection.first);
-                          },
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 20,
+              ),
+              child: SizedBox(
+                width: 980,
+                height: 720,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Create Large Read-Aloud Draft',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: controller,
-                      maxLines: 14,
-                      minLines: 10,
-                      decoration: const InputDecoration(
-                        hintText: 'Paste or type text here...',
-                        border: OutlineInputBorder(),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: titleController,
+                              decoration: const InputDecoration(
+                                labelText: 'Document Name',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          SegmentedButton<String>(
+                            segments: const [
+                              ButtonSegment<String>(
+                                value: 'md',
+                                label: Text('Markdown'),
+                              ),
+                              ButtonSegment<String>(
+                                value: 'txt',
+                                label: Text('Text'),
+                              ),
+                            ],
+                            selected: {extension},
+                            showSelectedIcon: false,
+                            onSelectionChanged: (selection) {
+                              setStateDialog(() => extension = selection.first);
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Paste or type a long document below. This draft stays in your local session library.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: TextField(
+                          controller: controller,
+                          expands: true,
+                          maxLines: null,
+                          minLines: null,
+                          textAlignVertical: TextAlignVertical.top,
+                          decoration: const InputDecoration(
+                            hintText: 'Write markdown or text...',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton(
+                            onPressed: () {
+                              final text = controller.text.trim();
+                              if (text.isEmpty) return;
+                              final name = titleController.text.trim().isEmpty
+                                  ? 'manual_read_aloud'
+                                  : titleController.text.trim();
+                              Navigator.of(context).pop({
+                                'text': text,
+                                'extension': extension,
+                                'name': name,
+                              });
+                            },
+                            child: const Text('Create'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () {
-                    final text = controller.text.trim();
-                    if (text.isEmpty) return;
-                    Navigator.of(
-                      context,
-                    ).pop({'text': text, 'extension': extension});
-                  },
-                  child: const Text('Add'),
-                ),
-              ],
             );
           },
         );
       },
     );
+    titleController.dispose();
+    controller.dispose();
 
     if (result == null) return;
     final text = (result['text'] ?? '').trim();
     final ext = (result['extension'] ?? 'md').toLowerCase();
+    final baseName = (result['name'] ?? 'manual_read_aloud').trim();
     if (text.isEmpty) return;
 
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final name = 'manual_read_aloud_$timestamp.$ext';
+    final safeBase = baseName.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '_');
+    final name = '${safeBase}_$timestamp.$ext';
     final path = 'manual://$name';
     final bytes = Uint8List.fromList(utf8.encode(text));
 
@@ -500,12 +559,9 @@ Paste your long text here.
       _totalPages = 0;
       _textFileContent = null;
       _selectedText = null;
+      _clearReadStartMarker();
       _pdfExtractedText = null;
-      _pdfWordAnchors = [];
-      _globalWordAnchorIndices = [];
-      _activeReadAloudAnnotations.clear();
-      _activeReadAloudAnchorIndex = -1;
-      _pdfWordAnchorBuildId++;
+      _resetPdfWordHighlightState();
       _stopReading();
       _freeTextEditMode = false;
     });
@@ -552,6 +608,7 @@ Paste your long text here.
       setState(() {
         _textFileContent = content;
         _selectedText = readAloudText; // Auto-select all text for reading
+        _clearReadStartMarker();
         _totalPages = 1;
       });
     } catch (e) {
@@ -571,6 +628,7 @@ Paste your long text here.
       setState(() {
         _textFileContent = content;
         _selectedText = readAloudText; // Auto-select all text for reading
+        _clearReadStartMarker();
         _totalPages = 1;
       });
     } catch (e) {
@@ -675,6 +733,7 @@ Paste your long text here.
         setState(() {
           _textFileContent = normalized;
           _selectedText = normalized;
+          _clearReadStartMarker();
           _totalPages = 1;
           _isExtractingText = false;
         });
@@ -789,6 +848,135 @@ Paste your long text here.
     return false;
   }
 
+  bool get _hasReadStartMarker {
+    return (_readStartOffset != null && _readStartOffset! > 0) ||
+        (_readStartAnchorText?.isNotEmpty ?? false);
+  }
+
+  void _clearReadStartMarker({bool clearSelection = false}) {
+    _readStartOffset = null;
+    _readStartAnchorText = null;
+    _readStartPageHint = _currentPage;
+    if (clearSelection) {
+      _selectedText = null;
+    }
+  }
+
+  String _documentTextForReadAloud() {
+    if (_pdfExtractedText != null && _pdfExtractedText!.isNotEmpty) {
+      return _pdfExtractedText!;
+    }
+    if (_textFileContent != null && _textFileContent!.isNotEmpty) {
+      return _plainTextForReadAloud(_textFileContent!, _selectedPdfPath);
+    }
+    return '';
+  }
+
+  int _estimateReadStartOffsetFromPageHint(String fullText) {
+    if (_totalPages <= 1 || fullText.isEmpty) return 0;
+    final page = _readStartPageHint.clamp(1, _totalPages).toDouble();
+    final denominator = (_totalPages > 1 ? _totalPages - 1 : 1).toDouble();
+    final ratio = (page - 1.0) / denominator;
+    final offset = (fullText.length * ratio).round();
+    return offset.clamp(0, fullText.length - 1).toInt();
+  }
+
+  List<int> _allIndicesOf(String haystack, String needle, {int limit = 64}) {
+    if (needle.isEmpty || haystack.isEmpty) return const <int>[];
+    final matches = <int>[];
+    var from = 0;
+    while (from < haystack.length && matches.length < limit) {
+      final idx = haystack.indexOf(needle, from);
+      if (idx < 0) break;
+      matches.add(idx);
+      from = idx + 1;
+    }
+    return matches;
+  }
+
+  int _indexOfIgnoringWhitespace(String haystack, String needle) {
+    final compactHaystack = StringBuffer();
+    final compactNeedle = StringBuffer();
+    final haystackIndexMap = <int>[];
+
+    bool isWhitespace(String ch) =>
+        ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' || ch == '\f';
+
+    for (int i = 0; i < haystack.length; i++) {
+      final ch = haystack[i];
+      if (isWhitespace(ch)) continue;
+      compactHaystack.write(ch.toLowerCase());
+      haystackIndexMap.add(i);
+    }
+    for (int i = 0; i < needle.length; i++) {
+      final ch = needle[i];
+      if (isWhitespace(ch)) continue;
+      compactNeedle.write(ch.toLowerCase());
+    }
+
+    final compactNeedleText = compactNeedle.toString();
+    if (compactNeedleText.isEmpty) return -1;
+
+    final compactIndex = compactHaystack.toString().indexOf(compactNeedleText);
+    if (compactIndex < 0 || compactIndex >= haystackIndexMap.length) {
+      return -1;
+    }
+    return haystackIndexMap[compactIndex];
+  }
+
+  int? _resolveReadStartOffset(String fullText) {
+    if (fullText.isEmpty) return null;
+
+    if (_readStartOffset != null) {
+      return _readStartOffset!.clamp(0, fullText.length - 1);
+    }
+
+    final anchor = _normalizeExtractedPdfText(_readStartAnchorText ?? '');
+    if (anchor.isEmpty) return null;
+
+    final occurrences = _allIndicesOf(fullText, anchor);
+    if (occurrences.isNotEmpty) {
+      if (occurrences.length == 1) return occurrences.first;
+      final estimated = _estimateReadStartOffsetFromPageHint(fullText);
+      occurrences.sort(
+        (a, b) => (a - estimated).abs().compareTo((b - estimated).abs()),
+      );
+      return occurrences.first;
+    }
+
+    final relaxed = _indexOfIgnoringWhitespace(fullText, anchor);
+    if (relaxed >= 0) return relaxed;
+    return null;
+  }
+
+  String _resolveTextForReadAloud() {
+    final fullText = _documentTextForReadAloud();
+    if (fullText.isEmpty) {
+      return _plainTextForReadAloud(
+        _selectedText ?? '',
+        _selectedPdfPath,
+      ).trim();
+    }
+
+    final startOffset = _resolveReadStartOffset(fullText);
+    if (startOffset != null &&
+        startOffset > 0 &&
+        startOffset < fullText.length) {
+      final fromMarker = fullText.substring(startOffset).trimLeft();
+      if (fromMarker.isNotEmpty) return fromMarker;
+    }
+
+    final selectionOnly = _plainTextForReadAloud(
+      _selectedText ?? '',
+      _selectedPdfPath,
+    ).trim();
+    if (selectionOnly.isNotEmpty && selectionOnly != fullText.trim()) {
+      return selectionOnly;
+    }
+
+    return fullText;
+  }
+
   void _removePdf(String path) {
     setState(() {
       _pdfLibrary.removeWhere((p) => p['path'] == path);
@@ -796,11 +984,7 @@ Paste your long text here.
         _selectedPdfPath = null;
         _selectedPdfName = null;
         _selectedPdfBytes = null;
-        _pdfWordAnchors = [];
-        _globalWordAnchorIndices = [];
-        _activeReadAloudAnnotations.clear();
-        _activeReadAloudAnchorIndex = -1;
-        _pdfWordAnchorBuildId++;
+        _resetPdfWordHighlightState();
         _stopReading();
       }
     });
@@ -809,21 +993,14 @@ Paste your long text here.
   Future<void> _startReading() async {
     if (_selectedPdfPath == null) return;
 
-    // Get text: selected text first, then extracted PDF text, then text file content
-    String textToRead = _selectedText ?? '';
-    _readingSource = '';
+    final fullDocumentText = _documentTextForReadAloud();
+    var textToRead = _resolveTextForReadAloud();
+    _readingSource = _isTextFile ? 'text' : 'pdf';
 
-    if (textToRead.isEmpty && _pdfExtractedText != null) {
-      textToRead = _pdfExtractedText!;
-      _readingSource = 'pdf';
-    }
-
-    if (textToRead.isEmpty && _textFileContent != null) {
-      textToRead = _textFileContent!;
-      _readingSource = 'text';
-    }
-
-    if (_selectedText != null && _selectedText!.isNotEmpty) {
+    if (fullDocumentText.isNotEmpty &&
+        _selectedText != null &&
+        _selectedText!.isNotEmpty &&
+        textToRead.trim() == _selectedText!.trim()) {
       _readingSource = 'selection';
     }
 
@@ -848,12 +1025,13 @@ Paste your long text here.
       return;
     }
 
+    textToRead = _normalizeExtractedPdfText(textToRead);
+
     // Split into sentences
     _sentences = _splitIntoSentences(textToRead);
     if (_sentences.isEmpty) return;
     _buildWordIndex(_sentences);
-    if (!_isTextFile &&
-        (_readingSource == 'pdf' || _readingSource == 'selection')) {
+    if (!_isTextFile) {
       await _preparePdfWordAnchorsIfNeeded();
       _buildGlobalWordAnchorMap();
     } else {
@@ -930,9 +1108,25 @@ Paste your long text here.
     if (_selectedPdfBytes != null && _selectedPdfBytes!.isNotEmpty) {
       return _selectedPdfBytes;
     }
-    if (kIsWeb) return null;
 
     final path = _selectedPdfPath!;
+    if (path.startsWith('/pdf/')) {
+      try {
+        final bytes = await _api.fetchPdfBytes(path);
+        if (bytes.isNotEmpty) {
+          if (mounted) {
+            setState(() => _selectedPdfBytes = bytes);
+          } else {
+            _selectedPdfBytes = bytes;
+          }
+          return bytes;
+        }
+      } catch (_) {
+        // Fallback to file-system path lookup below when available.
+      }
+    }
+    if (kIsWeb) return null;
+
     if (path.startsWith('http://') || path.startsWith('https://')) return null;
     final file = File(path);
     if (!await file.exists()) return null;
@@ -951,6 +1145,7 @@ Paste your long text here.
 
     final buildId = ++_pdfWordAnchorBuildId;
     final anchors = <_PdfWordAnchor>[];
+    final anchorsByWord = <String, List<int>>{};
     pdf.PdfDocument? document;
     try {
       document = pdf.PdfDocument(inputBytes: bytes);
@@ -962,12 +1157,14 @@ Paste your long text here.
         for (final word in line.wordCollection) {
           final normalized = _cleanWordForSearch(word.text);
           if (normalized.length < 2) continue;
+          final anchorIndex = anchors.length;
           anchors.add(
             _PdfWordAnchor(
               normalizedWord: normalized,
               line: PdfTextLine(word.bounds, word.text, pageNumber),
             ),
           );
+          anchorsByWord.putIfAbsent(normalized, () => <int>[]).add(anchorIndex);
         }
       }
     } catch (e) {
@@ -979,6 +1176,8 @@ Paste your long text here.
 
     if (!mounted || buildId != _pdfWordAnchorBuildId) return;
     _pdfWordAnchors = anchors;
+    _pdfAnchorIndicesByWord = anchorsByWord;
+    _lastResolvedPdfAnchorIndex = -1;
   }
 
   void _buildGlobalWordAnchorMap() {
@@ -996,6 +1195,150 @@ Paste your long text here.
       _globalWordAnchorIndices[i] = anchorCursor;
       anchorCursor++;
     }
+  }
+
+  int _firstAnchorGreaterThan(List<int> sortedAnchors, int value) {
+    for (int i = 0; i < sortedAnchors.length; i++) {
+      if (sortedAnchors[i] > value) return i;
+    }
+    return -1;
+  }
+
+  int _matchNeighborDistance(
+    String normalizedWord,
+    int anchorIndex, {
+    required bool backward,
+    int maxDistance = 3,
+  }) {
+    if (normalizedWord.isEmpty) return 0;
+    for (int distance = 1; distance <= maxDistance; distance++) {
+      final idx = backward ? anchorIndex - distance : anchorIndex + distance;
+      if (idx < 0 || idx >= _pdfWordAnchors.length) continue;
+      if (_pdfWordAnchors[idx].normalizedWord == normalizedWord) {
+        return distance;
+      }
+    }
+    return 0;
+  }
+
+  int _resolveAnchorIndexForGlobalWord(int globalIndex, {int? preferAround}) {
+    if (globalIndex < 0 || globalIndex >= _globalWords.length) return -1;
+    if (_pdfWordAnchors.isEmpty) return -1;
+
+    final normalizedWord = _globalWords[globalIndex];
+    final candidates = _pdfAnchorIndicesByWord[normalizedWord];
+    if (candidates == null || candidates.isEmpty) return -1;
+
+    final expectedOccurrence = _countWordOccurrences(
+      normalizedWord,
+      uptoIndex: globalIndex,
+    ).clamp(1, candidates.length);
+    final occurrenceAnchor = candidates[expectedOccurrence - 1];
+
+    final candidateSet = <int>{occurrenceAnchor};
+    for (int offset = -2; offset <= 2; offset++) {
+      final idx = (expectedOccurrence - 1 + offset).clamp(
+        0,
+        candidates.length - 1,
+      );
+      candidateSet.add(candidates[idx]);
+    }
+
+    final around = preferAround ?? _lastResolvedPdfAnchorIndex;
+    if (around >= 0) {
+      final nextIdx = _firstAnchorGreaterThan(candidates, around);
+      if (nextIdx >= 0) {
+        candidateSet.add(candidates[nextIdx]);
+      }
+      var nearest = candidates.first;
+      var bestDistance = (nearest - around).abs();
+      for (final candidate in candidates) {
+        final distance = (candidate - around).abs();
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          nearest = candidate;
+        }
+      }
+      candidateSet.add(nearest);
+    }
+
+    final prevWord = globalIndex > 0 ? _globalWords[globalIndex - 1] : '';
+    final nextWord = (globalIndex + 1) < _globalWords.length
+        ? _globalWords[globalIndex + 1]
+        : '';
+
+    var bestAnchor = -1;
+    var bestScore = double.negativeInfinity;
+
+    for (final candidate in candidateSet) {
+      var score = 0.0;
+      if (prevWord.isNotEmpty) {
+        final prevDistance = _matchNeighborDistance(
+          prevWord,
+          candidate,
+          backward: true,
+        );
+        if (prevDistance > 0) {
+          score += 1.8 - ((prevDistance - 1) * 0.45);
+        }
+      }
+      if (nextWord.isNotEmpty) {
+        final nextDistance = _matchNeighborDistance(
+          nextWord,
+          candidate,
+          backward: false,
+        );
+        if (nextDistance > 0) {
+          score += 1.8 - ((nextDistance - 1) * 0.45);
+        }
+      }
+
+      score -= (candidate - occurrenceAnchor).abs() / 170.0;
+
+      if (around >= 0) {
+        final delta = candidate - around;
+        if (delta >= -1) {
+          score += 0.8;
+        } else {
+          score -= 1.2;
+        }
+        score -= delta.abs() / 520.0;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestAnchor = candidate;
+      }
+    }
+
+    return bestAnchor >= 0 ? bestAnchor : occurrenceAnchor;
+  }
+
+  int _resolveNeighborAnchorIndex({
+    required int globalIndex,
+    required int aroundAnchor,
+    required int direction,
+  }) {
+    if (globalIndex < 0 || globalIndex >= _globalWords.length) return -1;
+    final normalizedWord = _globalWords[globalIndex];
+    final candidates = _pdfAnchorIndicesByWord[normalizedWord];
+    if (candidates == null || candidates.isEmpty) return -1;
+
+    if (direction < 0) {
+      for (int i = candidates.length - 1; i >= 0; i--) {
+        final candidate = candidates[i];
+        if (candidate < aroundAnchor) return candidate;
+      }
+    } else {
+      for (final candidate in candidates) {
+        if (candidate > aroundAnchor) return candidate;
+      }
+    }
+
+    return _resolveAnchorIndexForGlobalWord(
+      globalIndex,
+      preferAround: aroundAnchor,
+    );
   }
 
   void _clearReadAloudAnnotations() {
@@ -1028,23 +1371,72 @@ Paste your long text here.
     if (!(_readingSource == 'pdf' || _readingSource == 'selection')) {
       return false;
     }
-    if (globalIndex < 0 || globalIndex >= _globalWordAnchorIndices.length) {
+    if (globalIndex < 0 || globalIndex >= _globalWords.length) {
+      return false;
+    }
+    if (_pdfWordAnchors.isEmpty) return false;
+
+    var resolvedCurrentAnchorIndex = -1;
+    if (globalIndex < _globalWordAnchorIndices.length) {
+      final mapped = _globalWordAnchorIndices[globalIndex];
+      if (mapped >= 0 && mapped < _pdfWordAnchors.length) {
+        resolvedCurrentAnchorIndex = mapped;
+      }
+    }
+    if (resolvedCurrentAnchorIndex < 0) {
+      resolvedCurrentAnchorIndex = _resolveAnchorIndexForGlobalWord(
+        globalIndex,
+      );
+      if (resolvedCurrentAnchorIndex >= 0 &&
+          globalIndex < _globalWordAnchorIndices.length) {
+        _globalWordAnchorIndices[globalIndex] = resolvedCurrentAnchorIndex;
+      }
+    }
+    if (resolvedCurrentAnchorIndex < 0 ||
+        resolvedCurrentAnchorIndex >= _pdfWordAnchors.length) {
       return false;
     }
 
-    final indices = <int>[];
-    for (int offset = 2; offset >= 0; offset--) {
-      final idx = globalIndex - offset;
-      if (idx < 0 || idx >= _globalWordAnchorIndices.length) continue;
-      final anchorIndex = _globalWordAnchorIndices[idx];
-      if (anchorIndex < 0 || anchorIndex >= _pdfWordAnchors.length) continue;
-      indices.add(anchorIndex);
-    }
-    if (indices.isEmpty) return false;
+    final highlighted = <({int globalWordIndex, int anchorIndex})>[];
+    final seenAnchorKeys = <int>{};
 
-    final currentAnchorIndex = indices.last;
-    if (_activeReadAloudAnchorIndex == currentAnchorIndex &&
-        _activeReadAloudAnnotations.length == indices.length) {
+    void addHighlighted(int idx, int anchorIndex) {
+      if (idx < 0 || idx >= _globalWords.length) return;
+      if (anchorIndex < 0 || anchorIndex >= _pdfWordAnchors.length) return;
+      if (!seenAnchorKeys.add(anchorIndex)) return;
+      highlighted.add((globalWordIndex: idx, anchorIndex: anchorIndex));
+      if (idx < _globalWordAnchorIndices.length) {
+        _globalWordAnchorIndices[idx] = anchorIndex;
+      }
+    }
+
+    addHighlighted(globalIndex, resolvedCurrentAnchorIndex);
+    final previousIndex = globalIndex - 1;
+    final nextIndex = globalIndex + 1;
+    if (previousIndex >= 0) {
+      final previousAnchor = _resolveNeighborAnchorIndex(
+        globalIndex: previousIndex,
+        aroundAnchor: resolvedCurrentAnchorIndex,
+        direction: -1,
+      );
+      addHighlighted(previousIndex, previousAnchor);
+    }
+    if (nextIndex < _globalWords.length) {
+      final nextAnchor = _resolveNeighborAnchorIndex(
+        globalIndex: nextIndex,
+        aroundAnchor: resolvedCurrentAnchorIndex,
+        direction: 1,
+      );
+      addHighlighted(nextIndex, nextAnchor);
+    }
+
+    if (highlighted.isEmpty) return false;
+    highlighted.sort((a, b) => a.anchorIndex.compareTo(b.anchorIndex));
+
+    _lastResolvedPdfAnchorIndex = resolvedCurrentAnchorIndex;
+
+    if (_activeReadAloudAnchorIndex == resolvedCurrentAnchorIndex &&
+        _activeReadAloudAnnotations.length == highlighted.length) {
       return true;
     }
 
@@ -1053,9 +1445,9 @@ Paste your long text here.
     _searchResult = null;
 
     _clearReadAloudAnnotations();
-    for (int i = 0; i < indices.length; i++) {
-      final anchor = _pdfWordAnchors[indices[i]];
-      final isCurrentWord = i == indices.length - 1;
+    for (final item in highlighted) {
+      final anchor = _pdfWordAnchors[item.anchorIndex];
+      final isCurrentWord = item.globalWordIndex == globalIndex;
       final annotation =
           HighlightAnnotation(textBoundsCollection: [anchor.line])
             ..subject = 'mimika.readaloud'
@@ -1067,9 +1459,9 @@ Paste your long text here.
       _pdfController.addAnnotation(annotation);
       _activeReadAloudAnnotations.add(annotation);
     }
-    _activeReadAloudAnchorIndex = currentAnchorIndex;
+    _activeReadAloudAnchorIndex = resolvedCurrentAnchorIndex;
 
-    final currentAnchor = _pdfWordAnchors[currentAnchorIndex];
+    final currentAnchor = _pdfWordAnchors[resolvedCurrentAnchorIndex];
     if (_pdfController.pageNumber != currentAnchor.line.pageNumber) {
       _pdfController.jumpToPage(currentAnchor.line.pageNumber);
     }
@@ -1681,6 +2073,8 @@ Paste your long text here.
       _globalWords = [];
       _globalSurfaceWords = [];
       _globalWordAnchorIndices = [];
+      _pdfAnchorIndicesByWord = <String, List<int>>{};
+      _lastResolvedPdfAnchorIndex = -1;
       _sentenceWordStart = [];
       _queryOccurrenceProgress.clear();
       _currentSentenceStartIndex = 0;
@@ -1699,17 +2093,8 @@ Paste your long text here.
   // ============== Audiobook Generation ==============
 
   Future<void> _startAudiobookGeneration() async {
-    // Get text to convert
-    String textToConvert = _selectedText ?? '';
-    if (textToConvert.isEmpty && _pdfExtractedText != null) {
-      textToConvert = _pdfExtractedText!;
-    }
-    if (textToConvert.isEmpty && _textFileContent != null) {
-      textToConvert = _plainTextForReadAloud(
-        _textFileContent!,
-        _selectedPdfPath,
-      );
-    }
+    // Convert from the active start marker/selection to end of document.
+    final textToConvert = _resolveTextForReadAloud();
 
     if (textToConvert.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1720,8 +2105,6 @@ Paste your long text here.
 
     setState(() {
       _isGeneratingAudiobook = true;
-      _audiobookCurrentChunk = 0;
-      _audiobookTotalChunks = 0;
     });
 
     try {
@@ -1737,106 +2120,32 @@ Paste your long text here.
         crossfadeMs: _audiobookCrossfadeMs,
       );
 
-      _audiobookJobId = result['job_id'] as String;
-      _audiobookTotalChunks = result['total_chunks'] as int;
+      final jobId = result['job_id'] as String;
+      final queuePosition = (result['queue_position'] as num?)?.toInt() ?? 0;
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Audiobook job ${_audiobookJobId!} queued in Jobs'),
-            duration: const Duration(seconds: 2),
+            content: Text(
+              queuePosition > 0
+                  ? 'Audiobook job $jobId queued (#$queuePosition) in Jobs'
+                  : 'Audiobook job $jobId started in Jobs',
+            ),
+            duration: const Duration(seconds: 3),
           ),
         );
       }
-
-      // Start polling for status
-      _startAudiobookPolling();
     } catch (e) {
-      setState(() {
-        _isGeneratingAudiobook = false;
-      });
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
       }
-    }
-  }
-
-  void _startAudiobookPolling() {
-    _audiobookPollTimer?.cancel();
-    _audiobookPollTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => _pollAudiobookStatus(),
-    );
-  }
-
-  Future<void> _pollAudiobookStatus() async {
-    if (_audiobookJobId == null) return;
-
-    try {
-      final status = await _api.getAudiobookStatus(_audiobookJobId!);
-      final jobStatus = status['status'] as String;
-
-      setState(() {
-        _audiobookCurrentChunk = status['current_chunk'] as int;
-        _audiobookTotalChunks = status['total_chunks'] as int;
-      });
-
-      if (jobStatus == 'completed') {
-        _audiobookPollTimer?.cancel();
-
-        setState(() {
-          _isGeneratingAudiobook = false;
-        });
-
-        if (mounted) {
-          _loadAudiobooks(); // Refresh the audiobook list
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Audiobook ready. Job marked completed in Jobs.'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-      } else if (jobStatus == 'failed') {
-        _audiobookPollTimer?.cancel();
-        final error = status['error'] ?? 'Unknown error';
-        setState(() {
-          _isGeneratingAudiobook = false;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('Generation failed: $error')));
-        }
-      } else if (jobStatus == 'cancelled') {
-        _audiobookPollTimer?.cancel();
-        setState(() {
-          _isGeneratingAudiobook = false;
-        });
-      }
-    } catch (e) {
-      // Ignore polling errors, will retry
-      debugPrint('Polling error: $e');
-    }
-  }
-
-  Future<void> _cancelAudiobookGeneration() async {
-    if (_audiobookJobId == null) return;
-
-    try {
-      await _api.cancelAudiobookGeneration(_audiobookJobId!);
-      _audiobookPollTimer?.cancel();
-      setState(() {
-        _isGeneratingAudiobook = false;
-        _audiobookJobId = null;
-      });
-    } catch (e) {
+    } finally {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to cancel: $e')));
+        setState(() {
+          _isGeneratingAudiobook = false;
+        });
       }
     }
   }
@@ -1848,8 +2157,7 @@ Paste your long text here.
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Sidebar
-        _buildSidebar(),
+        _buildSidebarShell(),
         // Main content
         Expanded(
           child: Column(
@@ -1867,7 +2175,31 @@ Paste your long text here.
     );
   }
 
+  Widget _buildSidebarShell() {
+    if (_isSidebarCollapsed) {
+      return Container(
+        width: 44,
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerLow,
+          border: Border(
+            right: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Center(
+          child: IconButton(
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Expand side deck',
+            onPressed: () => setState(() => _isSidebarCollapsed = false),
+          ),
+        ),
+      );
+    }
+    return _buildSidebar();
+  }
+
   Widget _buildSidebar() {
+    final documentsFlex = _isAudiobooksDeckCollapsed ? 1 : 3;
+    final audiobooksFlex = _isDocumentsDeckCollapsed ? 1 : 2;
     return Container(
       width: 250,
       decoration: BoxDecoration(
@@ -1911,120 +2243,189 @@ Paste your long text here.
                 IconButton(
                   icon: const Icon(Icons.edit_note, size: 20),
                   onPressed: _openManualTextInput,
-                  tooltip: 'Paste Text',
+                  tooltip: 'New Markdown',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: Icon(
+                    _isDocumentsDeckCollapsed
+                        ? Icons.expand_more_rounded
+                        : Icons.expand_less_rounded,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(
+                    () =>
+                        _isDocumentsDeckCollapsed = !_isDocumentsDeckCollapsed,
+                  ),
+                  tooltip: _isDocumentsDeckCollapsed
+                      ? 'Expand documents deck'
+                      : 'Collapse documents deck',
+                  visualDensity: VisualDensity.compact,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                  onPressed: () => setState(() => _isSidebarCollapsed = true),
+                  tooltip: 'Collapse',
                   visualDensity: VisualDensity.compact,
                 ),
               ],
             ),
           ),
-          // Document list
-          Expanded(
-            flex: 3,
-            child: !_isInitialized
-                ? const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        CircularProgressIndicator(),
-                        SizedBox(height: 8),
-                        Text('Loading...'),
-                      ],
-                    ),
-                  )
-                : _pdfLibrary.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.auto_stories,
-                          size: 48,
-                          color: Colors.grey.shade400,
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'No Documents',
-                          style: TextStyle(color: Colors.grey.shade600),
-                        ),
-                        const SizedBox(height: 4),
-                        TextButton.icon(
-                          onPressed: _openPdf,
-                          icon: const Icon(Icons.add, size: 16),
-                          label: const Text('Open'),
-                        ),
-                        TextButton.icon(
-                          onPressed: _openManualTextInput,
-                          icon: const Icon(Icons.edit_note, size: 16),
-                          label: const Text('Paste Text'),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    itemCount: _pdfLibrary.length,
-                    itemBuilder: (context, index) {
-                      final pdf = _pdfLibrary[index];
-                      final name = (pdf['name'] as String?) ?? 'Untitled';
-                      final path = (pdf['path'] as String?) ?? '';
-                      final isSelected = path == _selectedPdfPath;
-
-                      final lowerName = name.toLowerCase();
-                      final IconData icon;
-                      if (lowerName.endsWith('.md')) {
-                        icon = Icons.code;
-                      } else if (lowerName.endsWith('.txt')) {
-                        icon = Icons.article;
-                      } else if (lowerName.endsWith('.docx')) {
-                        icon = Icons.description_outlined;
-                      } else if (lowerName.endsWith('.epub')) {
-                        icon = Icons.menu_book_outlined;
-                      } else {
-                        icon = Icons.picture_as_pdf;
-                      }
-
-                      return ListTile(
-                        dense: true,
-                        selected: isSelected,
-                        selectedTileColor: Theme.of(
-                          context,
-                        ).colorScheme.primaryContainer,
-                        leading: Icon(
-                          icon,
-                          color: isSelected
-                              ? Theme.of(context).colorScheme.primary
-                              : null,
-                          size: 20,
-                        ),
-                        title: Text(
-                          name,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: isSelected ? FontWeight.bold : null,
-                          ),
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.close, size: 16),
-                          onPressed: () => _removePdf(path),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        onTap: () {
-                          final bytes = pdf['bytes'] as Uint8List?;
-                          final url = pdf['url'] as String?;
-                          if (bytes != null) {
-                            _selectPdf(path, name, bytes: bytes);
-                          } else if (url != null && url.isNotEmpty) {
-                            _selectPdfFromUrl(url, name);
-                          } else {
-                            _selectPdf(path, name);
-                          }
-                        },
-                      );
-                    },
-                  ),
-          ),
+          if (!_isDocumentsDeckCollapsed)
+            Expanded(flex: documentsFlex, child: _buildSidebarDocumentList()),
           Container(height: 1, color: Theme.of(context).dividerColor),
-          Expanded(flex: 2, child: _buildSidebarAudiobookHistory()),
+          _buildSidebarAudiobookHeader(),
+          if (!_isAudiobooksDeckCollapsed)
+            Expanded(
+              flex: audiobooksFlex,
+              child: _buildSidebarAudiobookHistory(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSidebarDocumentList() {
+    return !_isInitialized
+        ? const Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 8),
+                Text('Loading...'),
+              ],
+            ),
+          )
+        : _pdfLibrary.isEmpty
+        ? Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.auto_stories, size: 48, color: Colors.grey.shade400),
+                const SizedBox(height: 8),
+                Text(
+                  'No Documents',
+                  style: TextStyle(color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 4),
+                TextButton.icon(
+                  onPressed: _openPdf,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Open'),
+                ),
+                TextButton.icon(
+                  onPressed: _openManualTextInput,
+                  icon: const Icon(Icons.edit_note, size: 16),
+                  label: const Text('Paste Text'),
+                ),
+              ],
+            ),
+          )
+        : ListView.builder(
+            itemCount: _pdfLibrary.length,
+            itemBuilder: (context, index) {
+              final pdf = _pdfLibrary[index];
+              final name = (pdf['name'] as String?) ?? 'Untitled';
+              final path = (pdf['path'] as String?) ?? '';
+              final isSelected = path == _selectedPdfPath;
+
+              final lowerName = name.toLowerCase();
+              final IconData icon;
+              if (lowerName.endsWith('.md')) {
+                icon = Icons.code;
+              } else if (lowerName.endsWith('.txt')) {
+                icon = Icons.article;
+              } else if (lowerName.endsWith('.docx')) {
+                icon = Icons.description_outlined;
+              } else if (lowerName.endsWith('.epub')) {
+                icon = Icons.menu_book_outlined;
+              } else {
+                icon = Icons.picture_as_pdf;
+              }
+
+              return ListTile(
+                dense: true,
+                selected: isSelected,
+                selectedTileColor: Theme.of(
+                  context,
+                ).colorScheme.primaryContainer,
+                leading: Icon(
+                  icon,
+                  color: isSelected
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                  size: 20,
+                ),
+                title: Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: isSelected ? FontWeight.bold : null,
+                  ),
+                ),
+                trailing: IconButton(
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () => _removePdf(path),
+                  visualDensity: VisualDensity.compact,
+                ),
+                onTap: () {
+                  final bytes = pdf['bytes'] as Uint8List?;
+                  final url = pdf['url'] as String?;
+                  if (bytes != null) {
+                    _selectPdf(path, name, bytes: bytes);
+                  } else if (url != null && url.isNotEmpty) {
+                    _selectPdfFromUrl(url, name);
+                  } else {
+                    _selectPdf(path, name);
+                  }
+                },
+              );
+            },
+          );
+  }
+
+  Widget _buildSidebarAudiobookHeader() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        border: Border(
+          bottom: BorderSide(color: Theme.of(context).dividerColor),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.library_music, size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Audiobooks',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 18),
+            onPressed: _loadAudiobooks,
+            tooltip: 'Refresh',
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            icon: Icon(
+              _isAudiobooksDeckCollapsed
+                  ? Icons.expand_more_rounded
+                  : Icons.expand_less_rounded,
+              size: 18,
+            ),
+            onPressed: () => setState(
+              () => _isAudiobooksDeckCollapsed = !_isAudiobooksDeckCollapsed,
+            ),
+            tooltip: _isAudiobooksDeckCollapsed
+                ? 'Expand audiobooks deck'
+                : 'Collapse audiobooks deck',
+            visualDensity: VisualDensity.compact,
+          ),
         ],
       ),
     );
@@ -2374,33 +2775,6 @@ Paste your long text here.
       color: Theme.of(context).colorScheme.surfaceContainerLow,
       child: Column(
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHigh,
-              border: Border(
-                bottom: BorderSide(color: Theme.of(context).dividerColor),
-              ),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.library_music, size: 18),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text(
-                    'Audiobooks',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.refresh, size: 18),
-                  onPressed: _loadAudiobooks,
-                  tooltip: 'Refresh',
-                  visualDensity: VisualDensity.compact,
-                ),
-              ],
-            ),
-          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             child: Row(
@@ -2507,10 +2881,22 @@ Paste your long text here.
                                 style: const TextStyle(fontSize: 10),
                               ),
                               trailing: SizedBox(
-                                width: 56,
+                                width: 86,
                                 child: Row(
                                   mainAxisAlignment: MainAxisAlignment.end,
                                   children: [
+                                    IconButton(
+                                      icon: const Icon(
+                                        Icons.insights_rounded,
+                                        size: 16,
+                                      ),
+                                      onPressed: () =>
+                                          _showAudiobookMetrics(book),
+                                      tooltip: 'Generation Metrics',
+                                      visualDensity: VisualDensity.compact,
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                    ),
                                     IconButton(
                                       icon: const Icon(
                                         Icons.download_rounded,
@@ -2659,6 +3045,25 @@ Paste your long text here.
           context,
         ).showSnackBar(SnackBar(content: Text('Failed to play: $e')));
       }
+    }
+  }
+
+  Future<void> _showAudiobookMetrics(Map<String, dynamic> book) async {
+    final filename = book['filename'] as String? ?? '';
+    if (filename.isEmpty) return;
+    try {
+      final payload = await _api.getAudioGenerationMetrics(filename);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: filename,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
     }
   }
 
@@ -2817,9 +3222,7 @@ Paste your long text here.
                 });
               },
               onTextSelectionChanged: (details) {
-                setState(() {
-                  _selectedText = details.selectedText;
-                });
+                _onPdfTextSelectionChanged(details.selectedText);
               },
             ),
           ),
@@ -2853,9 +3256,7 @@ Paste your long text here.
                   });
                 },
                 onTextSelectionChanged: (details) {
-                  setState(() {
-                    _selectedText = details.selectedText;
-                  });
+                  _onPdfTextSelectionChanged(details.selectedText);
                 },
               ),
             ),
@@ -2933,9 +3334,7 @@ Paste your long text here.
               });
             },
             onTextSelectionChanged: (details) {
-              setState(() {
-                _selectedText = details.selectedText;
-              });
+              _onPdfTextSelectionChanged(details.selectedText);
             },
           ),
         ),
@@ -3054,6 +3453,20 @@ Paste your long text here.
     );
   }
 
+  void _onPdfTextSelectionChanged(String? selectedText) {
+    setState(() {
+      final normalized = _normalizeExtractedPdfText(selectedText ?? '');
+      _selectedText = normalized.isEmpty ? null : selectedText;
+      if (normalized.isEmpty) {
+        _clearReadStartMarker();
+      } else {
+        _readStartOffset = null;
+        _readStartAnchorText = normalized;
+        _readStartPageHint = _currentPage;
+      }
+    });
+  }
+
   void _captureTextSelection(String sourceText, TextSelection selection) {
     if (selection.baseOffset < 0 ||
         selection.extentOffset < 0 ||
@@ -3064,9 +3477,12 @@ Paste your long text here.
     final end = selection.end.clamp(0, sourceText.length);
     if (start >= end) return;
     final selected = sourceText.substring(start, end);
-    setState(
-      () => _selectedText = _plainTextForReadAloud(selected, _selectedPdfPath),
-    );
+    setState(() {
+      _selectedText = _plainTextForReadAloud(selected, _selectedPdfPath);
+      _readStartOffset = start;
+      _readStartAnchorText = null;
+      _readStartPageHint = _currentPage;
+    });
   }
 
   Widget _buildSelectablePlainText(
@@ -3229,6 +3645,11 @@ Paste your long text here.
               final selecting = !isFullSelection;
               setState(() {
                 _selectedText = selecting ? fullText : null;
+                if (selecting) {
+                  _clearReadStartMarker();
+                } else {
+                  _clearReadStartMarker(clearSelection: true);
+                }
               });
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
@@ -3245,6 +3666,16 @@ Paste your long text here.
             icon: const Icon(Icons.select_all, size: 18),
             label: Text(isFullSelection ? 'Clear Selection' : 'Select All'),
           ),
+          if (_hasReadStartMarker) ...[
+            const SizedBox(width: 6),
+            TextButton.icon(
+              onPressed: () {
+                setState(() => _clearReadStartMarker(clearSelection: true));
+              },
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Start From Top'),
+            ),
+          ],
           if (_isManualTextDoc) ...[
             const SizedBox(width: 6),
             TextButton.icon(
@@ -3315,18 +3746,17 @@ Paste your long text here.
               ],
             ),
           // Audiobook generation button (text files)
-          if (!_isReading && !_isGeneratingAudiobook) ...[
+          if (!_isReading) ...[
             const SizedBox(width: 8),
             FilledButton.tonalIcon(
-              onPressed: _hasTextToRead ? _startAudiobookGeneration : null,
+              onPressed: (_hasTextToRead && !_isGeneratingAudiobook)
+                  ? _startAudiobookGeneration
+                  : null,
               icon: const Icon(Icons.audiotrack),
-              label: const Text('Convert to Audiobook'),
+              label: Text(
+                _isGeneratingAudiobook ? 'Queueing...' : 'Convert to Audiobook',
+              ),
             ),
-          ],
-          // Audiobook generation progress (text files)
-          if (_isGeneratingAudiobook) ...[
-            const SizedBox(width: 8),
-            _buildAudiobookProgress(),
           ],
         ],
       ),
@@ -3376,6 +3806,17 @@ Paste your long text here.
                 width: 16,
                 height: 16,
                 child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          if (_hasReadStartMarker)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: ActionChip(
+                avatar: const Icon(Icons.flag, size: 16),
+                label: const Text('From marker'),
+                onPressed: () {
+                  setState(() => _clearReadStartMarker(clearSelection: true));
+                },
               ),
             ),
           // TTS controls
@@ -3430,47 +3871,20 @@ Paste your long text here.
               ],
             ),
           // Audiobook generation button
-          if (!_isReading && !_isGeneratingAudiobook) ...[
+          if (!_isReading) ...[
             const SizedBox(width: 8),
             FilledButton.tonalIcon(
-              onPressed: _hasTextToRead ? _startAudiobookGeneration : null,
+              onPressed: (_hasTextToRead && !_isGeneratingAudiobook)
+                  ? _startAudiobookGeneration
+                  : null,
               icon: const Icon(Icons.audiotrack),
-              label: const Text('Convert to Audiobook'),
+              label: Text(
+                _isGeneratingAudiobook ? 'Queueing...' : 'Convert to Audiobook',
+              ),
             ),
-          ],
-          // Audiobook generation progress
-          if (_isGeneratingAudiobook) ...[
-            const SizedBox(width: 8),
-            _buildAudiobookProgress(),
           ],
         ],
       ),
-    );
-  }
-
-  Widget _buildAudiobookProgress() {
-    final percent = _audiobookTotalChunks > 0
-        ? (_audiobookCurrentChunk / _audiobookTotalChunks * 100).round()
-        : 0;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const SizedBox(
-          width: 16,
-          height: 16,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          '$percent% ($_audiobookCurrentChunk/$_audiobookTotalChunks)',
-          style: const TextStyle(fontSize: 12),
-        ),
-        const SizedBox(width: 8),
-        TextButton(
-          onPressed: _cancelAudiobookGeneration,
-          child: const Text('Cancel'),
-        ),
-      ],
     );
   }
 
@@ -3635,6 +4049,7 @@ Paste your long text here.
                       updatedText,
                       _selectedPdfPath,
                     );
+                    _clearReadStartMarker();
                     _selectedPdfBytes = updatedBytes;
                     _freeTextEditMode = false;
                     if (currentPath != null) {

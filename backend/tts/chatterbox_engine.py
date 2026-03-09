@@ -12,7 +12,11 @@ import soundfile as sf
 from scipy import signal
 
 from .audio_utils import merge_audio_chunks
-from .runtime_paths import get_cloner_user_voices_dir, get_runtime_output_dir
+from .runtime_paths import (
+    ensure_valid_cwd,
+    get_cloner_user_voices_dir,
+    get_runtime_output_dir,
+)
 from .text_chunking import smart_chunk_text
 
 # Keep MLX import lazy to avoid backend startup aborts on machines without a
@@ -74,6 +78,9 @@ class ChatterboxEngine:
         """Load the Chatterbox model."""
         if self.model is not None:
             return self.model
+
+        # Keep cwd valid before mlx_audio imports transformers internals.
+        ensure_valid_cwd(Path(__file__).resolve().parent.parent)
 
         try:
             from mlx_audio.tts import load as load_tts_model

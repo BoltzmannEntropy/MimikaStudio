@@ -1,10 +1,10 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>v2026.02</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
+  <code>v2026.03.5</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
-  <h1>Clone any voice <i>in seconds</i> + Agentic MCP Support</h1>
-  <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and agentic MCP automation.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
+  <h1>Clone any voice <i>in seconds</i> + Agentic Voice Cloning Server</h1>
+  <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and an agentic voice cloning server with state-of-the-art job queue orchestration.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
   <br>
   <a href="https://boltzmannentropy.github.io/mimikastudio.github.io/"><strong>Get Started</strong></a>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;<a href="https://github.com/BoltzmannEntropy/MimikaStudio"><strong>View on GitHub</strong></a>
   <br><br>
@@ -16,7 +16,7 @@
 
 > **Custom Voice Cloning** | **Text-to-Speech** | **PDF Read Aloud** | **Audiobook Creator** | **MCP & API Dashboard**
 
-A local-first application for **macOS (Apple Silicon)** with four integrated capabilities and production-oriented workflows: **clone any voice** from as little as 3 seconds of reference audio using multiple engines (Qwen3-TTS and Chatterbox), generate **high-quality text-to-speech** with fast and expressive model families (Kokoro and Supertonic), **read documents aloud** with sentence-level highlighting and synchronized progression (PDF, DOCX, EPUB, Markdown, TXT), and **convert full documents to audiobooks** with queueable chapter generation and reusable voice presets. MimikaStudio runs fully on-device, includes first-run model download management, and exposes both UI and API paths for advanced local automation.
+A local-first application for **macOS (Apple Silicon)** with four integrated capabilities and production-oriented workflows: **clone any voice** from as little as 3 seconds of reference audio using multiple engines (Qwen3-TTS and Chatterbox), generate **high-quality text-to-speech** with fast and expressive model families (Kokoro and Supertonic), **read documents aloud** with sentence-level highlighting and synchronized progression (PDF, DOCX, EPUB, Markdown, TXT), and **convert full documents to audiobooks** with queueable chapter generation and reusable voice presets. MimikaStudio also operates as an **agentic voice cloning server** with a **state-of-the-art jobs queue** for TTS, cloning, and audiobook pipelines. It runs fully on-device, includes first-run model download management, and exposes both UI and API paths for advanced local automation.
 
 License: Source code is licensed under Business Source License 1.1 (BSL-1.1), and binary distributions are licensed under the MimikaStudio Binary Distribution License. See LICENSE, BINARY-LICENSE.txt, and the website License page.
 
@@ -308,7 +308,7 @@ Starting Flutter UI (dev mode)...
 
 ## Platforms
 
-MimikaStudio ships a desktop UI backed by the same local FastAPI server:
+MimikaStudio ships a desktop UI backed by the same local FastAPI agentic voice cloning server:
 
 **macOS Desktop App** (default): `./bin/mimikactl up`
 
@@ -355,7 +355,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 
 - **Read Aloud Document Reader**: Read PDF, DOCX, EPUB, Markdown, and TXT aloud with sentence-by-sentence highlighting
 - **Audiobook Creator**: Convert documents into WAV/MP3/M4B audiobooks with smart chunking, crossfade merging, progress tracking, and chapter markers (Kokoro voices only)
-- **Unified Jobs Queue**: Track every executed job (TTS, voice clone, and audiobook) with status and inline playback controls
+- **State-of-the-Art Unified Jobs Queue**: Track, schedule, and monitor every executed job (TTS, voice clone, and audiobook) with queue state, progress, and inline playback controls
 - **Shared Voice Library**: Voice samples shared across all cloning engines (Qwen3, Chatterbox)
 - **Model Manager**: In-app model download manager — check status and download models on demand
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
@@ -380,16 +380,39 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices (IPA transcription is not part of the current release)
 - **Default Voice Samples**: Max, Natasha, Sara, and Suzan ship with the app; user uploads are stored in `~/MimikaStudio/data/user_voices/cloners/` by default (or `MIMIKA_DATA_DIR`)
 - **User Voices in UI**: Uploaded voices appear immediately under each engine's **Your Voices** section
-- **Jobs Tab**: Unified queue of TTS, voice clone, and audiobook jobs with progress, completion state, and playback controls
+- **Jobs Tab**: State-of-the-art unified queue of TTS, voice clone, and audiobook jobs with live progress, completion state, and playback controls
 - **Folder View in Settings**: View and open user home, Mimika data, logs, default voices (Natasha/Suzan), and user clone voices folders directly from the app
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)
 - **CLI Tool**: Full command-line interface for Kokoro and Qwen3
 - **MCP & API Dashboard**: Built-in tab showing all MCP tools and REST endpoints with live server status
+- **Settings Workspace**: General, MCP, Pro, and About are grouped under Settings sub-tabs
 - **MCP Server**: Full MCP integration for programmatic access to all API endpoints
 - **Windows Installer**: PyInstaller + Inno Setup build script for standalone Windows distribution
 - **60+ REST API endpoints** with FastAPI (auto-documented at `/docs`)
+
+### Voice Prompts Workflow
+
+The **Voice Prompts** tab is the shared library for voice cloning. Add a voice once and reuse it across **Qwen3 Clone**, **Chatterbox**, and **IndexTTS-2** clone flows without re-uploading the sample for each engine.
+
+- Search, filter, preview, edit, and delete saved prompts from one library
+- Default voices ship with the app, and uploaded prompts appear immediately in clone screens
+- The same prompt metadata is reused across local clone engines
+
+![Voice Prompts Library](assets/17-voice-prompts.png)
+
+### Clone from YouTube
+
+MimikaStudio can turn a YouTube clip into a reusable voice prompt without leaving the app:
+
+1. Open **Voice Prompts > Import YouTube**
+2. Paste a YouTube URL and optionally set a start time
+3. Download a 20-second preview and listen to it locally
+4. Save the preview as a named voice prompt with optional transcript, gender, and language metadata
+5. Use that saved prompt from the clone screens just like any uploaded reference voice
+
+![YouTube Voice Prompt Import](assets/16-voice-prompt-youtube.png)
 
 ---
 

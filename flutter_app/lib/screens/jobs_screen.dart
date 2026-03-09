@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../services/api_service.dart';
+import '../widgets/generation_metrics_dialog.dart';
 
 class JobsScreen extends StatefulWidget {
   const JobsScreen({super.key});
@@ -183,6 +184,25 @@ class _JobsScreenState extends State<JobsScreen> {
     );
   }
 
+  Future<void> _showGenerationMetrics(Map<String, dynamic> job) async {
+    final jobId = (job['id'] as String?) ?? '';
+    if (jobId.isEmpty) return;
+    try {
+      final payload = await _api.getJobGenerationMetrics(jobId);
+      if (!mounted) return;
+      await showGenerationMetricsDialog(
+        context,
+        title: jobId,
+        payload: payload,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Metrics unavailable: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -245,11 +265,14 @@ class _JobsScreenState extends State<JobsScreen> {
               final elapsedSeconds = _elapsedSecondsFromTimestamp(rawTs);
               final chars = job['chars'];
               final percent = job['percent'];
+              final queuePosition =
+                  (job['queue_position'] as num?)?.toInt() ?? 0;
               final outputPath = (job['output_path'] as String?) ?? '';
               final hasAudio =
                   (job['audio_url'] as String?) != null &&
                   (job['audio_url'] as String).isNotEmpty;
               final hasText = _jobText(job).isNotEmpty;
+              final canShowMetrics = status == 'completed' && hasAudio;
               final isThisPlaying =
                   _playingJobId == (job['id'] as String? ?? '');
 
@@ -292,6 +315,22 @@ class _JobsScreenState extends State<JobsScreen> {
                           ),
                           const SizedBox(width: 4),
                           IconButton(
+                            icon: const Icon(Icons.insights_rounded, size: 16),
+                            onPressed: canShowMetrics
+                                ? () => _showGenerationMetrics(job)
+                                : null,
+                            tooltip: canShowMetrics
+                                ? 'Generation metrics'
+                                : 'Metrics unavailable',
+                            visualDensity: VisualDensity.compact,
+                            constraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 28,
+                            ),
+                            padding: EdgeInsets.zero,
+                          ),
+                          const SizedBox(width: 2),
+                          IconButton(
                             icon: const Icon(
                               Icons.content_copy_rounded,
                               size: 16,
@@ -329,6 +368,18 @@ class _JobsScreenState extends State<JobsScreen> {
                         const SizedBox(height: 4),
                         Text(
                           'chars: ${chars ?? '-'}${percent != null ? ' • ${percent.toString()}%' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                      if (queuePosition > 0 && status != 'completed') ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          'queue position: $queuePosition',
                           style: TextStyle(
                             fontSize: 12,
                             color: Theme.of(

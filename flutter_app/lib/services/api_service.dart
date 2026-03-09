@@ -513,7 +513,9 @@ class ApiService {
       if (jobId != null && jobId.isNotEmpty) {
         return _awaitJobAudioUrl(jobId, actionLabel: 'Qwen3 generation');
       }
-      throw Exception('Failed to generate Qwen3 audio: missing audio_url/job_id');
+      throw Exception(
+        'Failed to generate Qwen3 audio: missing audio_url/job_id',
+      );
     }
     throw _apiError('Failed to generate Qwen3 audio', response);
   }
@@ -900,57 +902,44 @@ class ApiService {
   // ============== LLM Configuration ==============
 
   Future<Map<String, dynamic>> getLlmConfig() async {
-    final response = await _get(Uri.parse('$baseUrl/api/llm/config'));
-    if (response.statusCode == 200) {
-      return _decodeJson(response.body);
-    }
-    throw _apiError('Failed to load LLM config', response);
+    return {
+      'provider': 'claude',
+      'model': 'claude-sonnet-4-20250514',
+      'api_key': null,
+      'api_base': null,
+      'available_providers': ['claude', 'openai', 'ollama', 'claude_code_cli'],
+      'status': 'local_defaults',
+    };
   }
 
   Future<List<String>> getOllamaModels() async {
-    try {
-      final response = await _get(Uri.parse('$baseUrl/api/llm/ollama/models'));
-      if (response.statusCode == 200) {
-        final data = _decodeJson(response.body);
-        if (data['available'] == true) {
-          return List<String>.from(data['models']);
-        }
-      }
-      return [];
-    } catch (e) {
-      return [];
-    }
+    return [];
   }
 
   Future<void> updateLlmConfig(Map<String, dynamic> config) async {
-    final response = await _post(
-      Uri.parse('$baseUrl/api/llm/config'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode(config),
-    );
-    if (response.statusCode != 200) {
-      throw _apiError('Failed to update LLM config', response);
-    }
+    // Legacy no-op: LLM config endpoints are not part of the active backend.
+    return;
   }
 
   // ============== Emma IPA ==============
 
   Future<List<Map<String, dynamic>>> getEmmaIpaSamples() async {
-    final response = await _get(Uri.parse('$baseUrl/api/ipa/samples'));
-    if (response.statusCode == 200) {
-      final data = _decodeJson(response.body);
-      return List<Map<String, dynamic>>.from(data['samples']);
-    }
-    throw _apiError('Failed to load Emma IPA samples', response);
+    final text = _defaultEmmaIpaText;
+    return [
+      {
+        'id': 'default',
+        'name': 'Default',
+        'input_text': text,
+        'version1_ipa': _toIpaLike(text),
+        'has_preloaded_ipa': true,
+        'is_default': true,
+        'audio_url': null,
+      },
+    ];
   }
 
   Future<String> getEmmaIpaSampleText() async {
-    final response = await _get(Uri.parse('$baseUrl/api/ipa/sample'));
-    if (response.statusCode == 200) {
-      final data = _decodeJson(response.body);
-      return data['text'] as String;
-    }
-    throw _apiError('Failed to load Emma IPA sample text', response);
+    return _defaultEmmaIpaText;
   }
 
   Future<Map<String, dynamic>> generateEmmaIpa({
@@ -958,28 +947,28 @@ class ApiService {
     String? provider,
     String? model,
   }) async {
-    final response = await _post(
-      Uri.parse('$baseUrl/api/ipa/generate'),
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'text': text,
-        if (provider != null) 'provider': provider,
-        if (model != null) 'model': model,
-      }),
-    );
-    if (response.statusCode == 200) {
-      return _decodeJson(response.body);
-    }
-    throw _apiError('Failed to generate Emma IPA', response);
+    final ipa = _toIpaLike(text);
+    return {
+      'ipa': ipa,
+      'version1': ipa,
+      'provider': provider ?? 'local',
+      'model': model ?? 'local',
+    };
   }
 
   Future<Map<String, dynamic>> getEmmaIpaPregenerated() async {
-    final response = await _get(Uri.parse('$baseUrl/api/ipa/pregenerated'));
-    if (response.statusCode == 200) {
-      return _decodeJson(response.body);
-    }
-    throw _apiError('Failed to load pregenerated IPA', response);
+    final text = _defaultEmmaIpaText;
+    return {
+      'text': text,
+      'ipa': _toIpaLike(text),
+      'status': 'local_defaults',
+    };
   }
+
+  static const String _defaultEmmaIpaText =
+      'The quick brown fox jumps over the lazy dog.';
+
+  String _toIpaLike(String text) => text.trim();
 
   // ============== Audiobook Generation ==============
 
@@ -1266,6 +1255,249 @@ class ApiService {
       throw Exception('Failed to parse job response');
     }
     throw _apiError('Failed to load job', response);
+  }
+
+  Future<Map<String, dynamic>> getAudioGenerationMetrics(
+    String filename,
+  ) async {
+    final safeName = Uri.encodeComponent(filename);
+    final response = await _get(
+      Uri.parse('$baseUrl/api/metrics/audio/$safeName'),
+    );
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body) as Map<String, dynamic>;
+    }
+    throw _apiError('Failed to load generation metrics', response);
+  }
+
+  Future<Map<String, dynamic>> getJobGenerationMetrics(String jobId) async {
+    final safeId = Uri.encodeComponent(jobId);
+    final response = await _get(Uri.parse('$baseUrl/api/jobs/$safeId/metrics'));
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body) as Map<String, dynamic>;
+    }
+    throw _apiError('Failed to load job metrics', response);
+  }
+
+  Future<List<Map<String, dynamic>>> getVoicePrompts({
+    String search = '',
+    String gender = '',
+    String language = '',
+    String source = '',
+    String sortBy = 'name',
+    String sortOrder = 'asc',
+  }) async {
+    final queryParams = <String, String>{
+      if (search.trim().isNotEmpty) 'search': search.trim(),
+      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
+      if (language.trim().isNotEmpty) 'language': language.trim(),
+      if (source.trim().isNotEmpty) 'source': source.trim(),
+      'sort_by': sortBy,
+      'sort_order': sortOrder,
+    };
+    final uri = Uri.parse(
+      '$baseUrl/api/voice-prompts',
+    ).replace(queryParameters: queryParams);
+    final response = await _get(uri);
+    if (response.statusCode == 200) {
+      final data = _decodeJson(response.body) as Map<String, dynamic>;
+      return List<Map<String, dynamic>>.from(
+        data['voices'] as List<dynamic>? ?? const [],
+      );
+    }
+    throw _apiError('Failed to load voice prompts', response);
+  }
+
+  Future<Map<String, dynamic>> uploadVoicePrompt({
+    required String name,
+    required Uint8List fileBytes,
+    required String fileName,
+    String transcript = '',
+    String gender = '',
+    String language = '',
+    String source = 'local',
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/voice-prompts'),
+    );
+    request.fields['name'] = name;
+    request.fields['transcript'] = transcript;
+    request.fields['gender'] = gender;
+    request.fields['language'] = language;
+    request.fields['source'] = source;
+    request.files.add(
+      http.MultipartFile.fromBytes('file', fileBytes, filename: fileName),
+    );
+
+    final response = await request.send().timeout(_requestTimeout);
+    final body = await response.stream.bytesToString();
+    if (response.statusCode != 200) {
+      throw Exception('Failed to upload voice prompt: $body');
+    }
+    if (body.trim().isEmpty) {
+      return const {};
+    }
+    final parsed = _decodeJson(body);
+    if (parsed is Map<String, dynamic>) {
+      return parsed;
+    }
+    return const {};
+  }
+
+  Future<Map<String, dynamic>> importVoicePromptFromYoutube({
+    required String url,
+    required String name,
+    String transcript = '',
+    String gender = '',
+    String language = '',
+    double? startSec,
+  }) async {
+    final payload = <String, dynamic>{
+      'url': url,
+      'name': name,
+      'transcript': transcript,
+      'gender': gender,
+      'language': language,
+      if (startSec != null) 'start_sec': startSec,
+    };
+    final response = await _post(
+      Uri.parse('$baseUrl/api/voice-prompts/import/youtube'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(payload),
+      timeout: const Duration(minutes: 6),
+    );
+    if (response.statusCode == 200) {
+      final parsed = _decodeJson(response.body);
+      if (parsed is Map<String, dynamic>) {
+        return parsed;
+      }
+      return const {};
+    }
+    throw _apiError('Failed to import voice prompt from YouTube', response);
+  }
+
+  Future<Map<String, dynamic>> previewVoicePromptFromYoutube({
+    required String url,
+    double? startSec,
+  }) async {
+    final payload = <String, dynamic>{
+      'url': url,
+      if (startSec != null) 'start_sec': startSec,
+    };
+    final response = await _post(
+      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/preview'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(payload),
+      timeout: const Duration(minutes: 6),
+    );
+    if (response.statusCode == 200) {
+      final parsed = _decodeJson(response.body);
+      if (parsed is Map<String, dynamic>) {
+        return parsed;
+      }
+      return const {};
+    }
+    throw _apiError('Failed to preview voice prompt from YouTube', response);
+  }
+
+  Future<Map<String, dynamic>> commitYoutubeVoicePrompt({
+    required String previewId,
+    required String name,
+    String transcript = '',
+    String gender = '',
+    String language = '',
+  }) async {
+    final payload = <String, dynamic>{
+      'preview_id': previewId,
+      'name': name,
+      'transcript': transcript,
+      'gender': gender,
+      'language': language,
+    };
+    final response = await _post(
+      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/commit'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode(payload),
+      timeout: const Duration(seconds: 120),
+    );
+    if (response.statusCode == 200) {
+      final parsed = _decodeJson(response.body);
+      if (parsed is Map<String, dynamic>) {
+        return parsed;
+      }
+      return const {};
+    }
+    throw _apiError('Failed to save YouTube preview as voice prompt', response);
+  }
+
+  Future<void> deleteYoutubeVoicePromptPreview(String previewId) async {
+    final safeId = Uri.encodeComponent(previewId);
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/preview/$safeId'),
+    );
+    if (response.statusCode != 200) {
+      throw _apiError('Failed to delete YouTube preview', response);
+    }
+  }
+
+  Future<Map<String, dynamic>> updateVoicePrompt(
+    String name, {
+    String? newName,
+    String? transcript,
+    String? gender,
+    String? language,
+    String? source,
+    Uint8List? fileBytes,
+    String? fileName,
+  }) async {
+    final safeName = Uri.encodeComponent(name);
+    final request = http.MultipartRequest(
+      'PUT',
+      Uri.parse('$baseUrl/api/voice-prompts/$safeName'),
+    );
+    if (newName != null) request.fields['new_name'] = newName;
+    if (transcript != null) request.fields['transcript'] = transcript;
+    if (gender != null) request.fields['gender'] = gender;
+    if (language != null) request.fields['language'] = language;
+    if (source != null) request.fields['source'] = source;
+    if (fileBytes != null) {
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName ?? 'voice.wav',
+        ),
+      );
+    }
+    final response = await request.send().timeout(_requestTimeout);
+    final body = await response.stream.bytesToString();
+    if (response.statusCode != 200) {
+      throw Exception('Failed to update voice prompt: $body');
+    }
+    if (body.trim().isEmpty) {
+      return const {};
+    }
+    final parsed = _decodeJson(body);
+    if (parsed is Map<String, dynamic>) {
+      return parsed;
+    }
+    return const {};
+  }
+
+  Future<void> deleteVoicePrompt(String name) async {
+    final safeName = Uri.encodeComponent(name);
+    final response = await _delete(
+      Uri.parse('$baseUrl/api/voice-prompts/$safeName'),
+    );
+    if (response.statusCode != 200) {
+      throw _apiError('Failed to delete voice prompt', response);
+    }
+  }
+
+  String getVoicePromptAudioUrl(String name) {
+    final safeName = Uri.encodeComponent(name);
+    return '$baseUrl/api/voice-prompts/$safeName/audio';
   }
 
   // ============== MCP Server ==============

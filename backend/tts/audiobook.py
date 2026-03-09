@@ -17,6 +17,10 @@ import time
 import threading
 import subprocess
 import shutil
+import json
+import os
+import sys
+from datetime import datetime
 from html import unescape
 from zipfile import ZipFile
 import xml.etree.ElementTree as ET
@@ -123,6 +127,8 @@ class AudiobookJob:
 
     # Subtitle entries (built during generation)
     subtitles: List[SubtitleEntry] = field(default_factory=list)
+    chunk_generation_seconds: List[float] = field(default_factory=list)
+    queue_position: int = 0
 
     def request_cancel(self):
         self._cancel_requested = True
@@ -159,6 +165,38 @@ class AudiobookJob:
 # Global job storage
 _jobs: dict[str, AudiobookJob] = {}
 _jobs_lock = threading.Lock()
+_queue: list[tuple[AudiobookJob, list[str]]] = []
+_queue_lock = threading.Lock()
+_queue_worker: Optional[threading.Thread] = None
+
+
+def _refresh_queue_positions_locked() -> None:
+    for index, (job, _chunks) in enumerate(_queue):
+        job.queue_position = index + 1
+
+
+def _queue_worker_loop() -> None:
+    while True:
+        queued: Optional[tuple[AudiobookJob, list[str]]] = None
+        with _queue_lock:
+            if _queue:
+                queued = _queue.pop(0)
+                _refresh_queue_positions_locked()
+        if queued is None:
+            time.sleep(0.1)
+            continue
+        job, chunks = queued
+        job.queue_position = 0
+        _generate_audiobook(job, chunks)
+
+
+def _ensure_queue_worker_running() -> None:
+    global _queue_worker
+    with _queue_lock:
+        if _queue_worker is not None and _queue_worker.is_alive():
+            return
+        _queue_worker = threading.Thread(target=_queue_worker_loop, daemon=True)
+        _queue_worker.start()
 
 
 def chunk_text_for_kokoro(text: str, max_chars: int = 1500) -> list[str]:
@@ -573,13 +611,10 @@ def create_audiobook_job(
     with _jobs_lock:
         _jobs[job_id] = job
 
-    # Start generation in background thread
-    thread = threading.Thread(
-        target=_generate_audiobook,
-        args=(job, chunks),
-        daemon=True,
-    )
-    thread.start()
+    with _queue_lock:
+        _queue.append((job, chunks))
+        _refresh_queue_positions_locked()
+    _ensure_queue_worker_running()
 
     return job
 
@@ -655,16 +690,104 @@ def create_audiobook_from_file(
 
 
 def _convert_to_mp3(wav_path: Path, mp3_path: Path, bitrate: str = "192k") -> Path:
-    """Convert WAV file to MP3 using pydub."""
-    from pydub import AudioSegment
+    """Convert WAV file to MP3 using ffmpeg/avconv if available."""
+    converter_binary = _resolve_audio_converter_binary()
+    if not converter_binary:
+        print("[Audiobook] ffmpeg/avconv not found, keeping WAV output")
+        return wav_path
 
-    audio = AudioSegment.from_wav(str(wav_path))
-    audio.export(str(mp3_path), format="mp3", bitrate=bitrate)
+    try:
+        subprocess.run([
+            converter_binary,
+            "-y",
+            "-i",
+            str(wav_path),
+            "-b:a",
+            bitrate,
+            str(mp3_path),
+        ], check=True, capture_output=True)
 
-    # Remove the temporary WAV file
-    wav_path.unlink()
+        # Remove the temporary WAV file once MP3 is successfully written.
+        wav_path.unlink(missing_ok=True)
+        return mp3_path
+    except (subprocess.CalledProcessError, OSError) as e:
+        stderr = ""
+        if isinstance(e, subprocess.CalledProcessError):
+            stderr = e.stderr.decode(errors="ignore").strip()
+        else:
+            stderr = str(e)
+        if stderr:
+            print(f"[Audiobook] MP3 conversion error: {stderr}")
+        print("[Audiobook] MP3 conversion failed, keeping WAV output")
+        mp3_path.unlink(missing_ok=True)
+        return wav_path
 
-    return mp3_path
+
+def _resolve_audio_converter_binary() -> Optional[str]:
+    """
+    Resolve an ffmpeg-compatible converter binary path.
+
+    Runtime environments launched from app bundles may have a restricted PATH,
+    so we probe common install locations and app-relative candidates.
+    """
+    env_vars = (
+        "MIMIKA_FFMPEG_PATH",
+        "FFMPEG_BINARY",
+        "IMAGEIO_FFMPEG_EXE",
+    )
+    for var_name in env_vars:
+        raw = (os.getenv(var_name) or "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    for binary_name in ("ffmpeg", "avconv"):
+        resolved = shutil.which(binary_name)
+        if resolved:
+            return resolved
+
+    candidate_paths: list[Path] = []
+
+    common_roots = (
+        Path("/opt/homebrew/bin"),
+        Path("/opt/local/bin"),
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+    )
+    for root in common_roots:
+        candidate_paths.append(root / "ffmpeg")
+        candidate_paths.append(root / "avconv")
+
+    module_dir = Path(__file__).resolve().parent
+    backend_dir = module_dir.parent
+    search_roots = {
+        module_dir,
+        backend_dir,
+        backend_dir.parent,
+        Path(sys.executable).resolve().parent,
+        Path(sys.executable).resolve().parent.parent,
+    }
+
+    for root in search_roots:
+        candidate_paths.append(root / "ffmpeg")
+        candidate_paths.append(root / "avconv")
+        candidate_paths.append(root / "bin" / "ffmpeg")
+        candidate_paths.append(root / "bin" / "avconv")
+        candidate_paths.append(root / "python" / "bin" / "ffmpeg")
+        candidate_paths.append(root / "python" / "bin" / "avconv")
+
+    seen: set[str] = set()
+    for candidate in candidate_paths:
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return key
+
+    return None
 
 
 def _convert_to_m4b(
@@ -678,8 +801,9 @@ def _convert_to_m4b(
     Convert WAV to M4B audiobook format with chapter markers using ffmpeg.
     Based on audiblez's approach.
     """
-    if not shutil.which('ffmpeg'):
-        print("[Audiobook] ffmpeg not found, falling back to MP3")
+    converter_binary = _resolve_audio_converter_binary()
+    if not converter_binary:
+        print("[Audiobook] ffmpeg/avconv not found, falling back to MP3/WAV")
         mp3_path = m4b_path.with_suffix('.mp3')
         return _convert_to_mp3(wav_path, mp3_path)
 
@@ -700,7 +824,7 @@ def _convert_to_m4b(
     # Convert to M4B using ffmpeg
     try:
         subprocess.run([
-            'ffmpeg', '-y',
+            converter_binary, '-y',
             '-i', str(wav_path),
             '-i', str(metadata_path),
             '-map_metadata', '1',
@@ -710,15 +834,20 @@ def _convert_to_m4b(
         ], check=True, capture_output=True)
 
         # Cleanup
-        wav_path.unlink()
-        metadata_path.unlink()
+        wav_path.unlink(missing_ok=True)
+        metadata_path.unlink(missing_ok=True)
 
         return m4b_path
 
-    except subprocess.CalledProcessError as e:
-        print(f"[Audiobook] ffmpeg error: {e.stderr.decode()}")
+    except (subprocess.CalledProcessError, OSError) as e:
+        if isinstance(e, subprocess.CalledProcessError):
+            error_text = e.stderr.decode(errors='ignore')
+        else:
+            error_text = str(e)
+        print(f"[Audiobook] ffmpeg/avconv error: {error_text}")
         # Fallback to MP3
         mp3_path = m4b_path.with_suffix('.mp3')
+        m4b_path.unlink(missing_ok=True)
         metadata_path.unlink(missing_ok=True)
         return _convert_to_mp3(wav_path, mp3_path)
 
@@ -771,6 +900,8 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
 
     try:
         job.status = JobStatus.PROCESSING
+        job.queue_position = 0
+        job.chunk_generation_seconds = []
 
         # Track which chapter we're in
         chapter_char_counts = []
@@ -793,7 +924,9 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
             chunk_chars = len(chunk)
 
             # Generate audio for this chunk
+            chunk_started = time.time()
             chunk_audio, chunk_sr = _generate_chunk_audio(job, chunk)
+            job.chunk_generation_seconds.append(max(0.0, time.time() - chunk_started))
 
             if chunk_audio is not None and len(chunk_audio) > 0:
                 if sample_rate is None:
@@ -918,6 +1051,38 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
             if subtitle_file:
                 job.subtitle_path = subtitle_file
                 print(f"[Audiobook] Subtitles written: {subtitle_file.name}")
+
+            # Persist generation metrics for library inspection.
+            metrics_payload = {
+                "started_at": datetime.utcfromtimestamp(job.started_at).isoformat() + "Z",
+                "completed_at": datetime.utcfromtimestamp(time.time()).isoformat() + "Z",
+                "total_time_seconds": round(max(0.0, job.elapsed_seconds), 4),
+                "total_chunks": len(job.chunk_generation_seconds),
+                "chunk_durations_seconds": [
+                    round(max(0.0, value), 4) for value in job.chunk_generation_seconds
+                ],
+                "avg_chunk_time_seconds": round(
+                    (sum(job.chunk_generation_seconds) / len(job.chunk_generation_seconds))
+                    if job.chunk_generation_seconds
+                    else 0.0,
+                    4,
+                ),
+                "min_chunk_time_seconds": round(
+                    min(job.chunk_generation_seconds) if job.chunk_generation_seconds else 0.0,
+                    4,
+                ),
+                "max_chunk_time_seconds": round(
+                    max(job.chunk_generation_seconds) if job.chunk_generation_seconds else 0.0,
+                    4,
+                ),
+            }
+            try:
+                output_file.with_suffix(".metrics.json").write_text(
+                    json.dumps(metrics_payload, ensure_ascii=True, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
 
             # Update job with results
             job.audio_path = output_file
