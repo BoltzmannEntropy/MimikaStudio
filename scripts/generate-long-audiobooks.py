@@ -8,13 +8,14 @@ Usage:
     python scripts/generate-long-audiobooks.py
 
 This generates two audiobook demos:
-- long-history-emma.mp3 (British female, Emma voice)
-- long-history-george.mp3 (British male, George voice)
+- long-meditations-emma.mp3 (British female, Emma voice)
+- long-meditations-george.mp3 (British male, George voice)
 
 Using speed 0.95 for a natural, slightly slower reading pace.
 """
 
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -24,52 +25,85 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 BACKEND_DIR = SCRIPT_DIR.parent / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
-# Max characters to process (keeps demos reasonable ~5 min each)
-MAX_CHARS = 15000
+# Max characters to process (keeps demos long-form but practical to regenerate)
+MAX_CHARS = 14000
 
 # Voices to generate with
 VOICES = [
-    ("bf_emma", "long-history-emma"),
-    ("bm_george", "long-history-george"),
+    ("bf_emma", "long-meditations-emma"),
+    ("bm_george", "long-meditations-george"),
 ]
 
 # Speech speed (0.95 for natural, slightly slower)
 SPEED = 0.95
+TEXT_FILE = "public_domain_philosophy_meditations_excerpt.txt"
+
+
+def _normalize_text(raw_text: str) -> str:
+    raw_text = raw_text.replace("\ufeff", "").replace("\r\n", "\n").replace("\r", "\n")
+
+    if "------------------------------------------------------------" in raw_text:
+        raw_text = raw_text.split("------------------------------------------------------------", 1)[1]
+
+    text = raw_text.strip()
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = text.replace("--", ", ")
+
+    paragraphs = []
+    for block in re.split(r"\n\s*\n+", text):
+        block = block.strip()
+        if not block:
+            continue
+        block = re.sub(r"\s*\n\s*", " ", block)
+        block = re.sub(r"\s+", " ", block).strip()
+        block = re.sub(r" (?=([IVXLCDM]{1,7}\.) [A-Z])", "\n\n", block)
+        paragraphs.extend(part.strip() for part in block.split("\n\n") if part.strip())
+
+    return "\n\n".join(paragraphs)
+
+
+def _trim_to_sentence_boundary(text: str, max_chars: int) -> str:
+    from tts.text_chunking import split_into_sentences
+
+    sentences = split_into_sentences(text)
+    selected = []
+    total = 0
+
+    for sentence in sentences:
+        addition = len(sentence) + (1 if selected else 0)
+        if total + addition > max_chars:
+            break
+        selected.append(sentence)
+        total += addition
+
+    return " ".join(selected).strip() if selected else text[:max_chars].strip()
+
+
+def _validate_no_broken_words(text: str) -> None:
+    suspicious_patterns = [
+        r"\b[a-zA-Z]{1,20}-\s+[a-zA-Z]{2,20}\b",
+        r"\b[a-zA-Z]{1,20}-\n[a-zA-Z]{2,20}\b",
+    ]
+
+    for pattern in suspicious_patterns:
+        match = re.search(pattern, text)
+        if match:
+            raise ValueError(f"Suspicious split-word pattern found in source text: {match.group(0)!r}")
 
 
 def load_text() -> str:
     """Load the public domain text excerpt."""
-    text_file = BACKEND_DIR / "data" / "texts" / "public_domain_history_wells_excerpt.txt"
+    text_file = BACKEND_DIR / "data" / "texts" / TEXT_FILE
     if not text_file.exists():
         print(f"Error: Text file not found: {text_file}")
         sys.exit(1)
 
     with open(text_file, "r", encoding="utf-8") as f:
-        text = f.read()
+        raw_text = f.read()
 
-    # Skip header lines and clean up
-    lines = text.split("\n")
-    content_lines = []
-    in_content = False
-
-    for line in lines:
-        if line.startswith("---"):
-            in_content = True
-            continue
-        if in_content:
-            content_lines.append(line)
-
-    content = "\n".join(content_lines).strip()
-
-    # Truncate to MAX_CHARS
-    if len(content) > MAX_CHARS:
-        # Find a good break point (end of sentence)
-        truncated = content[:MAX_CHARS]
-        last_period = truncated.rfind(".")
-        if last_period > MAX_CHARS * 0.8:
-            truncated = truncated[:last_period + 1]
-        content = truncated
-
+    content = _normalize_text(raw_text)
+    content = _trim_to_sentence_boundary(content, MAX_CHARS)
+    _validate_no_broken_words(content)
     return content
 
 

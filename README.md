@@ -98,12 +98,12 @@ Expressive voice cloning with emotion control. Natural, emotive speech synthesis
 
 ### Long-Form Audiobook Examples
 
-Full audiobook excerpts generated with Kokoro TTS from H.G. Wells' "A Short History of the World" (public domain). Generated at 0.95x speed for natural pacing.
+Full audiobook excerpts generated with Kokoro TTS from Marcus Aurelius' "Meditations" (public domain). The source excerpt is normalized before generation to avoid broken mid-word line-wrap artifacts. Generated at 0.95x speed for natural pacing.
 
 | Voice | Duration | Sample |
 |-------|----------|--------|
-| **Emma** (British RP Female) | ~17 min | [long-history-emma.mp3](backend/data/pregenerated/long-history-emma.mp3) |
-| **George** (British Male) | ~19 min | [long-history-george.mp3](backend/data/pregenerated/long-history-george.mp3) |
+| **Emma** (British RP Female) | 12m 28s | [long-meditations-emma.mp3](backend/data/pregenerated/long-meditations-emma.mp3) |
+| **George** (British Male) | 13m 36s | [long-meditations-george.mp3](backend/data/pregenerated/long-meditations-george.mp3) |
 
 ### Supertonic TTS
 
@@ -136,8 +136,8 @@ All shipped pregenerated demo files in `backend/data/pregenerated`:
 | Supertonic | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) | Preset M2 multilingual ONNX demo |
 | CosyVoice3 | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) | CosyVoice3 F1/Eden standalone ONNX demo |
 | CosyVoice3 | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) | CosyVoice3 M2/Atlas standalone ONNX demo |
-| Kokoro | [long-history-emma.mp3](backend/data/pregenerated/long-history-emma.mp3) | Long-form audiobook demo (Emma, British female, 0.95x speed) |
-| Kokoro | [long-history-george.mp3](backend/data/pregenerated/long-history-george.mp3) | Long-form audiobook demo (George, British male, 0.95x speed) |
+| Kokoro | [long-meditations-emma.mp3](backend/data/pregenerated/long-meditations-emma.mp3) | Long-form audiobook demo (Emma, British female, Marcus Aurelius excerpt, 0.95x speed) |
+| Kokoro | [long-meditations-george.mp3](backend/data/pregenerated/long-meditations-george.mp3) | Long-form audiobook demo (George, British male, Marcus Aurelius excerpt, 0.95x speed) |
 
 Kokoro short examples are bundled under `backend/data/samples/kokoro/`. Long-form audiobook demos are in `backend/data/pregenerated/`.
 
