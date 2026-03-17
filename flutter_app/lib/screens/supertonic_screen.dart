@@ -42,18 +42,17 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
   int _silenceMs = 300;
 
   bool _isLoading = false;
-  bool _isGenerating = false;
   String? _audioUrl;
   String? _error;
 
   List<Map<String, dynamic>> _audioFiles = [];
+  final Map<String, Map<String, dynamic>> _pendingAudioFiles = {};
   bool _isLoadingAudioFiles = false;
   String? _playingAudioId;
   bool _isAudioPaused = false;
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
   bool _isSidebarCollapsed = false;
-  Map<String, dynamic>? _pendingAudioFile;
 
   @override
   void initState() {
@@ -153,31 +152,45 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
   }
 
   List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
-    final pending = _pendingAudioFile;
-    if (pending == null) {
+    if (_pendingAudioFiles.isEmpty) {
       return files;
     }
-    final pendingId = pending['id']?.toString() ?? '';
+    final pendingIds = _pendingAudioFiles.keys.toSet();
     final merged = files
-        .where((file) => (file['id']?.toString() ?? '') != pendingId)
+        .where((file) => !pendingIds.contains(file['id']?.toString() ?? ''))
         .toList();
-    return [pending, ...merged];
+    final pendingList = _pendingAudioFiles.values.toList()
+      ..sort((a, b) {
+        final aTime = DateTime.tryParse(a['created_at'] as String? ?? '') ?? DateTime.now();
+        final bTime = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
+        return bTime.compareTo(aTime);
+      });
+    return [...pendingList, ...merged];
   }
 
-  void _setPendingAudioFile(Map<String, dynamic>? file) {
-    final pendingId = _pendingAudioFile?['id']?.toString() ?? '';
-    final existing = _audioFiles
-        .where((item) => (item['id']?.toString() ?? '') != pendingId)
-        .toList();
+  void _addPendingAudioFile(Map<String, dynamic> file) {
+    final pendingId = file['id']?.toString() ?? '';
     setState(() {
-      _pendingAudioFile = file;
-      _audioFiles = file == null ? existing : [file, ...existing];
+      _pendingAudioFiles[pendingId] = file;
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
+    });
+  }
+
+  void _removePendingAudioFile(String pendingId) {
+    setState(() {
+      _pendingAudioFiles.remove(pendingId);
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
     });
   }
 
   Map<String, dynamic> _buildPendingAudioFile() {
+    final timestamp = DateTime.now();
     return {
-      'id': 'pending-supertonic',
+      'id': 'pending-supertonic-${timestamp.microsecondsSinceEpoch}',
       'filename': 'supertonic-pending.wav',
       'engine': 'supertonic',
       'label': 'Supertonic $_selectedVoice',
@@ -186,7 +199,7 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
       'file_path': '',
       'size_mb': 0.0,
       'duration_seconds': 0.0,
-      'created_at': DateTime.now().toIso8601String(),
+      'created_at': timestamp.toIso8601String(),
       'metrics_available': false,
       'status': 'generating',
       'is_pending': true,
@@ -196,41 +209,76 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
   Future<void> _generateSpeech() async {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
-    setState(() {
-      _isGenerating = true;
-      _error = null;
-    });
-    _setPendingAudioFile(_buildPendingAudioFile());
 
+    // Clear any previous error
+    setState(() => _error = null);
+
+    // Build pending file with unique ID
+    final pendingFile = _buildPendingAudioFile();
+    final pendingId = pendingFile['id'] as String;
+
+    // Add to pending immediately
+    _addPendingAudioFile(pendingFile);
+
+    // Capture current settings for background generation
+    final voice = _selectedVoice;
+    final language = _selectedLanguage;
+    final speed = _speed;
+    final totalSteps = _totalSteps;
+    final smartChunking = _smartChunking;
+    final maxCharsPerChunk = _maxCharsPerChunk;
+    final silenceMs = _silenceMs;
+
+    // Start generation in background - don't await
+    unawaited(_generateSpeechInBackground(
+      pendingId: pendingId,
+      text: text,
+      voice: voice,
+      language: language,
+      speed: speed,
+      totalSteps: totalSteps,
+      smartChunking: smartChunking,
+      maxCharsPerChunk: maxCharsPerChunk,
+      silenceMs: silenceMs,
+    ));
+  }
+
+  Future<void> _generateSpeechInBackground({
+    required String pendingId,
+    required String text,
+    required String voice,
+    required String language,
+    required double speed,
+    required int totalSteps,
+    required bool smartChunking,
+    required int maxCharsPerChunk,
+    required int silenceMs,
+  }) async {
     try {
       final audioUrl = await _api.generateSupertonic(
         text: text,
-        voice: _selectedVoice,
-        language: _selectedLanguage,
-        speed: _speed,
-        totalSteps: _totalSteps,
-        smartChunking: _smartChunking,
-        maxCharsPerChunk: _maxCharsPerChunk,
-        silenceMs: _silenceMs,
+        voice: voice,
+        language: language,
+        speed: speed,
+        totalSteps: totalSteps,
+        smartChunking: smartChunking,
+        maxCharsPerChunk: maxCharsPerChunk,
+        silenceMs: silenceMs,
       );
 
       if (!mounted) return;
-      setState(() {
-        _audioUrl = audioUrl;
-        _isGenerating = false;
-      });
+      _removePendingAudioFile(pendingId);
+      setState(() => _audioUrl = audioUrl);
 
       await _audioPlayer.setUrl(audioUrl);
       await _audioPlayer.play();
-      _setPendingAudioFile(null);
       _loadAudioFiles();
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _isGenerating = false;
-      });
-      _setPendingAudioFile(null);
+      _removePendingAudioFile(pendingId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Generation failed: $e')),
+      );
     }
   }
 
@@ -586,20 +634,11 @@ class _SupertonicScreenState extends State<SupertonicScreen> {
                 ),
                 const SizedBox(height: 12),
                 FilledButton.icon(
-                  onPressed:
-                      _isGenerating || _textController.text.trim().isEmpty
+                  onPressed: _textController.text.trim().isEmpty
                       ? null
                       : _generateSpeech,
-                  icon: _isGenerating
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.play_arrow),
-                  label: Text(
-                    _isGenerating ? 'Generating...' : 'Generate Speech',
-                  ),
+                  icon: const Icon(Icons.play_arrow),
+                  label: const Text('Generate Speech'),
                 ),
               ],
             ),

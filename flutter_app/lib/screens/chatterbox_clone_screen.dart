@@ -178,7 +178,6 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   bool _unloadAfter = false;
 
   bool _isLoading = false;
-  bool _isGenerating = false;
   String? _audioUrl;
   String? _audioFilename;
   String _outputFolder = 'backend/outputs';
@@ -186,7 +185,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
 
   // Audio library state
   List<Map<String, dynamic>> _audioFiles = [];
-  Map<String, dynamic>? _pendingAudioFile;
+  final Map<String, Map<String, dynamic>> _pendingAudioFiles = {};
   bool _isLoadingAudioFiles = false;
   String? _playingAudioId;
   bool _isAudioPaused = false;
@@ -278,25 +277,38 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   }
 
   List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
-    final pending = _pendingAudioFile;
-    if (pending == null) {
+    if (_pendingAudioFiles.isEmpty) {
       return files;
     }
-    final pendingId = pending['id']?.toString() ?? '';
+    final pendingIds = _pendingAudioFiles.keys.toSet();
     final merged = files
-        .where((file) => (file['id']?.toString() ?? '') != pendingId)
+        .where((file) => !pendingIds.contains(file['id']?.toString() ?? ''))
         .toList();
-    return [pending, ...merged];
+    final pendingList = _pendingAudioFiles.values.toList()
+      ..sort((a, b) {
+        final aTime = DateTime.tryParse(a['created_at'] as String? ?? '') ?? DateTime.now();
+        final bTime = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
+        return bTime.compareTo(aTime);
+      });
+    return [...pendingList, ...merged];
   }
 
-  void _setPendingAudioFile(Map<String, dynamic>? file) {
-    final pendingId = _pendingAudioFile?['id']?.toString() ?? '';
-    final existing = _audioFiles
-        .where((item) => (item['id']?.toString() ?? '') != pendingId)
-        .toList();
+  void _addPendingAudioFile(Map<String, dynamic> file) {
+    final pendingId = file['id']?.toString() ?? '';
     setState(() {
-      _pendingAudioFile = file;
-      _audioFiles = file == null ? existing : [file, ...existing];
+      _pendingAudioFiles[pendingId] = file;
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
+    });
+  }
+
+  void _removePendingAudioFile(String pendingId) {
+    setState(() {
+      _pendingAudioFiles.remove(pendingId);
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
     });
   }
 
@@ -474,35 +486,71 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       return;
     }
 
-    setState(() {
-      _isGenerating = true;
-      _error = null;
-    });
-    _setPendingAudioFile(_buildPendingAudioFile());
+    // Clear any previous error
+    setState(() => _error = null);
 
+    // Build pending file with unique ID
+    final pendingFile = _buildPendingAudioFile();
+    final pendingId = pendingFile['id'] as String;
+
+    // Add to pending immediately
+    _addPendingAudioFile(pendingFile);
+
+    // Capture current settings for background generation
+    final text = _textController.text;
+    final voiceName = _selectedChatterboxVoice!;
+    final language = _selectedChatterboxLanguage;
+    final speed = _speed;
+    final temperature = _chatterboxTemperature;
+    final cfgWeight = _chatterboxCfgWeight;
+    final seed = _chatterboxSeed;
+    final unloadAfter = _unloadAfter;
+
+    // Start generation in background - don't await
+    unawaited(_generateInBackground(
+      pendingId: pendingId,
+      text: text,
+      voiceName: voiceName,
+      language: language,
+      speed: speed,
+      temperature: temperature,
+      cfgWeight: cfgWeight,
+      seed: seed,
+      unloadAfter: unloadAfter,
+    ));
+  }
+
+  Future<void> _generateInBackground({
+    required String pendingId,
+    required String text,
+    required String voiceName,
+    required String language,
+    required double speed,
+    required double temperature,
+    required double cfgWeight,
+    required int seed,
+    required bool unloadAfter,
+  }) async {
     try {
       final audioUrl = await _api.generateChatterbox(
-        text: _textController.text,
-        voiceName: _selectedChatterboxVoice!,
-        language: _selectedChatterboxLanguage,
-        speed: _speed,
-        temperature: _chatterboxTemperature,
-        cfgWeight: _chatterboxCfgWeight,
-        seed: _chatterboxSeed,
-        unloadAfter: _unloadAfter,
+        text: text,
+        voiceName: voiceName,
+        language: language,
+        speed: speed,
+        temperature: temperature,
+        cfgWeight: cfgWeight,
+        seed: seed,
+        unloadAfter: unloadAfter,
       );
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : null;
+      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
 
       if (!mounted) return;
-      _setPendingAudioFile(null);
+      _removePendingAudioFile(pendingId);
       setState(() {
         _audioUrl = audioUrl;
         _audioFilename = filename;
-        _isGenerating = false;
         _playingAudioId = null;
         _isAudioPaused = false;
         _previewVoiceName = null;
@@ -516,11 +564,10 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       _loadAudioFiles();
     } catch (e) {
       if (!mounted) return;
-      _setPendingAudioFile(null);
-      setState(() {
-        _error = e.toString();
-        _isGenerating = false;
-      });
+      _removePendingAudioFile(pendingId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Generation failed: $e')),
+      );
     }
   }
 
@@ -1022,21 +1069,12 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed:
-                      (_isGenerating ||
-                          _selectedChatterboxVoice == null ||
+                      (_selectedChatterboxVoice == null ||
                           _textController.text.isEmpty)
                       ? null
                       : _generate,
-                  icon: _isGenerating
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.mic),
-                  label: Text(
-                    _isGenerating ? 'Generating...' : 'Generate Speech',
-                  ),
+                  icon: const Icon(Icons.mic),
+                  label: const Text('Generate Speech'),
                 ),
                 const SizedBox(height: 16),
                 if (_error != null)

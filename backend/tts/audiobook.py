@@ -1230,16 +1230,26 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
             full_audio = merge_audio_chunks(all_audio, sample_rate, crossfade_ms=job.crossfade_ms)
             job.duration_seconds = len(full_audio) / sample_rate
 
+            # Build filename with voice info
+            voice_for_filename = (
+                job.voice if job.engine == "kokoro"
+                else (job.qwen_voice_name or job.qwen_speaker or "clone")
+            )
+            # Sanitize voice name for filename (alphanumeric and dash/underscore only)
+            import re
+            safe_voice = re.sub(r'[^a-zA-Z0-9_-]', '', voice_for_filename)[:20]
+            base_filename = f"audiobook-{safe_voice}-{job.job_id}"
+
             # Save to WAV first
-            wav_file = outputs_dir / f"audiobook-{job.job_id}.wav"
+            wav_file = outputs_dir / f"{base_filename}.wav"
             sf.write(str(wav_file), full_audio, sample_rate)
 
             # Convert to requested format
             if job.output_format == "mp3":
-                mp3_file = outputs_dir / f"audiobook-{job.job_id}.mp3"
+                mp3_file = outputs_dir / f"{base_filename}.mp3"
                 output_file = _convert_to_mp3(wav_file, mp3_file)
             elif job.output_format == "m4b":
-                m4b_file = outputs_dir / f"audiobook-{job.job_id}.m4b"
+                m4b_file = outputs_dir / f"{base_filename}.m4b"
                 output_file = _convert_to_m4b(
                     wav_file, m4b_file, job.title,
                     job.chapters, chapter_timestamps

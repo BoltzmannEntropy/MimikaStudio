@@ -4684,6 +4684,11 @@ def _audiobook_job_to_history_item(job) -> dict:
             getattr(job, "qwen_model_quantization", "bf16") or "bf16",
         )
     )
+    # For Qwen clone, use qwen_voice_name; for Kokoro, use voice
+    voice_name = (
+        job.voice if engine == "kokoro"
+        else (getattr(job, "qwen_voice_name", None) or getattr(job, "qwen_speaker", None) or job.voice or "Unknown")
+    )
     return {
         "id": job.job_id,
         "type": "audiobook",
@@ -4692,7 +4697,7 @@ def _audiobook_job_to_history_item(job) -> dict:
         "status": job.status.value,
         "title": job.title or f"Audiobook {job.job_id}",
         "chars": job.total_chars,
-        "voice": job.voice,
+        "voice": voice_name,
         "speaker": None,
         "language": getattr(job, "qwen_language", "en") if engine == "qwen3" else "en",
         "model": model_name,
@@ -4816,6 +4821,39 @@ async def job_generation_metrics(job_id: str):
         "audio_url": item.get("audio_url") or f"/audio/{audio_path.name}",
         "metrics": metrics,
     }
+
+
+@app.delete("/api/jobs/{job_id}")
+async def jobs_delete(job_id: str):
+    """Delete a job from history and its associated audio file."""
+    # Find job in history
+    job_item = None
+    with _job_history_lock:
+        for item in _job_history:
+            if str(item.get("id") or "") == job_id:
+                job_item = item
+                break
+
+    if job_item is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    # Get audio file path and delete it along with metrics sidecar
+    audio_path = _job_audio_path(job_item)
+    if audio_path is not None and audio_path.exists():
+        try:
+            audio_path.unlink(missing_ok=True)
+            # Delete metrics sidecar
+            metrics_path = audio_path.with_suffix(audio_path.suffix + ".metrics.json")
+            if metrics_path.exists():
+                metrics_path.unlink(missing_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to delete audio file for job {job_id}: {e}")
+
+    # Remove from history
+    with _job_history_lock:
+        _job_history[:] = [item for item in _job_history if str(item.get("id") or "") != job_id]
+
+    return {"message": "Job deleted", "job_id": job_id}
 
 
 # ============== Audiobook Generation Endpoints ==============

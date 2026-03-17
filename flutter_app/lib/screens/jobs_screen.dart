@@ -1,10 +1,14 @@
 import 'dart:async';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:path/path.dart' as p;
 
 import '../services/api_service.dart';
+import '../utils/local_file_actions.dart';
 import '../widgets/generation_metrics_dialog.dart';
 
 class JobsScreen extends StatefulWidget {
@@ -214,6 +218,110 @@ class _JobsScreenState extends State<JobsScreen> {
     }
   }
 
+  Future<void> _openJobExternally(Map<String, dynamic> job) async {
+    final filePath = (job['output_path'] as String?)?.trim() ?? '';
+    if (filePath.isEmpty) return;
+    try {
+      await LocalFileActions.openPath(filePath);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to open file: $e')),
+      );
+    }
+  }
+
+  Future<void> _revealJobInFolder(Map<String, dynamic> job) async {
+    final filePath = (job['output_path'] as String?)?.trim() ?? '';
+    if (filePath.isEmpty) return;
+    try {
+      await LocalFileActions.revealInFolder(filePath);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to reveal file: $e')),
+      );
+    }
+  }
+
+  Future<void> _downloadJobAudio(Map<String, dynamic> job) async {
+    final audioUrl = (job['audio_url'] as String?) ?? '';
+    final outputPath = (job['output_path'] as String?) ?? '';
+    if (audioUrl.isEmpty) return;
+
+    try {
+      final bytes = await _api.downloadAudioBytes(audioUrl);
+      final suggestedName = outputPath.isNotEmpty
+          ? p.basename(outputPath)
+          : 'job-audio.wav';
+      final ext = suggestedName.contains('.')
+          ? suggestedName.split('.').last
+          : 'wav';
+      final savePath = await FilePicker.platform.saveFile(
+        dialogTitle: 'Save audio file',
+        fileName: suggestedName,
+        type: FileType.custom,
+        allowedExtensions: [ext],
+      );
+      if (savePath == null) return;
+
+      final file = File(savePath);
+      await file.create(recursive: true);
+      await file.writeAsBytes(bytes, flush: true);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved to $savePath')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to download: $e')),
+      );
+    }
+  }
+
+  Future<void> _deleteJob(Map<String, dynamic> job) async {
+    final jobId = (job['id'] as String?) ?? '';
+    if (jobId.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Job'),
+        content: const Text('Delete this job and its audio file?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      if (_playingJobId == jobId) {
+        await _stopAudio();
+      }
+      await _api.deleteJob(jobId);
+      await _loadJobs();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Job deleted')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to delete: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -270,6 +378,7 @@ class _JobsScreenState extends State<JobsScreen> {
               final statusColor = _statusColor(status, context);
               final title = (job['title'] as String?) ?? 'Job';
               final engine = (job['engine'] as String?) ?? '-';
+              final voice = (job['voice'] as String?) ?? '';
               final type = (job['type'] as String?) ?? '-';
               final rawTs = (job['timestamp'] as String?) ?? '';
               final ts = _humanTimestamp(rawTs);
@@ -375,7 +484,7 @@ class _JobsScreenState extends State<JobsScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '$type • $engine',
+                        '$type • $engine${voice.isNotEmpty ? ' • $voice' : ''}',
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -427,29 +536,65 @@ class _JobsScreenState extends State<JobsScreen> {
                           ),
                         ),
                       ],
-                      if (hasAudio) ...[
+                      if (hasAudio || status == 'completed') ...[
                         const SizedBox(height: 8),
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
+                        Wrap(
+                          spacing: 0,
+                          runSpacing: 4,
                           children: [
                             IconButton(
+                              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                              onPressed: outputPath.isNotEmpty
+                                  ? () => _openJobExternally(job)
+                                  : null,
+                              tooltip: 'Open externally',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.folder_open_rounded, size: 18),
+                              onPressed: outputPath.isNotEmpty
+                                  ? () => _revealJobInFolder(job)
+                                  : null,
+                              tooltip: 'Show in folder',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
                               icon: const Icon(Icons.play_arrow, size: 18),
-                              onPressed: (!isThisPlaying || _isPaused)
+                              onPressed: hasAudio && (!isThisPlaying || _isPaused)
                                   ? () => _playJobAudio(job)
                                   : null,
                               tooltip: 'Play',
+                              visualDensity: VisualDensity.compact,
                             ),
                             IconButton(
                               icon: const Icon(Icons.pause, size: 18),
-                              onPressed: (isThisPlaying && !_isPaused)
+                              onPressed: hasAudio && isThisPlaying && !_isPaused
                                   ? _pauseAudio
                                   : null,
                               tooltip: 'Pause',
+                              visualDensity: VisualDensity.compact,
                             ),
                             IconButton(
                               icon: const Icon(Icons.stop, size: 18),
-                              onPressed: isThisPlaying ? _stopAudio : null,
+                              onPressed: hasAudio && isThisPlaying
+                                  ? _stopAudio
+                                  : null,
                               tooltip: 'Stop',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.download_rounded, size: 18),
+                              onPressed: hasAudio
+                                  ? () => _downloadJobAudio(job)
+                                  : null,
+                              tooltip: 'Download',
+                              visualDensity: VisualDensity.compact,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline, size: 18),
+                              onPressed: () => _deleteJob(job),
+                              tooltip: 'Delete',
+                              visualDensity: VisualDensity.compact,
                             ),
                           ],
                         ),

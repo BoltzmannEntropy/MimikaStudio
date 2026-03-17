@@ -1362,6 +1362,15 @@ class ApiService {
     throw _apiError('Failed to load job metrics', response);
   }
 
+  /// Delete a job and its associated audio file.
+  Future<void> deleteJob(String jobId) async {
+    final safeId = Uri.encodeComponent(jobId);
+    final response = await _delete(Uri.parse('$baseUrl/api/jobs/$safeId'));
+    if (response.statusCode != 200) {
+      throw _apiError('Failed to delete job', response);
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getVoicePrompts({
     String search = '',
     String gender = '',

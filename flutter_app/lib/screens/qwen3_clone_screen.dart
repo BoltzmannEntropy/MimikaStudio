@@ -109,7 +109,6 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   bool _unloadAfter = false;
 
   bool _isLoading = false;
-  bool _isGenerating = false;
   String? _audioUrl;
   String? _audioFilename;
   String _outputFolder = 'backend/outputs';
@@ -117,7 +116,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
   // Audio library state
   List<Map<String, dynamic>> _audioFiles = [];
-  Map<String, dynamic>? _pendingAudioFile;
+  final Map<String, Map<String, dynamic>> _pendingAudioFiles = {};
   bool _isLoadingAudioFiles = false;
   String? _playingAudioId;
   bool _isAudioPaused = false;
@@ -200,25 +199,39 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   }
 
   List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
-    final pending = _pendingAudioFile;
-    if (pending == null) {
+    if (_pendingAudioFiles.isEmpty) {
       return files;
     }
-    final pendingId = pending['id']?.toString() ?? '';
+    final pendingIds = _pendingAudioFiles.keys.toSet();
     final merged = files
-        .where((file) => (file['id']?.toString() ?? '') != pendingId)
+        .where((file) => !pendingIds.contains(file['id']?.toString() ?? ''))
         .toList();
-    return [pending, ...merged];
+    // Add pending files at top, sorted by creation time (newest first)
+    final pendingList = _pendingAudioFiles.values.toList()
+      ..sort((a, b) {
+        final aTime = DateTime.tryParse(a['created_at'] as String? ?? '') ?? DateTime.now();
+        final bTime = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
+        return bTime.compareTo(aTime);
+      });
+    return [...pendingList, ...merged];
   }
 
-  void _setPendingAudioFile(Map<String, dynamic>? file) {
-    final pendingId = _pendingAudioFile?['id']?.toString() ?? '';
-    final existing = _audioFiles
-        .where((item) => (item['id']?.toString() ?? '') != pendingId)
-        .toList();
+  void _addPendingAudioFile(Map<String, dynamic> file) {
+    final pendingId = file['id']?.toString() ?? '';
     setState(() {
-      _pendingAudioFile = file;
-      _audioFiles = file == null ? existing : [file, ...existing];
+      _pendingAudioFiles[pendingId] = file;
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
+    });
+  }
+
+  void _removePendingAudioFile(String pendingId) {
+    setState(() {
+      _pendingAudioFiles.remove(pendingId);
+      _audioFiles = _mergeAudioFiles(
+        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+      );
     });
   }
 
@@ -314,66 +327,123 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   Future<void> _generate() async {
     if (_textController.text.isEmpty) return;
 
-    setState(() {
-      _isGenerating = true;
-      _error = null;
-    });
-    _setPendingAudioFile(_buildPendingAudioFile());
+    if (_qwen3Mode == 'clone' && _selectedQwen3Voice == null) {
+      setState(() => _error = 'Please add a voice first in the Voice Prompts tab');
+      return;
+    }
 
+    // Clear any previous error
+    setState(() => _error = null);
+
+    // Build pending file with unique ID
+    final pendingFile = _buildPendingAudioFile();
+    final pendingId = pendingFile['id'] as String;
+
+    // Add to pending immediately
+    _addPendingAudioFile(pendingFile);
+
+    // Capture current settings for background generation
+    final text = _textController.text;
+    final mode = _qwen3Mode;
+    final voiceName = _selectedQwen3Voice;
+    final speaker = _selectedSpeaker;
+    final language = _selectedLanguage;
+    final speed = _speed;
+    final modelSize = _modelSize;
+    final modelQuantization = _modelQuantization;
+    final instruct = _instructController.text.isNotEmpty ? _instructController.text : null;
+    final temperature = _temperature;
+    final topP = _topP;
+    final topK = _topK;
+    final repetitionPenalty = _repetitionPenalty;
+    final seed = _seed;
+    final unloadAfter = _unloadAfter;
+
+    // Start generation in background - don't await
+    unawaited(_generateInBackground(
+      pendingId: pendingId,
+      text: text,
+      mode: mode,
+      voiceName: voiceName,
+      speaker: speaker,
+      language: language,
+      speed: speed,
+      modelSize: modelSize,
+      modelQuantization: modelQuantization,
+      instruct: instruct,
+      temperature: temperature,
+      topP: topP,
+      topK: topK,
+      repetitionPenalty: repetitionPenalty,
+      seed: seed,
+      unloadAfter: unloadAfter,
+    ));
+  }
+
+  Future<void> _generateInBackground({
+    required String pendingId,
+    required String text,
+    required String mode,
+    String? voiceName,
+    required String speaker,
+    required String language,
+    required double speed,
+    required String modelSize,
+    required String modelQuantization,
+    String? instruct,
+    required double temperature,
+    required double topP,
+    required int topK,
+    required double repetitionPenalty,
+    required int seed,
+    required bool unloadAfter,
+  }) async {
     try {
       String audioUrl;
 
-      if (_qwen3Mode == 'clone') {
-        if (_selectedQwen3Voice == null) {
-          throw Exception('Please add a voice first in the Voice Prompts tab');
-        }
+      if (mode == 'clone') {
         audioUrl = await _api.generateQwen3(
-          text: _textController.text,
+          text: text,
           mode: 'clone',
-          voiceName: _selectedQwen3Voice!,
-          language: _selectedLanguage,
-          speed: _speed,
-          modelSize: _modelSize,
-          modelQuantization: _modelQuantization,
-          temperature: _temperature,
-          topP: _topP,
-          topK: _topK,
-          repetitionPenalty: _repetitionPenalty,
-          seed: _seed,
-          unloadAfter: _unloadAfter,
+          voiceName: voiceName!,
+          language: language,
+          speed: speed,
+          modelSize: modelSize,
+          modelQuantization: modelQuantization,
+          temperature: temperature,
+          topP: topP,
+          topK: topK,
+          repetitionPenalty: repetitionPenalty,
+          seed: seed,
+          unloadAfter: unloadAfter,
         );
       } else {
         audioUrl = await _api.generateQwen3(
-          text: _textController.text,
+          text: text,
           mode: 'custom',
-          speaker: _selectedSpeaker,
-          language: _selectedLanguage,
-          speed: _speed,
-          modelSize: _modelSize,
-          modelQuantization: _modelQuantization,
-          instruct: _instructController.text.isNotEmpty
-              ? _instructController.text
-              : null,
-          temperature: _temperature,
-          topP: _topP,
-          topK: _topK,
-          repetitionPenalty: _repetitionPenalty,
-          seed: _seed,
-          unloadAfter: _unloadAfter,
+          speaker: speaker,
+          language: language,
+          speed: speed,
+          modelSize: modelSize,
+          modelQuantization: modelQuantization,
+          instruct: instruct,
+          temperature: temperature,
+          topP: topP,
+          topK: topK,
+          repetitionPenalty: repetitionPenalty,
+          seed: seed,
+          unloadAfter: unloadAfter,
         );
       }
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty
-          ? uri.pathSegments.last
-          : null;
+      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
 
       if (!mounted) return;
-      _setPendingAudioFile(null);
+      _removePendingAudioFile(pendingId);
       setState(() {
         _audioUrl = audioUrl;
         _audioFilename = filename;
-        _isGenerating = false;
         _playingAudioId = null;
         _isAudioPaused = false;
         _previewVoiceName = null;
@@ -387,11 +457,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       _loadAudioFiles();
     } catch (e) {
       if (!mounted) return;
-      _setPendingAudioFile(null);
-      setState(() {
-        _error = e.toString();
-        _isGenerating = false;
-      });
+      _removePendingAudioFile(pendingId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Generation failed: $e')),
+      );
     }
   }
 
@@ -983,19 +1052,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 _buildAdvancedPanel(),
                 const SizedBox(height: 16),
                 FilledButton.icon(
-                  onPressed: (_isGenerating || !_canGenerate())
-                      ? null
-                      : _generate,
-                  icon: _isGenerating
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.auto_awesome),
-                  label: Text(
-                    _isGenerating ? 'Generating...' : 'Generate Speech',
-                  ),
+                  onPressed: _canGenerate() ? _generate : null,
+                  icon: const Icon(Icons.auto_awesome),
+                  label: const Text('Generate Speech'),
                 ),
                 const SizedBox(height: 16),
                 if (_error != null)

@@ -870,6 +870,8 @@ class _VoicePromptManagementScreenState
         child: DataTable(
           sortColumnIndex: _columnIndexForSort(_sortBy),
           sortAscending: _sortOrder == 'asc',
+          dataRowMinHeight: 72,
+          dataRowMaxHeight: 90,
           columns: [
             DataColumn(
               label: _sortableHeader('Name', 'name'),
@@ -907,19 +909,27 @@ class _VoicePromptManagementScreenState
                 return DataRow(
                   cells: [
                     DataCell(
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(name),
-                          if (audioPath.isNotEmpty)
-                            Tooltip(
-                              message: audioPath,
-                              child: SizedBox(
-                                width: 340,
+                      SizedBox(
+                        width: 360,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13,
+                              ),
+                            ),
+                            if (audioPath.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Tooltip(
+                                message: audioPath,
                                 child: Text(
-                                  'Path: $audioPath',
-                                  maxLines: 2,
+                                  audioPath,
+                                  maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 10,
@@ -929,18 +939,21 @@ class _VoicePromptManagementScreenState
                                   ),
                                 ),
                               ),
-                            ),
-                          if (engines.isNotEmpty)
-                            Text(
-                              engines.join(', '),
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                            ],
+                            if (engines.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Text(
+                                engines.join(', '),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withValues(alpha: 0.7),
+                                ),
                               ),
-                            ),
-                        ],
+                            ],
+                          ],
+                        ),
                       ),
                     ),
                     DataCell(Text(voice['gender']?.toString() ?? '-')),

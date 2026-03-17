@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>v2026.03.5</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
+  <code>v2026.03.6</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i> + Agentic Voice Cloning Server</h1>
   <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and an agentic voice cloning server with state-of-the-art job queue orchestration.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>

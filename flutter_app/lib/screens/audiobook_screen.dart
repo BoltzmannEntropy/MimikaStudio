@@ -50,7 +50,6 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   String _previewText = '';
   bool _isLoadingDocuments = false;
   bool _isExtractingPreview = false;
-  bool _isGenerating = false;
   bool _isLoadingAudiobooks = false;
   String _engine = 'kokoro';
   String _kokoroVoice = 'bf_emma';
@@ -369,45 +368,96 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       return;
     }
 
-    setState(() => _isGenerating = true);
+    // Capture current settings for background generation
+    final bytes = _selectedBytes!;
+    final filename = selected['name'] as String? ?? 'document.pdf';
+    final title = p.basenameWithoutExtension(selected['name'] as String? ?? 'Untitled');
+    final engine = _engine;
+    final voice = engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena');
+    final speed = _speed;
+    final outputFormat = _outputFormat;
+    final subtitleFormat = _subtitleFormat;
+    final smartChunking = _smartChunking;
+    final maxCharsPerChunk = _maxCharsPerChunk;
+    final crossfadeMs = _crossfadeMs;
+    final qwenVoice = _qwenVoice;
+    final qwenLanguage = _qwenLanguage;
+    final qwenModelSize = _qwenModelSize;
+    final qwenQuantization = _qwenQuantization;
+
+    // Start queueing in background - don't await
+    // The API call to queue is fast, so we just wait for the real job ID
+    unawaited(_queueGenerationInBackground(
+      bytes: bytes,
+      filename: filename,
+      title: title,
+      engine: engine,
+      voice: voice,
+      speed: speed,
+      outputFormat: outputFormat,
+      subtitleFormat: subtitleFormat,
+      smartChunking: smartChunking,
+      maxCharsPerChunk: maxCharsPerChunk,
+      crossfadeMs: crossfadeMs,
+      qwenVoice: qwenVoice,
+      qwenLanguage: qwenLanguage,
+      qwenModelSize: qwenModelSize,
+      qwenQuantization: qwenQuantization,
+    ));
+  }
+
+  Future<void> _queueGenerationInBackground({
+    required Uint8List bytes,
+    required String filename,
+    required String title,
+    required String engine,
+    required String voice,
+    required double speed,
+    required String outputFormat,
+    required String subtitleFormat,
+    required bool smartChunking,
+    required int maxCharsPerChunk,
+    required int crossfadeMs,
+    String? qwenVoice,
+    required String qwenLanguage,
+    required String qwenModelSize,
+    required String qwenQuantization,
+  }) async {
     try {
       final result = await _api.startAudiobookGenerationFromFile(
-        bytes: _selectedBytes!,
-        filename: selected['name'] as String? ?? 'document.pdf',
-        title: p.basenameWithoutExtension(
-          selected['name'] as String? ?? 'Untitled',
-        ),
-        engine: _engine,
-        voice: _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena'),
-        speed: _speed,
-        outputFormat: _outputFormat,
-        subtitleFormat: _subtitleFormat,
-        smartChunking: _smartChunking,
-        maxCharsPerChunk: _maxCharsPerChunk,
-        crossfadeMs: _crossfadeMs,
+        bytes: bytes,
+        filename: filename,
+        title: title,
+        engine: engine,
+        voice: voice,
+        speed: speed,
+        outputFormat: outputFormat,
+        subtitleFormat: subtitleFormat,
+        smartChunking: smartChunking,
+        maxCharsPerChunk: maxCharsPerChunk,
+        crossfadeMs: crossfadeMs,
         qwenMode: 'clone',
-        qwenVoiceName: _engine == 'qwen3' ? _qwenVoice : null,
-        qwenLanguage: _qwenLanguage,
-        qwenModelSize: _qwenModelSize,
-        qwenModelQuantization: _qwenQuantization,
+        qwenVoiceName: engine == 'qwen3' ? qwenVoice : null,
+        qwenLanguage: qwenLanguage,
+        qwenModelSize: qwenModelSize,
+        qwenModelQuantization: qwenQuantization,
       );
       if (!mounted) return;
+
       final jobId = result['job_id'] as String? ?? 'unknown';
       final queuePosition = (result['queue_position'] as num?)?.toInt() ?? 0;
-      final voice = _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena');
       final pending = _buildPendingAudiobook(
         jobId: jobId,
-        title: p.basenameWithoutExtension(
-          selected['name'] as String? ?? 'Untitled',
-        ),
+        title: title,
         status: result['status']?.toString() ?? 'queued',
         queuePosition: queuePosition,
-        engine: _engine,
+        engine: engine,
         voice: voice,
       );
       _addPendingAudiobook(jobId, pending);
       _startPendingAudiobookPolling(jobId);
-      final engineLabel = _engine == 'kokoro' ? 'Kokoro' : 'Qwen Clone';
+
+      final engineLabel = engine == 'kokoro' ? 'Kokoro' : 'Qwen Clone';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -419,14 +469,9 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      // Don't remove other pending audiobooks on error
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to start audiobook: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => _isGenerating = false);
-      }
     }
   }
 
@@ -656,17 +701,9 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.icon(
-                  onPressed: _isGenerating ? null : _startGeneration,
-                  icon: _isGenerating
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.library_music_rounded),
-                  label: Text(
-                    _isGenerating ? 'Queueing...' : 'Generate Audiobook',
-                  ),
+                  onPressed: _startGeneration,
+                  icon: const Icon(Icons.library_music_rounded),
+                  label: const Text('Generate Audiobook'),
                 ),
               ],
             ),
