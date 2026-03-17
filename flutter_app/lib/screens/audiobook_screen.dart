@@ -54,7 +54,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   bool _isLoadingAudiobooks = false;
   String _engine = 'kokoro';
   String _kokoroVoice = 'bf_emma';
-  String? _qwenVoice = 'Sara';
+  String? _qwenVoice = 'Yelena';
   String _qwenModelSize = '0.6B';
   String _qwenQuantization = 'bf16';
   final String _qwenLanguage = 'English';
@@ -378,7 +378,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
           selected['name'] as String? ?? 'Untitled',
         ),
         engine: _engine,
-        voice: _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Sara'),
+        voice: _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena'),
         speed: _speed,
         outputFormat: _outputFormat,
         subtitleFormat: _subtitleFormat,
@@ -394,7 +394,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       if (!mounted) return;
       final jobId = result['job_id'] as String? ?? 'unknown';
       final queuePosition = (result['queue_position'] as num?)?.toInt() ?? 0;
-      final voice = _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Sara');
+      final voice = _engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena');
       final pending = _buildPendingAudiobook(
         jobId: jobId,
         title: p.basenameWithoutExtension(
