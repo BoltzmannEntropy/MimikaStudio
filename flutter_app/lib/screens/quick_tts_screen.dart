@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import '../services/api_service.dart';
+import '../utils/local_file_actions.dart';
 import '../widgets/audio_player_widget.dart';
 import '../widgets/generation_metrics_dialog.dart';
 import '../widgets/model_status_banner.dart';
@@ -49,6 +50,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
   double _libraryPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _playerSubscription;
   bool _isSidebarCollapsed = false;
+  Map<String, dynamic>? _pendingAudioFile;
 
   @override
   void initState() {
@@ -71,7 +73,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       final files = await _api.getTtsAudioFiles();
       if (mounted) {
         setState(() {
-          _audioFiles = files;
+          _audioFiles = _mergeAudioFiles(files);
           _isLoadingAudioFiles = false;
         });
       }
@@ -81,6 +83,54 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
         setState(() => _isLoadingAudioFiles = false);
       }
     }
+  }
+
+  List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
+    final pending = _pendingAudioFile;
+    if (pending == null) {
+      return files;
+    }
+    final pendingId = pending['id']?.toString() ?? '';
+    final merged = files
+        .where((file) => (file['id']?.toString() ?? '') != pendingId)
+        .toList();
+    return [pending, ...merged];
+  }
+
+  void _setPendingAudioFile(Map<String, dynamic>? file) {
+    final pendingId = _pendingAudioFile?['id']?.toString() ?? '';
+    final existing = _audioFiles
+        .where((item) => (item['id']?.toString() ?? '') != pendingId)
+        .toList();
+    setState(() {
+      _pendingAudioFile = file;
+      _audioFiles = file == null ? existing : [file, ...existing];
+    });
+  }
+
+  Map<String, dynamic> _buildPendingAudioFile() {
+    final voiceName = _voices
+        .cast<Map<String, dynamic>?>()
+        .firstWhere(
+          (voice) => voice?['voice'] == _selectedVoice,
+          orElse: () => null,
+        )?['name']
+        ?.toString();
+    return {
+      'id': 'pending-kokoro',
+      'filename': 'kokoro-pending.wav',
+      'engine': 'kokoro',
+      'label': voiceName ?? _selectedVoice,
+      'voice': _selectedVoice,
+      'audio_url': '',
+      'file_path': '',
+      'size_mb': 0.0,
+      'duration_seconds': 0.0,
+      'created_at': DateTime.now().toIso8601String(),
+      'metrics_available': false,
+      'status': 'generating',
+      'is_pending': true,
+    };
   }
 
   Future<void> _loadData() async {
@@ -117,6 +167,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       _isGenerating = true;
       _error = null;
     });
+    _setPendingAudioFile(_buildPendingAudioFile());
 
     try {
       final audioUrl = await _api.generateKokoro(
@@ -139,6 +190,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       await _audioPlayer.play();
 
       // Refresh audio library
+      _setPendingAudioFile(null);
       _loadAudioFiles();
     } catch (e) {
       if (!mounted) return;
@@ -146,6 +198,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
         _error = e.toString();
         _isGenerating = false;
       });
+      _setPendingAudioFile(null);
     }
   }
 
@@ -612,7 +665,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
 
   Widget _buildSidebar() {
     return Container(
-      width: 280,
+      width: 320,
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerLow,
         border: Border(
@@ -721,8 +774,11 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
     final engine = (file['engine'] as String?) ?? 'tts';
     final label =
         (file['label'] as String?) ?? (file['voice'] as String?) ?? 'Unknown';
-    final duration = file['duration_seconds'] as num;
-    final sizeMb = file['size_mb'] as num;
+    final isPending = file['is_pending'] == true;
+    final status = (file['status'] as String? ?? 'completed').toLowerCase();
+    final filePath = (file['file_path'] as String?)?.trim() ?? '';
+    final duration = file['duration_seconds'] as num? ?? 0;
+    final sizeMb = file['size_mb'] as num? ?? 0;
     final isThisPlaying = _playingAudioId == fileId;
 
     // Format duration
@@ -741,54 +797,109 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          ListTile(
-            dense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-            leading: Icon(
-              Icons.audiotrack,
-              color: isThisPlaying
-                  ? Theme.of(context).colorScheme.primary
-                  : null,
-              size: 20,
-            ),
-            title: Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: isThisPlaying ? FontWeight.bold : FontWeight.w500,
-              ),
-            ),
-            subtitle: Text(
-              '${engine.toUpperCase()} • $durationStr • ${sizeMb.toStringAsFixed(1)} MB',
-              style: const TextStyle(fontSize: 10),
-            ),
-            trailing: SizedBox(
-              width: 104,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.insights_rounded, size: 16),
-                    onPressed: () => _showGenerationMetrics(file),
-                    tooltip: 'Generation Metrics',
-                    visualDensity: VisualDensity.compact,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    isPending ? Icons.hourglass_top_rounded : Icons.audiotrack,
+                    color: isPending
+                        ? Theme.of(context).colorScheme.secondary
+                        : isThisPlaying
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                    size: 20,
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.download_rounded, size: 16),
-                    onPressed: () => _downloadAudioFile(file),
-                    tooltip: 'Download',
-                    visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: isThisPlaying
+                              ? FontWeight.bold
+                              : FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        isPending
+                            ? status.toUpperCase()
+                            : '${engine.toUpperCase()} • $durationStr • ${sizeMb.toStringAsFixed(1)} MB',
+                        style: const TextStyle(fontSize: 10),
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 16),
-                    onPressed: () => _deleteAudioFile(filename),
-                    tooltip: 'Delete',
-                    visualDensity: VisualDensity.compact,
-                  ),
-                ],
-              ),
+                ),
+                Wrap(
+                  spacing: 0,
+                  runSpacing: 0,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.insights_rounded, size: 16),
+                      onPressed: isPending
+                          ? null
+                          : () => _showGenerationMetrics(file),
+                      tooltip: 'Generation Metrics',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new_rounded, size: 16),
+                      onPressed: isPending || filePath.isEmpty
+                          ? null
+                          : () => _openAudioExternally(file),
+                      tooltip: 'Open externally',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.folder_open_rounded, size: 16),
+                      onPressed: isPending || filePath.isEmpty
+                          ? null
+                          : () => _revealAudioInFolder(file),
+                      tooltip: 'Show in folder',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.download_rounded, size: 16),
+                      onPressed: isPending ? null : () => _downloadAudioFile(file),
+                      tooltip: 'Download',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                      onPressed: isPending ? null : () => _deleteAudioFile(filename),
+                      tooltip: 'Delete',
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
+          if (filePath.isNotEmpty || isPending)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(42, 0, 12, 2),
+              child: Text(
+                isPending
+                    ? 'Generating now. This item will update when the file is written.'
+                    : filePath,
+                maxLines: isPending ? 2 : 3,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
           // Playback controls
           Padding(
             padding: const EdgeInsets.only(left: 12, right: 12, bottom: 8),
@@ -797,7 +908,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
               children: [
                 IconButton(
                   icon: const Icon(Icons.play_arrow, size: 20),
-                  onPressed: (!isThisPlaying || _isAudioPaused)
+                  onPressed: !isPending && (!isThisPlaying || _isAudioPaused)
                       ? () => _playAudioFile(file)
                       : null,
                   tooltip: 'Play',
@@ -807,7 +918,7 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.pause, size: 20),
-                  onPressed: (isThisPlaying && !_isAudioPaused)
+                  onPressed: !isPending && (isThisPlaying && !_isAudioPaused)
                       ? _pauseAudioPlayback
                       : null,
                   tooltip: 'Pause',
@@ -817,7 +928,9 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.stop, size: 20),
-                  onPressed: isThisPlaying ? _stopAudioPlayback : null,
+                  onPressed: !isPending && isThisPlaying
+                      ? _stopAudioPlayback
+                      : null,
                   tooltip: 'Stop',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,
@@ -997,6 +1110,32 @@ class _QuickTtsScreenState extends State<QuickTtsScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
+    }
+  }
+
+  Future<void> _openAudioExternally(Map<String, dynamic> file) async {
+    final filePath = (file['file_path'] as String?)?.trim() ?? '';
+    if (filePath.isEmpty) return;
+    try {
+      await LocalFileActions.openPath(filePath);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to open audio: $e')));
+    }
+  }
+
+  Future<void> _revealAudioInFolder(Map<String, dynamic> file) async {
+    final filePath = (file['file_path'] as String?)?.trim() ?? '';
+    if (filePath.isEmpty) return;
+    try {
+      await LocalFileActions.revealInFolder(filePath);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to reveal audio: $e')));
     }
   }
 }

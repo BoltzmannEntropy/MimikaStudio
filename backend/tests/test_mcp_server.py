@@ -141,7 +141,7 @@ class TestHandleToolCall:
         }) as mock_be:
             result = mcp_module.handle_tool_call("tts_generate_qwen3", {
                 "text": "Hello",
-                "voice_name": "Natasha",
+                "voice_name": "Yelena",
             })
             mock_be.assert_called_once()
             assert "/api/qwen3/generate" in mock_be.call_args[0][0]
@@ -161,12 +161,12 @@ class TestHandleToolCall:
     def test_list_voices_qwen3(self, mcp_module):
         with patch.object(mcp_module, "_call_backend", return_value={
             "voices": [
-                {"name": "Natasha", "source": "sample"},
+                {"name": "Yelena", "source": "sample"},
             ],
         }):
             result = mcp_module.handle_tool_call("tts_list_voices", {"engine": "qwen3"})
             assert "Qwen3 voices" in result
-            assert "Natasha" in result
+            assert "Yelena" in result
 
     def test_list_voices_unknown_engine(self, mcp_module):
         result = mcp_module.handle_tool_call("tts_list_voices", {"engine": "unknown"})

@@ -545,7 +545,7 @@ MCP_TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "filename": {"type": "string", "description": "Filename to delete (e.g., 'qwen3-Natasha-abc123.wav')"}
+                "filename": {"type": "string", "description": "Filename to delete (e.g., 'qwen3-Yelena-abc123.wav')"}
             },
             "required": ["filename"]
         }

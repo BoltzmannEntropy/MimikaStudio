@@ -57,7 +57,7 @@ def test_qwen3_generate_enqueue_creates_trackable_job(tmp_path):
             json={
                 "text": "hello queued world",
                 "mode": "clone",
-                "voice_name": "Natasha",
+                "voice_name": "Yelena",
                 "enqueue": True,
             },
         )

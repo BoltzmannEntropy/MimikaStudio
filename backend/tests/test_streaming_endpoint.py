@@ -27,8 +27,8 @@ def test_streaming_endpoint_returns_pcm_chunks(monkeypatch):
 
         def get_saved_voices(self):
             return [{
-                "name": "Natasha",
-                "audio_path": "/tmp/natasha.wav",
+                "name": "Yelena",
+                "audio_path": "/tmp/yelena.wav",
                 "transcript": "hello world",
             }]
 
@@ -45,7 +45,7 @@ def test_streaming_endpoint_returns_pcm_chunks(monkeypatch):
     response = client.post("/api/qwen3/generate/stream", json={
         "text": "hello",
         "mode": "clone",
-        "voice_name": "Natasha",
+        "voice_name": "Yelena",
     })
 
     assert response.status_code == 200

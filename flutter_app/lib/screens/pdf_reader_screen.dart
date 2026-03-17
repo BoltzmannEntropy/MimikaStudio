@@ -117,14 +117,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   String _selectedVoice = 'bf_emma';
   double _speed = 1.0;
 
-  // Audiobook generation state
-  bool _isGeneratingAudiobook = false;
-  String _audiobookOutputFormat = 'mp3'; // 'wav', 'mp3', or 'm4b'
-  String _audiobookSubtitleFormat = 'none'; // 'none', 'srt', or 'vtt'
-  bool _audiobookSmartChunking = true;
-  int _audiobookMaxCharsPerChunk = 1500;
-  int _audiobookCrossfadeMs = 40;
-
   // Audiobook library state
   List<Map<String, dynamic>> _audiobooks = [];
   bool _isLoadingAudiobooks = false;
@@ -132,9 +124,6 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   bool _isAudiobookPaused = false;
   double _audiobookPlaybackSpeed = 1.0;
   StreamSubscription<PlayerState>? _audiobookPlayerSubscription;
-
-  static const int _optimizedChunkChars = 220;
-  static const int _optimizedCrossfadeMs = 60;
   static const String _defaultManualMarkdown = '''
 # Read Aloud Draft
 
@@ -2092,64 +2081,6 @@ Paste your long text here.
 
   // ============== Audiobook Generation ==============
 
-  Future<void> _startAudiobookGeneration() async {
-    // Convert from the active start marker/selection to end of document.
-    final textToConvert = _resolveTextForReadAloud();
-
-    if (textToConvert.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No text available to convert')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isGeneratingAudiobook = true;
-    });
-
-    try {
-      final result = await _api.startAudiobookGeneration(
-        text: textToConvert,
-        title: _selectedPdfName ?? 'Untitled',
-        voice: _selectedVoice,
-        speed: _speed,
-        outputFormat: _audiobookOutputFormat,
-        subtitleFormat: _audiobookSubtitleFormat,
-        smartChunking: _audiobookSmartChunking,
-        maxCharsPerChunk: _audiobookMaxCharsPerChunk,
-        crossfadeMs: _audiobookCrossfadeMs,
-      );
-
-      final jobId = result['job_id'] as String;
-      final queuePosition = (result['queue_position'] as num?)?.toInt() ?? 0;
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              queuePosition > 0
-                  ? 'Audiobook job $jobId queued (#$queuePosition) in Jobs'
-                  : 'Audiobook job $jobId started in Jobs',
-            ),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to start: $e')));
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isGeneratingAudiobook = false;
-        });
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     super.build(context); // Required for AutomaticKeepAliveClientMixin
@@ -2555,215 +2486,6 @@ Paste your long text here.
               ),
               Text('${_speed.toStringAsFixed(2)}x'),
             ],
-          ),
-          Theme(
-            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.library_music),
-              title: const Text(
-                'Audiobook Settings',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-              subtitle: const Text(
-                'Format, subtitles, and chunking',
-                style: TextStyle(fontSize: 12),
-              ),
-              children: [_buildAudiobookLibrary()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAudiobookLibrary() {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        border: Border(top: BorderSide(color: Theme.of(context).dividerColor)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Playback speed control (for audiobook preview player)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Row(
-              children: [
-                const Text('Speed:', style: TextStyle(fontSize: 11)),
-                Expanded(
-                  child: Slider(
-                    value: _audiobookPlaybackSpeed,
-                    min: 0.5,
-                    max: 2.0,
-                    divisions: 150,
-                    label: '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
-                    onChanged: _setAudiobookSpeed,
-                  ),
-                ),
-                Text(
-                  '${_audiobookPlaybackSpeed.toStringAsFixed(2)}x',
-                  style: const TextStyle(fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: () {
-                  setState(() {
-                    _audiobookOutputFormat = 'm4b';
-                    _audiobookSubtitleFormat = 'none';
-                    _audiobookSmartChunking = true;
-                    _audiobookMaxCharsPerChunk = _optimizedChunkChars;
-                    _audiobookCrossfadeMs = _optimizedCrossfadeMs;
-                  });
-                },
-                icon: const Icon(Icons.auto_awesome, size: 16),
-                label: const Text(
-                  'Apply Mayari optimized export',
-                  style: TextStyle(fontSize: 11),
-                ),
-              ),
-            ),
-          ),
-          // Output format selector
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                const Text('Format:', style: TextStyle(fontSize: 11)),
-                const SizedBox(width: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                      value: 'mp3',
-                      label: Text('MP3', style: TextStyle(fontSize: 10)),
-                    ),
-                    ButtonSegment(
-                      value: 'wav',
-                      label: Text('WAV', style: TextStyle(fontSize: 10)),
-                    ),
-                    ButtonSegment(
-                      value: 'm4b',
-                      label: Text('M4B', style: TextStyle(fontSize: 10)),
-                    ),
-                  ],
-                  selected: {_audiobookOutputFormat},
-                  onSelectionChanged: (Set<String> selection) {
-                    setState(() => _audiobookOutputFormat = selection.first);
-                  },
-                  style: ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          // Subtitle format selector
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                const Text('Subtitles:', style: TextStyle(fontSize: 11)),
-                const SizedBox(width: 8),
-                SegmentedButton<String>(
-                  segments: const [
-                    ButtonSegment(
-                      value: 'none',
-                      label: Text('None', style: TextStyle(fontSize: 10)),
-                    ),
-                    ButtonSegment(
-                      value: 'srt',
-                      label: Text('SRT', style: TextStyle(fontSize: 10)),
-                    ),
-                    ButtonSegment(
-                      value: 'vtt',
-                      label: Text('VTT', style: TextStyle(fontSize: 10)),
-                    ),
-                  ],
-                  selected: {_audiobookSubtitleFormat},
-                  onSelectionChanged: (Set<String> selection) {
-                    setState(() => _audiobookSubtitleFormat = selection.first);
-                  },
-                  style: ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'Smart Chunking',
-                style: TextStyle(fontSize: 11),
-              ),
-              value: _audiobookSmartChunking,
-              onChanged: (value) =>
-                  setState(() => _audiobookSmartChunking = value),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                const Text('Chunk size:', style: TextStyle(fontSize: 11)),
-                Expanded(
-                  child: Slider(
-                    value: _audiobookMaxCharsPerChunk.toDouble(),
-                    min: 120,
-                    max: 4000,
-                    divisions: 97,
-                    label: _audiobookMaxCharsPerChunk.toString(),
-                    onChanged: _audiobookSmartChunking
-                        ? (value) => setState(
-                            () => _audiobookMaxCharsPerChunk = value.round(),
-                          )
-                        : null,
-                  ),
-                ),
-                Text(
-                  _audiobookMaxCharsPerChunk.toString(),
-                  style: const TextStyle(fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            child: Row(
-              children: [
-                const Text('Crossfade:', style: TextStyle(fontSize: 11)),
-                Expanded(
-                  child: Slider(
-                    value: _audiobookCrossfadeMs.toDouble(),
-                    min: 0,
-                    max: 200,
-                    divisions: 20,
-                    label: '${_audiobookCrossfadeMs}ms',
-                    onChanged: _audiobookSmartChunking
-                        ? (value) => setState(
-                            () => _audiobookCrossfadeMs = value.round(),
-                          )
-                        : null,
-                  ),
-                ),
-                Text(
-                  '${_audiobookCrossfadeMs}ms',
-                  style: const TextStyle(fontSize: 10),
-                ),
-              ],
-            ),
           ),
         ],
       ),
@@ -3712,7 +3434,7 @@ Paste your long text here.
               ),
             ),
           const SizedBox(width: 8),
-          if (!_isReading && !_isGeneratingAudiobook)
+          if (!_isReading)
             FilledButton.icon(
               onPressed: _hasTextToRead ? _startReading : null,
               icon: const Icon(Icons.play_arrow),
@@ -3745,19 +3467,6 @@ Paste your long text here.
                 ),
               ],
             ),
-          // Audiobook generation button (text files)
-          if (!_isReading) ...[
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              onPressed: (_hasTextToRead && !_isGeneratingAudiobook)
-                  ? _startAudiobookGeneration
-                  : null,
-              icon: const Icon(Icons.audiotrack),
-              label: Text(
-                _isGeneratingAudiobook ? 'Queueing...' : 'Convert to Audiobook',
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -3837,7 +3546,7 @@ Paste your long text here.
               ),
             ),
           const SizedBox(width: 8),
-          if (!_isReading && !_isGeneratingAudiobook)
+          if (!_isReading)
             FilledButton.icon(
               onPressed: _hasTextToRead ? _startReading : null,
               icon: const Icon(Icons.play_arrow),
@@ -3870,19 +3579,6 @@ Paste your long text here.
                 ),
               ],
             ),
-          // Audiobook generation button
-          if (!_isReading) ...[
-            const SizedBox(width: 8),
-            FilledButton.tonalIcon(
-              onPressed: (_hasTextToRead && !_isGeneratingAudiobook)
-                  ? _startAudiobookGeneration
-                  : null,
-              icon: const Icon(Icons.audiotrack),
-              label: Text(
-                _isGeneratingAudiobook ? 'Queueing...' : 'Convert to Audiobook',
-              ),
-            ),
-          ],
         ],
       ),
     );

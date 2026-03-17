@@ -69,9 +69,9 @@ Voice cloning from a 3-second sample. Compare the reference voice with the gener
 
 | Voice | Reference | Generated |
 |-------|-----------|-----------|
-| **Natasha Clone** (Genesis4 Style) | [Natasha.wav](backend/data/samples/voices/Natasha.wav) | [qwen3-natasha-genesis4-demo.wav](backend/data/pregenerated/qwen3-natasha-genesis4-demo.wav) |
-| **Suzan Clone** (Genesis4 Style) | [Suzan.wav](backend/data/samples/voices/Suzan.wav) | [qwen3-suzan-genesis4-demo.wav](backend/data/pregenerated/qwen3-suzan-genesis4-demo.wav) |
-| **Natasha (Hebrew)** (Cross-language) | [Natasha.wav](backend/data/samples/voices/Natasha.wav) | [qwen3-natasha-hebrew-demo.wav](backend/data/pregenerated/qwen3-natasha-hebrew-demo.wav) |
+| **Yelena Clone** (Genesis4 Style) | [Yelena.wav](backend/data/samples/voices/Yelena.wav) | [qwen3-yelena-genesis4-demo.wav](backend/data/pregenerated/qwen3-yelena-genesis4-demo.wav) |
+| **Svetlana Clone** (Genesis4 Style) | [Svetlana.wav](backend/data/samples/voices/Svetlana.wav) | [qwen3-svetlana-genesis4-demo.wav](backend/data/pregenerated/qwen3-svetlana-genesis4-demo.wav) |
+| **Yelena (Hebrew)** (Cross-language) | [Yelena.wav](backend/data/samples/voices/Yelena.wav) | [qwen3-yelena-hebrew-demo.wav](backend/data/pregenerated/qwen3-yelena-hebrew-demo.wav) |
 
 ### Qwen3-TTS CustomVoice (Preset Speakers)
 
@@ -85,8 +85,8 @@ Expressive voice cloning with emotion control. Natural, emotive speech synthesis
 
 | Voice | Reference | Generated |
 |-------|-----------|-----------|
-| **Natasha Clone** (Emotional Speech) | [Natasha.wav](backend/data/samples/voices/Natasha.wav) | [chatterbox-natasha-demo.wav](backend/data/pregenerated/chatterbox-natasha-demo-1770830814.wav) |
-| **Suzan Clone** (Emotional Speech) | [Suzan.wav](backend/data/samples/voices/Suzan.wav) | [chatterbox-suzan-demo.wav](backend/data/pregenerated/chatterbox-suzan-demo-1770830815.wav) |
+| **Yelena Clone** (Emotional Speech) | [Yelena.wav](backend/data/samples/voices/Yelena.wav) | [chatterbox-yelena-demo.wav](backend/data/pregenerated/chatterbox-yelena-demo-1770830814.wav) |
+| **Svetlana Clone** (Emotional Speech) | [Svetlana.wav](backend/data/samples/voices/Svetlana.wav) | [chatterbox-svetlana-demo.wav](backend/data/pregenerated/chatterbox-svetlana-demo-1770830815.wav) |
 
 ### Kokoro TTS (Fast British/American Voices)
 
@@ -125,13 +125,13 @@ All shipped pregenerated demo files in `backend/data/pregenerated`:
 
 | Engine | File | Purpose |
 |--------|------|---------|
-| Qwen3-TTS | [qwen3-natasha-genesis4-demo.wav](backend/data/pregenerated/qwen3-natasha-genesis4-demo.wav) | Voice clone demo (Natasha, Genesis4 style) |
-| Qwen3-TTS | [qwen3-suzan-genesis4-demo.wav](backend/data/pregenerated/qwen3-suzan-genesis4-demo.wav) | Voice clone demo (Suzan, Genesis4 style) |
+| Qwen3-TTS | [qwen3-yelena-genesis4-demo.wav](backend/data/pregenerated/qwen3-yelena-genesis4-demo.wav) | Voice clone demo (Yelena, Genesis4 style) |
+| Qwen3-TTS | [qwen3-svetlana-genesis4-demo.wav](backend/data/pregenerated/qwen3-svetlana-genesis4-demo.wav) | Voice clone demo (Svetlana, Genesis4 style) |
 | Qwen3-TTS | [qwen3-ryan-genesis4-demo.wav](backend/data/pregenerated/qwen3-ryan-genesis4-demo.wav) | Preset speaker demo (Ryan) |
-| Qwen3-TTS | [qwen3-natasha-hebrew-demo.wav](backend/data/pregenerated/qwen3-natasha-hebrew-demo.wav) | Cross-language clone demo (Hebrew) |
-| Qwen3-TTS | [qwen3-natasha-hebrew-demo.txt](backend/data/pregenerated/qwen3-natasha-hebrew-demo.txt) | Source text for Hebrew demo |
-| Chatterbox | [chatterbox-natasha-demo-1770830814.wav](backend/data/pregenerated/chatterbox-natasha-demo-1770830814.wav) | Emotional clone demo (Natasha) |
-| Chatterbox | [chatterbox-suzan-demo-1770830815.wav](backend/data/pregenerated/chatterbox-suzan-demo-1770830815.wav) | Emotional clone demo (Suzan) |
+| Qwen3-TTS | [qwen3-yelena-hebrew-demo.wav](backend/data/pregenerated/qwen3-yelena-hebrew-demo.wav) | Cross-language clone demo (Hebrew) |
+| Qwen3-TTS | [qwen3-yelena-hebrew-demo.txt](backend/data/pregenerated/qwen3-yelena-hebrew-demo.txt) | Source text for Hebrew demo |
+| Chatterbox | [chatterbox-yelena-demo-1770830814.wav](backend/data/pregenerated/chatterbox-yelena-demo-1770830814.wav) | Emotional clone demo (Yelena) |
+| Chatterbox | [chatterbox-svetlana-demo-1770830815.wav](backend/data/pregenerated/chatterbox-svetlana-demo-1770830815.wav) | Emotional clone demo (Svetlana) |
 | Supertonic | [supertonic-f1-genesis4-demo.wav](backend/data/pregenerated/supertonic-f1-genesis4-demo.wav) | Preset F1 multilingual ONNX demo |
 | Supertonic | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) | Preset M2 multilingual ONNX demo |
 | CosyVoice3 | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) | CosyVoice3 F1/Eden standalone ONNX demo |
@@ -378,10 +378,10 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Advanced Generation Controls**: Temperature, top_p, top_k, repetition penalty, seed
 - **Model Size Selection**: 0.6B (Fast) or 1.7B (Quality)
 - **Kokoro TTS**: Fast, high-quality English synthesis with 21 British/American voices (IPA transcription is not part of the current release)
-- **Default Voice Samples**: Max, Natasha, Sara, and Suzan ship with the app; user uploads are stored in `~/MimikaStudio/data/user_voices/cloners/` by default (or `MIMIKA_DATA_DIR`)
+- **Default Voice Samples**: Mikhail, Yelena, Anastasia, and Svetlana ship with the app; user uploads are stored in `~/MimikaStudio/data/user_voices/cloners/` by default (or `MIMIKA_DATA_DIR`)
 - **User Voices in UI**: Uploaded voices appear immediately under each engine's **Your Voices** section
 - **Jobs Tab**: State-of-the-art unified queue of TTS, voice clone, and audiobook jobs with live progress, completion state, and playback controls
-- **Folder View in Settings**: View and open user home, Mimika data, logs, default voices (Natasha/Suzan), and user clone voices folders directly from the app
+- **Folder View in Settings**: View and open user home, Mimika data, logs, default voices (Yelena/Svetlana), and user clone voices folders directly from the app
 - **Voice Previews**: Tap play/pause/stop to audition voices before generating
 - **Document Reader**: Read PDFs, TXT, and MD files aloud with Kokoro TTS
 - **Audiobook Creator**: Convert full documents to audiobook files (WAV/MP3/M4B) with smart chunking, crossfade merging, progress tracking, and playback controls (Kokoro voices only)
@@ -953,8 +953,8 @@ MimikaStudio/
 │   ├── tests/               # Comprehensive test suite
 │   └── data/
 │       ├── samples/         # Shipped voice samples (shared across engines)
-│       │   ├── qwen3_voices/      # Natasha, Suzan
-│       │   ├── chatterbox_voices/ # Natasha, Suzan, Hebrew_Natasha
+│       │   ├── qwen3_voices/      # Yelena, Svetlana
+│       │   ├── chatterbox_voices/ # Yelena, Svetlana, Hebrew_Yelena
 │       │   └── kokoro/            # Pre-generated Kokoro samples
 │       ├── user_voices/     # User uploads (git-ignored, shared across engines)
 │       │   ├── qwen3/

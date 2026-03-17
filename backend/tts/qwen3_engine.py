@@ -269,6 +269,34 @@ class Qwen3TTSEngine:
 
         return output_file
 
+    def generate_voice_clone_audio(
+        self,
+        text: str,
+        ref_audio_path: str,
+        ref_text: str,
+        language: str = "English",
+        speed: float = 1.0,
+        params: Optional[GenerationParams] = None,
+    ) -> tuple[np.ndarray, int]:
+        """Generate cloned speech and return audio samples with sample rate."""
+        self._set_mode("clone")
+        self.load_model()
+
+        lang = self._normalize_language(language)
+        gen_kwargs = self._build_gen_kwargs(params)
+        results = self.model.generate(
+            text=text,
+            ref_audio=ref_audio_path,
+            ref_text=ref_text.strip() if ref_text and ref_text.strip() else None,
+            lang_code=lang,
+            verbose=False,
+            **gen_kwargs,
+        )
+        audio_data, sr = self._collect_audio(results)
+        if speed != 1.0:
+            audio_data = self._adjust_speed(audio_data, sr, speed)
+        return audio_data, sr
+
     def generate_custom_voice(
         self,
         text: str,
@@ -319,6 +347,37 @@ class Qwen3TTSEngine:
         sf.write(str(output_file), audio_data, sr)
 
         return output_file
+
+    def generate_custom_voice_audio(
+        self,
+        text: str,
+        speaker: str,
+        language: str = "Auto",
+        instruct: Optional[str] = None,
+        speed: float = 1.0,
+        params: Optional[GenerationParams] = None,
+    ) -> tuple[np.ndarray, int]:
+        """Generate preset-speaker speech and return audio samples with sample rate."""
+        if speaker not in QWEN_SPEAKERS:
+            raise ValueError(f"Unknown speaker: {speaker}. Available: {list(QWEN_SPEAKERS)}")
+
+        self._set_mode("custom")
+        self.load_model()
+
+        lang = self._normalize_language(language)
+        gen_kwargs = self._build_gen_kwargs(params)
+        results = self.model.generate_custom_voice(
+            text=text,
+            speaker=speaker,
+            language=lang,
+            instruct=instruct,
+            verbose=False,
+            **gen_kwargs,
+        )
+        audio_data, sr = self._collect_audio(results)
+        if speed != 1.0:
+            audio_data = self._adjust_speed(audio_data, sr, speed)
+        return audio_data, sr
 
     def stream_voice_clone_pcm(
         self,

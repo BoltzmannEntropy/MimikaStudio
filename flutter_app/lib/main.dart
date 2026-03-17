@@ -9,6 +9,7 @@ import 'screens/quick_tts_screen.dart';
 import 'screens/supertonic_screen.dart';
 import 'screens/qwen3_clone_screen.dart';
 import 'screens/chatterbox_clone_screen.dart';
+import 'screens/audiobook_screen.dart';
 import 'screens/pdf_reader_screen.dart';
 import 'screens/jobs_screen.dart';
 import 'screens/models_screen.dart';
@@ -768,7 +769,7 @@ class _MainScreenState extends State<MainScreen> {
     }
 
     return DefaultTabController(
-      length: 9,
+      length: 10,
       child: Scaffold(
         appBar: AppBar(
           toolbarHeight: 40,
@@ -848,6 +849,10 @@ class _MainScreenState extends State<MainScreen> {
                 text: 'Read Aloud',
               ),
               Tab(
+                icon: Icon(Icons.library_music_rounded, size: 26),
+                text: 'Audiobooks',
+              ),
+              Tab(
                 icon: Icon(Icons.work_history_rounded, size: 26),
                 text: 'Jobs',
               ),
@@ -870,6 +875,7 @@ class _MainScreenState extends State<MainScreen> {
                   Qwen3CloneScreen(),
                   ChatterboxCloneScreen(),
                   PdfReaderScreen(),
+                  AudiobookScreen(),
                   JobsScreen(),
                   VoicePromptManagementScreen(),
                   SettingsScreen(),

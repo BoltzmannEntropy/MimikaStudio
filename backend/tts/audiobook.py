@@ -41,6 +41,9 @@ OutputFormat = Literal["wav", "mp3", "m4b"]
 # Subtitle format type
 SubtitleFormat = Literal["none", "srt", "vtt"]
 
+# TTS engine type
+AudiobookEngine = Literal["kokoro", "qwen3"]
+
 class JobStatus(str, Enum):
     STARTED = "started"
     PROCESSING = "processing"
@@ -98,6 +101,7 @@ class AudiobookJob:
     voice: str
     speed: float
     total_chunks: int
+    engine: AudiobookEngine = "kokoro"
     smart_chunking: bool = True
     max_chars_per_chunk: int = 1500
     crossfade_ms: int = 40
@@ -129,6 +133,13 @@ class AudiobookJob:
     subtitles: List[SubtitleEntry] = field(default_factory=list)
     chunk_generation_seconds: List[float] = field(default_factory=list)
     queue_position: int = 0
+    qwen_mode: str = "clone"
+    qwen_voice_name: Optional[str] = None
+    qwen_language: str = "English"
+    qwen_model_size: str = "0.6B"
+    qwen_model_quantization: str = "bf16"
+    qwen_speaker: Optional[str] = None
+    qwen_instruct: Optional[str] = None
 
     def request_cancel(self):
         self._cancel_requested = True
@@ -429,6 +440,100 @@ def _extract_html_text(html_content: str) -> str:
     return _normalize_block_text(text)
 
 
+def extract_html_chapters(html_path: str, title: Optional[str] = None) -> Tuple[str, List[Chapter]]:
+    html_content = Path(html_path).read_text(encoding="utf-8", errors="replace")
+    text = _extract_html_text(html_content)
+    if not text:
+        return "", []
+    resolved_title = title or Path(html_path).stem or "Document"
+    return text, [Chapter(title=resolved_title, text=text, level=1)]
+
+
+def extract_rtf_text(rtf_path: str) -> str:
+    raw = Path(rtf_path).read_text(encoding="utf-8", errors="replace")
+    text = re.sub(r"\\'[0-9a-fA-F]{2}", " ", raw)
+    text = re.sub(r"\\par[d]?|\\line", "\n", text)
+    text = re.sub(r"\\tab", " ", text)
+    text = re.sub(r"\\[a-zA-Z]+-?\d* ?", " ", text)
+    text = text.replace("{", " ").replace("}", " ")
+    return _normalize_block_text(text)
+
+
+def extract_rtf_chapters(rtf_path: str, title: Optional[str] = None) -> Tuple[str, List[Chapter]]:
+    text = extract_rtf_text(rtf_path)
+    if not text:
+        return "", []
+    resolved_title = title or Path(rtf_path).stem or "Document"
+    return text, [Chapter(title=resolved_title, text=text, level=1)]
+
+
+def extract_odt_text(odt_path: str) -> str:
+    try:
+        with ZipFile(odt_path, "r") as archive:
+            xml_bytes = archive.read("content.xml")
+    except Exception as exc:
+        raise ValueError(f"Invalid ODT file: {exc}") from exc
+
+    root = ET.fromstring(xml_bytes)
+    paragraphs: list[str] = []
+    for element in root.findall(".//{*}p") + root.findall(".//{*}h"):
+        parts: list[str] = []
+        for node in element.iter():
+            tag = node.tag.rsplit("}", 1)[-1]
+            if tag in {"p", "h"}:
+                if node.text:
+                    parts.append(node.text)
+            elif tag == "span" and node.text:
+                parts.append(node.text)
+            elif tag == "tab":
+                parts.append(" ")
+            elif tag == "line-break":
+                parts.append("\n")
+            if node.tail:
+                parts.append(node.tail)
+        text = "".join(parts).strip()
+        if text:
+            paragraphs.append(text)
+    return _normalize_block_text("\n\n".join(paragraphs))
+
+
+def extract_odt_chapters(odt_path: str, title: Optional[str] = None) -> Tuple[str, List[Chapter]]:
+    text = extract_odt_text(odt_path)
+    if not text:
+        return "", []
+    resolved_title = title or Path(odt_path).stem or "Document"
+    return text, [Chapter(title=resolved_title, text=text, level=1)]
+
+
+def extract_doc_text(doc_path: str) -> str:
+    textutil = shutil.which("textutil")
+    if textutil:
+        try:
+            result = subprocess.run(
+                [textutil, "-convert", "txt", "-stdout", doc_path],
+                check=True,
+                capture_output=True,
+            )
+            text = result.stdout.decode("utf-8", errors="replace")
+            normalized = _normalize_block_text(text)
+            if normalized:
+                return normalized
+        except Exception as exc:
+            print(f"[Audiobook] textutil DOC extraction failed: {exc}")
+
+    fallback = Path(doc_path).read_text(encoding="latin-1", errors="ignore")
+    fallback = re.sub(r"[^\x09\x0A\x0D\x20-\x7E]", " ", fallback)
+    return _normalize_block_text(fallback)
+
+
+def extract_doc_chapters(doc_path: str, title: Optional[str] = None) -> Tuple[str, List[Chapter]]:
+    text = extract_doc_text(doc_path)
+    if not text:
+        return "", []
+    resolved_title = title or Path(doc_path).stem or "Document"
+    return text, [Chapter(title=resolved_title, text=text, level=1)]
+
+
 def _resolve_epub_opf_path(archive: ZipFile) -> Optional[str]:
     try:
         container_xml = archive.read("META-INF/container.xml")
@@ -564,6 +669,7 @@ def create_audiobook_job(
     text: str,
     title: str,
     voice: str = DEFAULT_VOICE,
+    engine: AudiobookEngine = "kokoro",
     speed: float = 1.0,
     output_format: OutputFormat = "wav",
     subtitle_format: SubtitleFormat = "none",
@@ -572,6 +678,13 @@ def create_audiobook_job(
     max_chars_per_chunk: int = 1500,
     crossfade_ms: int = 40,
     output_dir: Optional[Path] = None,
+    qwen_mode: str = "clone",
+    qwen_voice_name: Optional[str] = None,
+    qwen_language: str = "English",
+    qwen_model_size: str = "0.6B",
+    qwen_model_quantization: str = "bf16",
+    qwen_speaker: Optional[str] = None,
+    qwen_instruct: Optional[str] = None,
 ) -> AudiobookJob:
     """
     Create a new audiobook generation job.
@@ -596,6 +709,7 @@ def create_audiobook_job(
         job_id=job_id,
         title=title,
         voice=voice,
+        engine=engine,
         speed=speed,
         total_chunks=len(chunks),
         total_chars=total_chars,
@@ -606,6 +720,13 @@ def create_audiobook_job(
         subtitle_format=subtitle_format,
         chapters=chapters or [],
         output_dir=output_dir,
+        qwen_mode=qwen_mode,
+        qwen_voice_name=qwen_voice_name,
+        qwen_language=qwen_language,
+        qwen_model_size=qwen_model_size,
+        qwen_model_quantization=qwen_model_quantization,
+        qwen_speaker=qwen_speaker,
+        qwen_instruct=qwen_instruct,
     )
 
     with _jobs_lock:
@@ -623,6 +744,7 @@ def create_audiobook_from_file(
     file_path: str,
     title: Optional[str] = None,
     voice: str = DEFAULT_VOICE,
+    engine: AudiobookEngine = "kokoro",
     speed: float = 1.0,
     output_format: OutputFormat = "wav",
     subtitle_format: SubtitleFormat = "none",
@@ -630,6 +752,13 @@ def create_audiobook_from_file(
     max_chars_per_chunk: int = 1500,
     crossfade_ms: int = 40,
     output_dir: Optional[Path] = None,
+    qwen_mode: str = "clone",
+    qwen_voice_name: Optional[str] = None,
+    qwen_language: str = "English",
+    qwen_model_size: str = "0.6B",
+    qwen_model_quantization: str = "bf16",
+    qwen_speaker: Optional[str] = None,
+    qwen_instruct: Optional[str] = None,
 ) -> AudiobookJob:
     """
     Create audiobook from a file (PDF, EPUB, TXT, etc.).
@@ -668,6 +797,14 @@ def create_audiobook_from_file(
         chapters = [Chapter(title=title, text=text)]
     elif ext == '.docx':
         text, chapters = extract_docx_chapters(file_path, title=title)
+    elif ext in {'.html', '.htm'}:
+        text, chapters = extract_html_chapters(file_path, title=title)
+    elif ext == '.rtf':
+        text, chapters = extract_rtf_chapters(file_path, title=title)
+    elif ext == '.odt':
+        text, chapters = extract_odt_chapters(file_path, title=title)
+    elif ext == '.doc':
+        text, chapters = extract_doc_chapters(file_path, title=title)
     else:
         raise ValueError(f"Unsupported file format: {ext}")
 
@@ -678,6 +815,7 @@ def create_audiobook_from_file(
         text=text,
         title=title,
         voice=voice,
+        engine=engine,
         speed=speed,
         output_format=output_format,
         subtitle_format=subtitle_format,
@@ -686,6 +824,13 @@ def create_audiobook_from_file(
         max_chars_per_chunk=max_chars_per_chunk,
         crossfade_ms=crossfade_ms,
         output_dir=output_dir,
+        qwen_mode=qwen_mode,
+        qwen_voice_name=qwen_voice_name,
+        qwen_language=qwen_language,
+        qwen_model_size=qwen_model_size,
+        qwen_model_quantization=qwen_model_quantization,
+        qwen_speaker=qwen_speaker,
+        qwen_instruct=qwen_instruct,
     )
 
 
@@ -876,8 +1021,64 @@ def _write_subtitles(job: AudiobookJob, outputs_dir: Path) -> Optional[Path]:
     return subtitle_file
 
 
+def _resolve_qwen_clone_voice(job: AudiobookJob) -> tuple[str, str]:
+    from .qwen3_engine import get_qwen3_engine
+
+    voice_name = (job.qwen_voice_name or job.voice or "").strip()
+    if not voice_name:
+        raise ValueError("Qwen audiobook generation requires a voice name")
+
+    engine = get_qwen3_engine(
+        mode="clone",
+        model_size=job.qwen_model_size,
+        quantization=job.qwen_model_quantization,
+    )
+    for voice in engine.get_saved_voices():
+        if str(voice.get("name") or "").strip().lower() == voice_name.lower():
+            audio_path = str(voice.get("audio_path") or "").strip()
+            transcript = str(voice.get("transcript") or "").strip()
+            if not audio_path:
+                break
+            return audio_path, transcript
+    raise ValueError(f"Qwen voice '{voice_name}' not found")
+
+
 def _generate_chunk_audio(job: AudiobookJob, chunk: str) -> Tuple[np.ndarray, int]:
     """Generate audio for a single chunk based on selected engine."""
+    if job.engine == "qwen3":
+        from .qwen3_engine import get_qwen3_engine
+
+        if job.qwen_mode == "custom":
+            speaker = (job.qwen_speaker or "").strip()
+            if not speaker:
+                raise ValueError("Qwen custom audiobook generation requires a speaker")
+            engine = get_qwen3_engine(
+                mode="custom",
+                model_size=job.qwen_model_size,
+                quantization=job.qwen_model_quantization,
+            )
+            return engine.generate_custom_voice_audio(
+                chunk,
+                speaker=speaker,
+                language=job.qwen_language,
+                instruct=job.qwen_instruct,
+                speed=job.speed,
+            )
+
+        ref_audio_path, ref_text = _resolve_qwen_clone_voice(job)
+        engine = get_qwen3_engine(
+            mode="clone",
+            model_size=job.qwen_model_size,
+            quantization=job.qwen_model_quantization,
+        )
+        return engine.generate_voice_clone_audio(
+            chunk,
+            ref_audio_path=ref_audio_path,
+            ref_text=ref_text,
+            language=job.qwen_language,
+            speed=job.speed,
+        )
+
     engine = get_kokoro_engine()
     return engine.generate_audio(chunk, voice=job.voice, speed=job.speed)
 
@@ -1053,6 +1254,15 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
                 print(f"[Audiobook] Subtitles written: {subtitle_file.name}")
 
             # Persist generation metrics for library inspection.
+            # Include engine and voice info for UI display.
+            engine_label = (
+                "Kokoro" if job.engine == "kokoro"
+                else f"Qwen Clone ({job.qwen_model_size})"
+            )
+            voice_label = (
+                job.voice if job.engine == "kokoro"
+                else (job.qwen_voice_name or job.qwen_speaker or "Unknown")
+            )
             metrics_payload = {
                 "started_at": datetime.utcfromtimestamp(job.started_at).isoformat() + "Z",
                 "completed_at": datetime.utcfromtimestamp(time.time()).isoformat() + "Z",
@@ -1075,6 +1285,11 @@ def _generate_audiobook(job: AudiobookJob, chunks: list[str]):
                     max(job.chunk_generation_seconds) if job.chunk_generation_seconds else 0.0,
                     4,
                 ),
+                # Engine and voice info for UI display
+                "engine": job.engine,
+                "engine_label": engine_label,
+                "voice": voice_label,
+                "title": job.title,
             }
             try:
                 output_file.with_suffix(".metrics.json").write_text(

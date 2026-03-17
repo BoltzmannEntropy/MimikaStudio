@@ -31,7 +31,7 @@ import shlex
 import urllib.request
 import zipfile
 from datetime import datetime
-from urllib.parse import quote, urlparse, parse_qs
+from urllib.parse import quote, urlparse, parse_qs, unquote
 import uuid
 import soundfile as sf
 
@@ -1328,15 +1328,112 @@ def _safe_tag(value: str, fallback: str = "model") -> str:
     return tag[:32] if tag else fallback
 
 
+def _resolve_audio_converter_binary() -> Optional[str]:
+    env_vars = (
+        "MIMIKA_FFMPEG_PATH",
+        "FFMPEG_BINARY",
+        "IMAGEIO_FFMPEG_EXE",
+    )
+    for var_name in env_vars:
+        raw = (os.getenv(var_name) or "").strip()
+        if not raw:
+            continue
+        candidate = Path(raw).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+
+    for binary_name in ("ffmpeg", "avconv"):
+        resolved = shutil.which(binary_name)
+        if resolved:
+            return resolved
+
+    common_roots = (
+        Path("/opt/homebrew/bin"),
+        Path("/opt/local/bin"),
+        Path("/usr/local/bin"),
+        Path("/usr/bin"),
+    )
+    for root in common_roots:
+        for binary_name in ("ffmpeg", "avconv"):
+            candidate = root / binary_name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+    return None
+
+
+def _sanitize_uploaded_filename_suffix(filename: str, fallback: str = ".wav") -> str:
+    raw_suffix = Path((filename or "").strip()).suffix.lower()
+    if re.fullmatch(r"\.[a-z0-9]{1,10}", raw_suffix):
+        return raw_suffix
+    return fallback
+
+
+def _normalize_audio_with_ffmpeg(input_source: str, target_path: Path) -> float:
+    converter_binary = _resolve_audio_converter_binary()
+    if not converter_binary:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported audio file. Install ffmpeg to import MP3, M4A, "
+                "FLAC, OGG, AAC, and other common media formats."
+            ),
+        )
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        [
+            converter_binary,
+            "-y",
+            "-i",
+            input_source,
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-vn",
+            "-c:a",
+            "pcm_s16le",
+            str(target_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = _truncate_tool_error(result.stderr or result.stdout)
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid or unsupported audio file. Please upload WAV, MP3, "
+                "M4A, FLAC, OGG, AAC, or another ffmpeg-readable format. "
+                f"({detail or 'conversion failed'})"
+            ),
+        )
+
+    try:
+        info = sf.info(str(target_path))
+    except Exception as exc:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Converted audio could not be read. ({exc})",
+        ) from exc
+
+    if info.frames <= 0 or info.samplerate <= 0:
+        target_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Uploaded audio is empty")
+
+    return float(info.frames / info.samplerate)
+
+
 def _decode_and_normalize_uploaded_voice(uploaded_path: Path, target_path: Path) -> float:
     """Decode user upload and normalize it to mono 24k PCM WAV."""
     try:
         audio, sample_rate = sf.read(str(uploaded_path), dtype="float32")
     except Exception as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid or unsupported audio file. Please upload a WAV file. ({exc})",
-        ) from exc
+        return _normalize_audio_with_ffmpeg(str(uploaded_path), target_path)
 
     if getattr(audio, "size", 0) == 0:
         raise HTTPException(status_code=400, detail="Uploaded audio is empty")
@@ -1595,7 +1692,7 @@ async def system_info():
         {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
         {
             "id": "default_voices",
-            "label": "Default Voices (Natasha/Max)",
+            "label": "Default Voices (Yelena/Mikhail)",
             "path": str(SHARED_SAMPLE_VOICES_DIR),
         },
         {
@@ -1636,7 +1733,7 @@ async def system_folders():
             {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
             {
                 "id": "default_voices",
-                "label": "Default Voices (Natasha/Max)",
+                "label": "Default Voices (Yelena/Mikhail)",
                 "path": str(SHARED_SAMPLE_VOICES_DIR),
             },
             {
@@ -1825,6 +1922,7 @@ def _voice_prompt_payload(voice: dict) -> dict:
         "transcript": (voice.get("transcript") or "").strip(),
         "engines_supported": list(voice.get("engines_supported") or ["qwen3", "chatterbox", "indextts2"]),
         "audio_url": f"/api/voice-prompts/{quote(name)}/audio" if name else None,
+        "audio_path": str(audio_path) if audio_path is not None else "",
     }
 
 
@@ -1942,41 +2040,52 @@ def _parse_time_offset_seconds(raw: str) -> Optional[float]:
     return None
 
 
-_ALLOWED_YOUTUBE_HOSTS = {
-    "youtube.com",
-    "www.youtube.com",
-    "m.youtube.com",
-    "music.youtube.com",
-    "youtu.be",
-    "www.youtu.be",
+_DIRECT_AUDIO_URL_SUFFIXES = {
+    ".aac",
+    ".aif",
+    ".aiff",
+    ".caf",
+    ".flac",
+    ".m4a",
+    ".m4b",
+    ".mp3",
+    ".mp4",
+    ".oga",
+    ".ogg",
+    ".opus",
+    ".wav",
+    ".wave",
+    ".webm",
 }
 
 
-def _is_allowed_youtube_host(hostname: str) -> bool:
-    host = (hostname or "").strip().lower().strip(".")
-    if not host:
-        return False
-    if host in _ALLOWED_YOUTUBE_HOSTS:
-        return True
-    return host.endswith(".youtube.com")
-
-
-def _validate_youtube_source_url(raw_url: str) -> str:
+def _validate_voice_prompt_source_url(raw_url: str) -> str:
     url = (raw_url or "").strip()
     if not url:
-        raise HTTPException(status_code=400, detail="YouTube URL is required")
+        raise HTTPException(status_code=400, detail="Source URL is required")
     try:
         parsed = urlparse(url)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL") from exc
-    if parsed.scheme not in {"http", "https"}:
-        raise HTTPException(status_code=400, detail="Invalid YouTube URL")
-    if not _is_allowed_youtube_host(parsed.hostname or ""):
-        raise HTTPException(
-            status_code=400,
-            detail="Only youtube.com and youtu.be URLs are allowed",
-        )
+        raise HTTPException(status_code=400, detail="Invalid source URL") from exc
+    if parsed.scheme not in {"http", "https"} or not (parsed.hostname or "").strip():
+        raise HTTPException(status_code=400, detail="Invalid source URL")
     return url
+
+
+def _is_direct_audio_source_url(url: str) -> bool:
+    try:
+        parsed = urlparse((url or "").strip())
+    except Exception:
+        return False
+
+    candidates = [unquote(parsed.path or "").lower()]
+    for values in parse_qs(parsed.query, keep_blank_values=False).values():
+        candidates.extend(unquote(value).lower() for value in values)
+    return any(
+        candidate.endswith(suffix)
+        for candidate in candidates
+        for suffix in _DIRECT_AUDIO_URL_SUFFIXES
+    )
 
 
 async def _run_subprocess_async(
@@ -2081,14 +2190,49 @@ def _cleanup_youtube_preview_cache() -> None:
             pass
 
 
-async def _download_youtube_clip_wav(
+async def _download_source_clip_wav(
     *,
     url: str,
     start_sec: float,
-    ytdlp_binary: str,
+    ytdlp_binary: Optional[str],
     ffmpeg_binary: str,
     temp_root: Path,
 ) -> Path:
+    if _is_direct_audio_source_url(url):
+        clipped_audio = temp_root / "clip.wav"
+        ffmpeg_cmd = [
+            ffmpeg_binary,
+            "-y",
+            "-i",
+            url,
+            "-ss",
+            f"{start_sec:.3f}",
+            "-t",
+            "20",
+            "-ac",
+            "1",
+            "-ar",
+            "24000",
+            "-vn",
+            str(clipped_audio),
+        ]
+        ffmpeg_result = await _run_subprocess_async(ffmpeg_cmd, timeout=120)
+        if ffmpeg_result.returncode != 0:
+            detail = _truncate_tool_error(
+                ffmpeg_result.stderr or ffmpeg_result.stdout
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to extract clip from source URL: {detail or 'unknown error'}",
+            )
+        return clipped_audio
+
+    if not ytdlp_binary:
+        raise HTTPException(
+            status_code=503,
+            detail="yt-dlp is required to extract voice clips from web page URLs",
+        )
+
     output_template = temp_root / "source.%(ext)s"
     base_cmd = [
         ytdlp_binary,
@@ -2245,7 +2389,13 @@ async def voice_prompt_upload(
             CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
             outputs_dir.mkdir(parents=True, exist_ok=True)
             safe_tag = _safe_tag(clean_name, fallback="voice")
-            temp_path = outputs_dir / f"temp-voiceprompt-{safe_tag}-{uuid.uuid4().hex[:8]}.wav"
+            file_suffix = _sanitize_uploaded_filename_suffix(
+                file.filename or "",
+                fallback=".wav",
+            )
+            temp_path = outputs_dir / (
+                f"temp-voiceprompt-{safe_tag}-{uuid.uuid4().hex[:8]}{file_suffix}"
+            )
             with temp_path.open("wb") as handle:
                 shutil.copyfileobj(file.file, handle)
 
@@ -2286,20 +2436,15 @@ async def voice_prompt_upload(
     return {"message": f"Voice prompt '{clean_name}' uploaded", "voice": payload}
 
 
+@app.post("/api/voice-prompts/import/url/preview")
 @app.post("/api/voice-prompts/import/youtube/preview")
 async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreviewRequest):
-    url = _validate_youtube_source_url(request.url)
+    url = _validate_voice_prompt_source_url(request.url)
     start_sec = request.start_sec
     if start_sec is None:
         start_sec = _youtube_start_seconds_from_url(url)
     start_sec = max(0.0, float(start_sec))
 
-    ytdlp_binary = shutil.which("yt-dlp") or shutil.which("yt_dlp")
-    if not ytdlp_binary:
-        raise HTTPException(
-            status_code=503,
-            detail="yt-dlp is not installed or not available in PATH",
-        )
     ffmpeg_binary = (
         (os.getenv("MIMIKA_FFMPEG_PATH") or "").strip()
         or shutil.which("ffmpeg")
@@ -2308,7 +2453,7 @@ async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreview
     if not ffmpeg_binary:
         raise HTTPException(
             status_code=503,
-            detail="ffmpeg is required to extract voice clips from YouTube audio",
+            detail="ffmpeg is required to extract voice clips from source URLs",
         )
 
     outputs_dir.mkdir(parents=True, exist_ok=True)
@@ -2317,10 +2462,10 @@ async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreview
     try:
         with tempfile.TemporaryDirectory(prefix="voiceprompt-yt-preview-", dir=str(outputs_dir)) as tmp_dir:
             temp_root = Path(tmp_dir)
-            clipped_audio = await _download_youtube_clip_wav(
+            clipped_audio = await _download_source_clip_wav(
                 url=url,
                 start_sec=start_sec,
-                ytdlp_binary=ytdlp_binary,
+                ytdlp_binary=shutil.which("yt-dlp") or shutil.which("yt_dlp"),
                 ffmpeg_binary=ffmpeg_binary,
                 temp_root=temp_root,
             )
@@ -2352,7 +2497,7 @@ async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreview
             preview_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=504,
-            detail=f"YouTube preview timed out: {exc}",
+            detail=f"Source preview timed out: {exc}",
         ) from exc
     except Exception as exc:
         if preview_path is not None:
@@ -2360,6 +2505,7 @@ async def voice_prompt_import_youtube_preview(request: VoicePromptYoutubePreview
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.delete("/api/voice-prompts/import/url/preview/{preview_id}")
 @app.delete("/api/voice-prompts/import/youtube/preview/{preview_id}")
 async def voice_prompt_import_youtube_preview_delete(preview_id: str):
     clean_preview_id = (preview_id or "").strip().lower()
@@ -2373,9 +2519,10 @@ async def voice_prompt_import_youtube_preview_delete(preview_id: str):
     path = Path(str(payload.get("path") or ""))
     if path.name.startswith("voiceprompt-preview-"):
         path.unlink(missing_ok=True)
-    return {"message": f"YouTube preview '{clean_preview_id}' deleted"}
+    return {"message": f"Source preview '{clean_preview_id}' deleted"}
 
 
+@app.post("/api/voice-prompts/import/url/commit")
 @app.post("/api/voice-prompts/import/youtube/commit")
 async def voice_prompt_import_youtube_commit(request: VoicePromptYoutubeCommitRequest):
     clean_name = (request.name or "").strip()
@@ -2452,29 +2599,23 @@ async def voice_prompt_import_youtube_commit(request: VoicePromptYoutubeCommitRe
         }
     )
     return {
-        "message": f"Voice prompt '{clean_name}' imported from YouTube",
+        "message": f"Voice prompt '{clean_name}' imported from URL",
         "voice": payload,
     }
 
 
+@app.post("/api/voice-prompts/import/url")
 @app.post("/api/voice-prompts/import/youtube")
 async def voice_prompt_import_youtube(request: VoicePromptYoutubeImportRequest):
     clean_name = (request.name or "").strip()
     if not _voice_name_is_valid(clean_name):
         raise HTTPException(status_code=400, detail="Invalid voice name")
-    url = _validate_youtube_source_url(request.url)
+    url = _validate_voice_prompt_source_url(request.url)
 
     start_sec = request.start_sec
     if start_sec is None:
         start_sec = _youtube_start_seconds_from_url(url)
     start_sec = max(0.0, float(start_sec))
-
-    ytdlp_binary = shutil.which("yt-dlp") or shutil.which("yt_dlp")
-    if not ytdlp_binary:
-        raise HTTPException(
-            status_code=503,
-            detail="yt-dlp is not installed or not available in PATH",
-        )
 
     ffmpeg_binary = (
         (os.getenv("MIMIKA_FFMPEG_PATH") or "").strip()
@@ -2484,7 +2625,7 @@ async def voice_prompt_import_youtube(request: VoicePromptYoutubeImportRequest):
     if not ffmpeg_binary:
         raise HTTPException(
             status_code=503,
-            detail="ffmpeg is required to extract voice clips from YouTube audio",
+            detail="ffmpeg is required to extract voice clips from source URLs",
         )
 
     CLONER_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
@@ -2507,96 +2648,13 @@ async def voice_prompt_import_youtube(request: VoicePromptYoutubeImportRequest):
         try:
             with tempfile.TemporaryDirectory(prefix="voiceprompt-yt-", dir=str(outputs_dir)) as tmp_dir:
                 temp_root = Path(tmp_dir)
-                output_template = temp_root / "source.%(ext)s"
-
-                base_cmd = [
-                    ytdlp_binary,
-                    "-f",
-                    "bv*+ba/best",
-                    "--merge-output-format",
-                    "mp4",
-                    "--write-sub",
-                    "--sub-lang",
-                    "en",
-                    "--convert-subs",
-                    "srt",
-                    "--ignore-errors",
-                    "--max-downloads",
-                    "1",
-                    "--print",
-                    "after_move:filepath",
-                    "-o",
-                    str(output_template),
-                ]
-                attempts = [
-                    list(base_cmd),
-                    [
-                        *base_cmd,
-                        "--sleep-requests",
-                        "1",
-                        "--sleep-interval",
-                        "1",
-                        "--max-sleep-interval",
-                        "3",
-                    ],
-                    [
-                        *base_cmd,
-                        "--extractor-args",
-                        "youtubetab:skip=webpage",
-                        "--extractor-args",
-                        "youtube:player_client=tv;player_skip=webpage,configs",
-                    ],
-                ]
-                extra_args_raw = (os.getenv("MIMIKA_YTDLP_EXTRA_ARGS") or "").strip()
-                extra_args = shlex.split(extra_args_raw) if extra_args_raw else []
-
-                downloaded_path: Optional[Path] = None
-                ytdlp_result: Optional[subprocess.CompletedProcess[str]] = None
-                for attempt_cmd in attempts:
-                    run_cmd = [*attempt_cmd, *extra_args, url]
-                    result = await _run_subprocess_async(run_cmd, timeout=300)
-                    ytdlp_result = result
-                    downloaded_path = _find_downloaded_media_path(temp_root, result.stdout)
-                    if downloaded_path is not None and downloaded_path.exists():
-                        break
-
-                if downloaded_path is None or not downloaded_path.exists():
-                    detail = _truncate_tool_error(
-                        (ytdlp_result.stderr if ytdlp_result else "")
-                        or (ytdlp_result.stdout if ytdlp_result else "")
-                    )
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"yt-dlp failed to download audio: {detail or 'unknown error'}",
-                    )
-
-                clipped_audio = temp_root / "clip.wav"
-                ffmpeg_cmd = [
-                    ffmpeg_binary,
-                    "-y",
-                    "-ss",
-                    f"{start_sec:.3f}",
-                    "-i",
-                    str(downloaded_path),
-                    "-t",
-                    "20",
-                    "-ac",
-                    "1",
-                    "-ar",
-                    "24000",
-                    "-vn",
-                    str(clipped_audio),
-                ]
-                ffmpeg_result = await _run_subprocess_async(ffmpeg_cmd, timeout=120)
-                if ffmpeg_result.returncode != 0:
-                    detail = _truncate_tool_error(
-                        ffmpeg_result.stderr or ffmpeg_result.stdout
-                    )
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Failed to extract 20-second clip: {detail or 'unknown error'}",
-                    )
-
+                clipped_audio = await _download_source_clip_wav(
+                    url=url,
+                    start_sec=start_sec,
+                    ytdlp_binary=shutil.which("yt-dlp") or shutil.which("yt_dlp"),
+                    ffmpeg_binary=ffmpeg_binary,
+                    temp_root=temp_root,
+                )
                 duration_sec = _decode_and_normalize_uploaded_voice(clipped_audio, final_audio)
 
             final_transcript.write_text((request.transcript or "").strip(), encoding="utf-8")
@@ -2637,7 +2695,7 @@ async def voice_prompt_import_youtube(request: VoicePromptYoutubeImportRequest):
         }
     )
     return {
-        "message": f"Voice prompt '{clean_name}' imported from YouTube",
+        "message": f"Voice prompt '{clean_name}' imported from URL",
         "voice": payload,
     }
 
@@ -2683,7 +2741,13 @@ async def voice_prompt_update(
 
         if file is not None:
             outputs_dir.mkdir(parents=True, exist_ok=True)
-            temp_path = outputs_dir / f"temp-voiceprompt-update-{_safe_tag(target_name, 'voice')}-{uuid.uuid4().hex[:8]}.wav"
+            file_suffix = _sanitize_uploaded_filename_suffix(
+                file.filename or "",
+                fallback=".wav",
+            )
+            temp_path = outputs_dir / (
+                f"temp-voiceprompt-update-{_safe_tag(target_name, 'voice')}-{uuid.uuid4().hex[:8]}{file_suffix}"
+            )
             with temp_path.open("wb") as handle:
                 shutil.copyfileobj(file.file, handle)
             try:
@@ -4610,18 +4674,28 @@ async def model_delete(model_name: str):
 
 def _audiobook_job_to_history_item(job) -> dict:
     timestamp = datetime.utcfromtimestamp(job.started_at).isoformat() + "Z"
+    engine = getattr(job, "engine", "kokoro") or "kokoro"
+    model_name = (
+        "Kokoro"
+        if engine == "kokoro"
+        else _qwen3_model_name_for_request(
+            getattr(job, "qwen_mode", "clone") or "clone",
+            getattr(job, "qwen_model_size", "0.6B") or "0.6B",
+            getattr(job, "qwen_model_quantization", "bf16") or "bf16",
+        )
+    )
     return {
         "id": job.job_id,
         "type": "audiobook",
-        "engine": "kokoro",
+        "engine": engine,
         "mode": "audiobook",
         "status": job.status.value,
         "title": job.title or f"Audiobook {job.job_id}",
         "chars": job.total_chars,
         "voice": job.voice,
         "speaker": None,
-        "language": "en",
-        "model": "Kokoro",
+        "language": getattr(job, "qwen_language", "en") if engine == "qwen3" else "en",
+        "model": model_name,
         "streamed": False,
         "output_path": str(job.audio_path) if job.audio_path else None,
         "audio_url": f"/audio/{job.audio_path.name}" if job.audio_path else None,
@@ -4750,6 +4824,7 @@ async def job_generation_metrics(job_id: str):
 class AudiobookRequest(BaseModel):
     text: str
     title: str = "Untitled"
+    engine: str = "kokoro"
     voice: str = "bf_emma"
     speed: float = 1.0
     output_format: str = "wav"  # "wav", "mp3", or "m4b"
@@ -4757,6 +4832,13 @@ class AudiobookRequest(BaseModel):
     smart_chunking: bool = True
     max_chars_per_chunk: int = 1500
     crossfade_ms: int = 40
+    qwen_mode: str = "clone"
+    qwen_voice_name: Optional[str] = None
+    qwen_language: str = "English"
+    qwen_model_size: str = "0.6B"
+    qwen_model_quantization: str = "bf16"
+    qwen_speaker: Optional[str] = None
+    qwen_instruct: Optional[str] = None
 
 
 @app.post("/api/audiobook/generate")
@@ -4784,6 +4866,10 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text cannot be empty")
 
+    engine = request.engine.strip().lower()
+    if engine not in ("kokoro", "qwen3"):
+        raise HTTPException(status_code=400, detail="engine must be 'kokoro' or 'qwen3'")
+
     # Validate output format
     output_format = request.output_format.lower()
     if output_format not in ("wav", "mp3", "m4b"):
@@ -4806,10 +4892,21 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
     if request.crossfade_ms < 0:
         raise HTTPException(status_code=400, detail="crossfade_ms must be >= 0")
 
+    if engine == "qwen3":
+        if request.qwen_mode not in ("clone", "custom"):
+            raise HTTPException(status_code=400, detail="qwen_mode must be 'clone' or 'custom'")
+        if request.qwen_mode == "clone" and not (
+            (request.qwen_voice_name or "").strip() or (request.voice or "").strip()
+        ):
+            raise HTTPException(status_code=400, detail="qwen_voice_name is required for qwen3 clone audiobooks")
+        if request.qwen_mode == "custom" and not (request.qwen_speaker or "").strip():
+            raise HTTPException(status_code=400, detail="qwen_speaker is required for qwen3 custom audiobooks")
+
     job = create_audiobook_job(
         text=request.text,
         title=request.title,
-        voice=request.voice,
+        voice=request.qwen_voice_name or request.voice,
+        engine=engine,
         speed=request.speed,
         output_format=output_format,
         subtitle_format=subtitle_format,
@@ -4817,15 +4914,33 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
         max_chars_per_chunk=request.max_chars_per_chunk,
         crossfade_ms=request.crossfade_ms,
         output_dir=outputs_dir,
+        qwen_mode=request.qwen_mode,
+        qwen_voice_name=request.qwen_voice_name or request.voice,
+        qwen_language=request.qwen_language,
+        qwen_model_size=request.qwen_model_size,
+        qwen_model_quantization=request.qwen_model_quantization,
+        qwen_speaker=request.qwen_speaker,
+        qwen_instruct=request.qwen_instruct,
+    )
+    model_name = (
+        "Kokoro"
+        if engine == "kokoro"
+        else _qwen3_model_name_for_request(
+            request.qwen_mode,
+            request.qwen_model_size,
+            request.qwen_model_quantization,
+        )
     )
     _record_job_event(
         http_request,
-        engine="kokoro",
+        engine=engine,
         mode="audiobook",
         status=job.status.value,
         text=request.text,
-        voice=request.voice,
-        model_name="Kokoro",
+        voice=request.voice if engine == "kokoro" else (request.qwen_voice_name or request.voice),
+        speaker=request.qwen_speaker if engine == "qwen3" and request.qwen_mode == "custom" else None,
+        language=request.qwen_language if engine == "qwen3" else "en",
+        model_name=model_name,
         job_type="audiobook",
         job_id=job.job_id,
         title=request.title,
@@ -4833,7 +4948,7 @@ async def audiobook_generate(request: AudiobookRequest, http_request: Request):
     _log_job_queue_action(
         action="enqueue",
         job_id=job.job_id,
-        engine="kokoro",
+        engine=engine,
         mode="audiobook",
         request_id=getattr(http_request.state, "request_id", "-"),
         status=job.status.value,
@@ -4857,6 +4972,7 @@ async def audiobook_generate_from_file(
     http_request: Request,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
+    engine: str = Form("kokoro"),
     voice: str = Form("bf_emma"),
     speed: float = Form(1.0),
     output_format: str = Form("wav"),
@@ -4864,6 +4980,13 @@ async def audiobook_generate_from_file(
     smart_chunking: bool = Form(True),
     max_chars_per_chunk: int = Form(1500),
     crossfade_ms: int = Form(40),
+    qwen_mode: str = Form("clone"),
+    qwen_voice_name: Optional[str] = Form(None),
+    qwen_language: str = Form("English"),
+    qwen_model_size: str = Form("0.6B"),
+    qwen_model_quantization: str = Form("bf16"),
+    qwen_speaker: Optional[str] = Form(None),
+    qwen_instruct: Optional[str] = Form(None),
 ):
     """Start audiobook generation from uploaded file with optional timestamped subtitles.
 
@@ -4898,6 +5021,10 @@ async def audiobook_generate_from_file(
             detail=f"Invalid subtitle_format: {subtitle_format}. Use 'none', 'srt', or 'vtt'"
         )
 
+    engine = engine.strip().lower()
+    if engine not in ("kokoro", "qwen3"):
+        raise HTTPException(status_code=400, detail="engine must be 'kokoro' or 'qwen3'")
+
     # Save uploaded file temporarily
     suffix = Path(file.filename).suffix if file.filename else ".txt"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -4910,11 +5037,20 @@ async def audiobook_generate_from_file(
     if crossfade_ms < 0:
         raise HTTPException(status_code=400, detail="crossfade_ms must be >= 0")
 
+    if engine == "qwen3":
+        if qwen_mode not in ("clone", "custom"):
+            raise HTTPException(status_code=400, detail="qwen_mode must be 'clone' or 'custom'")
+        if qwen_mode == "clone" and not ((qwen_voice_name or "").strip() or (voice or "").strip()):
+            raise HTTPException(status_code=400, detail="qwen_voice_name is required for qwen3 clone audiobooks")
+        if qwen_mode == "custom" and not (qwen_speaker or "").strip():
+            raise HTTPException(status_code=400, detail="qwen_speaker is required for qwen3 custom audiobooks")
+
     try:
         job = create_audiobook_from_file(
             file_path=tmp_path,
             title=title or (Path(file.filename).stem if file.filename else "Untitled"),
-            voice=voice,
+            voice=qwen_voice_name or voice,
+            engine=engine,
             speed=speed,
             output_format=output_format,
             subtitle_format=subtitle_format,
@@ -4922,15 +5058,33 @@ async def audiobook_generate_from_file(
             max_chars_per_chunk=max_chars_per_chunk,
             crossfade_ms=crossfade_ms,
             output_dir=outputs_dir,
+            qwen_mode=qwen_mode,
+            qwen_voice_name=qwen_voice_name or voice,
+            qwen_language=qwen_language,
+            qwen_model_size=qwen_model_size,
+            qwen_model_quantization=qwen_model_quantization,
+            qwen_speaker=qwen_speaker,
+            qwen_instruct=qwen_instruct,
+        )
+        model_name = (
+            "Kokoro"
+            if engine == "kokoro"
+            else _qwen3_model_name_for_request(
+                qwen_mode,
+                qwen_model_size,
+                qwen_model_quantization,
+            )
         )
         _record_job_event(
             http_request,
-            engine="kokoro",
+            engine=engine,
             mode="audiobook",
             status=job.status.value,
             text=f"Uploaded file: {file.filename or 'document'}",
-            voice=voice,
-            model_name="Kokoro",
+            voice=voice if engine == "kokoro" else (qwen_voice_name or voice),
+            speaker=qwen_speaker if engine == "qwen3" and qwen_mode == "custom" else None,
+            language=qwen_language if engine == "qwen3" else "en",
+            model_name=model_name,
             job_type="audiobook",
             job_id=job.job_id,
             title=job.title,
@@ -4938,7 +5092,7 @@ async def audiobook_generate_from_file(
         _log_job_queue_action(
             action="enqueue",
             job_id=job.job_id,
-            engine="kokoro",
+            engine=engine,
             mode="audiobook",
             request_id=getattr(http_request.state, "request_id", "-"),
             status=job.status.value,
@@ -4981,6 +5135,7 @@ async def audiobook_status(job_id: str):
 
     result = {
         "job_id": job.job_id,
+        "engine": getattr(job, "engine", "kokoro"),
         "status": job.status.value,
         "current_chunk": job.current_chunk,
         "total_chunks": job.total_chunks,
@@ -5117,16 +5272,36 @@ async def audiobook_list():
                 except Exception:
                     duration_seconds = 0
 
+                # Try to read engine/voice info from metrics sidecar
+                engine = ""
+                engine_label = ""
+                voice = ""
+                title = ""
+                metrics_path = _audio_metrics_sidecar_path(file)
+                if metrics_path.exists():
+                    try:
+                        metrics_data = json.loads(metrics_path.read_text(encoding="utf-8"))
+                        engine = metrics_data.get("engine", "")
+                        engine_label = metrics_data.get("engine_label", "")
+                        voice = metrics_data.get("voice", "")
+                        title = metrics_data.get("title", "")
+                    except Exception:
+                        pass
+
                 audiobooks.append({
                     "job_id": job_id,
-                    "filename": file.name,
+                    "filename": title if title else file.name,
                     "audio_url": f"/audio/{file.name}",
+                    "file_path": str(file.resolve()),
                     "format": ext,
                     "size_mb": round(stat.st_size / (1024 * 1024), 2),
                     "duration_seconds": round(duration_seconds, 1),
                     "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
                     "is_audiobook_format": ext == "m4b",
-                    "metrics_available": _audio_metrics_sidecar_path(file).exists(),
+                    "metrics_available": metrics_path.exists(),
+                    "engine": engine,
+                    "engine_label": engine_label,
+                    "voice": voice,
                 })
 
     # Sort by creation time, newest first
@@ -5195,6 +5370,7 @@ async def tts_audio_list():
                 "label": label,
                 "voice": voice,
                 "audio_url": f"/audio/{file.name}",
+                "file_path": str(file.resolve()),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
@@ -5248,6 +5424,7 @@ async def kokoro_audio_list():
             "filename": file.name,
             "voice": voice,
             "audio_url": f"/audio/{file.name}",
+            "file_path": str(file.resolve()),
             "size_mb": round(stat.st_size / (1024 * 1024), 2),
             "duration_seconds": round(duration_seconds, 1),
             "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
@@ -5304,6 +5481,7 @@ async def supertonic_audio_list():
                 "voice": voice,
                 "label": f"Supertonic {voice}",
                 "audio_url": f"/audio/{file.name}",
+                "file_path": str(file.resolve()),
                 "size_mb": round(stat.st_size / (1024 * 1024), 2),
                 "duration_seconds": round(duration_seconds, 1),
                 "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
@@ -5605,9 +5783,9 @@ app.mount("/pdf", SafeStaticFiles(directory=str(pdf_dir)), name="pdf")
 
 @app.get("/api/pdf/list")
 async def list_pdfs():
-    """List available PDF/TXT/MD/DOCX/EPUB documents in the documents directory."""
+    """List available document files in the documents directory."""
     docs = []
-    for ext in ("*.pdf", "*.txt", "*.md", "*.docx", "*.epub"):
+    for ext in ("*.pdf", "*.txt", "*.md", "*.docx", "*.epub", "*.html", "*.htm", "*.rtf", "*.odt", "*.doc"):
         for f in pdf_dir.glob(ext):
             docs.append({
                 "name": f.name,
@@ -5622,12 +5800,12 @@ async def list_pdfs():
 async def extract_pdf_text(file: UploadFile = File(...)):
     """Extract normalized text from an uploaded document for read-aloud."""
     filename = (file.filename or "").lower()
-    supported_extensions = (".pdf", ".txt", ".md", ".docx", ".epub")
+    supported_extensions = (".pdf", ".txt", ".md", ".docx", ".epub", ".html", ".htm", ".rtf", ".odt", ".doc")
     ext = Path(filename).suffix.lower() if filename else ".pdf"
     if ext not in supported_extensions:
         raise HTTPException(
             status_code=400,
-            detail="Supported files: PDF, TXT, MD, DOCX, EPUB",
+            detail="Supported files: PDF, TXT, MD, DOCX, EPUB, HTML, RTF, ODT, DOC",
         )
 
     payload = await file.read()
@@ -5652,6 +5830,22 @@ async def extract_pdf_text(file: UploadFile = File(...)):
             from tts.audiobook import extract_docx_text
 
             text = extract_docx_text(temp_path)
+        elif ext in (".html", ".htm"):
+            from tts.audiobook import extract_html_chapters
+
+            text, _chapters = extract_html_chapters(temp_path, title=Path(filename).stem or "Document")
+        elif ext == ".rtf":
+            from tts.audiobook import extract_rtf_text
+
+            text = extract_rtf_text(temp_path)
+        elif ext == ".odt":
+            from tts.audiobook import extract_odt_text
+
+            text = extract_odt_text(temp_path)
+        elif ext == ".doc":
+            from tts.audiobook import extract_doc_text
+
+            text = extract_doc_text(temp_path)
         elif ext == ".md":
             from tts.audiobook import strip_markdown_for_read_aloud
 

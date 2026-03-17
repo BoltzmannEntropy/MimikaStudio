@@ -6,6 +6,22 @@ import 'package:just_audio/just_audio.dart';
 
 import '../services/api_service.dart';
 
+const List<String> _voicePromptUploadExtensions = [
+  'wav',
+  'wave',
+  'mp3',
+  'm4a',
+  'aac',
+  'flac',
+  'ogg',
+  'opus',
+  'aif',
+  'aiff',
+  'caf',
+  'webm',
+  'mp4',
+];
+
 class VoicePromptManagementScreen extends StatefulWidget {
   const VoicePromptManagementScreen({super.key});
 
@@ -156,7 +172,7 @@ class _VoicePromptManagementScreenState
   Future<void> _uploadVoicePrompt() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
-      allowedExtensions: const ['wav', 'wave'],
+      allowedExtensions: _voicePromptUploadExtensions,
       withData: true,
     );
     if (result == null ||
@@ -227,9 +243,9 @@ class _VoicePromptManagementScreenState
     final url = _youtubeUrlController.text.trim();
     if (url.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('YouTube URL is required')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Source URL is required')));
       return;
     }
 
@@ -264,8 +280,8 @@ class _VoicePromptManagementScreenState
         _youtubePreviewAudioUrl = audioPath.startsWith('http')
             ? audioPath
             : '${ApiService.baseUrl}$audioPath';
-        _youtubePreviewDurationSec =
-            (response['duration_sec'] as num?)?.toDouble();
+        _youtubePreviewDurationSec = (response['duration_sec'] as num?)
+            ?.toDouble();
         _isYoutubePreviewPaused = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -276,7 +292,7 @@ class _VoicePromptManagementScreenState
       setState(() => _youtubeImportError = e.toString());
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('YouTube preview failed: $e')));
+      ).showSnackBar(SnackBar(content: Text('URL preview failed: $e')));
     } finally {
       if (mounted) {
         setState(() => _isYoutubeDownloading = false);
@@ -288,9 +304,9 @@ class _VoicePromptManagementScreenState
     final previewId = (_youtubePreviewId ?? '').trim();
     if (previewId.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Download a preview first')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Download a preview first')));
       return;
     }
 
@@ -337,7 +353,7 @@ class _VoicePromptManagementScreenState
       if (!mounted) return;
       DefaultTabController.maybeOf(context)?.animateTo(0);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('YouTube voice imported successfully')),
+        const SnackBar(content: Text('Voice imported successfully')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -376,9 +392,9 @@ class _VoicePromptManagementScreenState
       await _youtubePreviewPlayer.play();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Preview playback failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Preview playback failed: $e')));
     }
   }
 
@@ -729,7 +745,7 @@ class _VoicePromptManagementScreenState
                 const TabBar(
                   tabs: [
                     Tab(text: 'Voice Library'),
-                    Tab(text: 'Import YouTube'),
+                    Tab(text: 'Import URL'),
                   ],
                 ),
               ],
@@ -822,6 +838,13 @@ class _VoicePromptManagementScreenState
                     : const Icon(Icons.upload_rounded),
                 label: Text(_isUploading ? 'Uploading...' : 'Upload Voice'),
               ),
+              Text(
+                'Supports WAV, MP3, M4A, FLAC, OGG, AAC, and similar formats.',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             ],
           ),
         ),
@@ -874,6 +897,7 @@ class _VoicePromptManagementScreenState
           rows: _voices
               .map((voice) {
                 final name = voice['name']?.toString() ?? '';
+                final audioPath = voice['audio_path']?.toString() ?? '';
                 final isPreviewing = _previewingName == name;
                 final duration =
                     (voice['duration_sec'] as num?)?.toDouble() ?? 0.0;
@@ -888,6 +912,24 @@ class _VoicePromptManagementScreenState
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Text(name),
+                          if (audioPath.isNotEmpty)
+                            Tooltip(
+                              message: audioPath,
+                              child: SizedBox(
+                                width: 340,
+                                child: Text(
+                                  'Path: $audioPath',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ),
                           if (engines.isNotEmpty)
                             Text(
                               engines.join(', '),
@@ -965,19 +1007,20 @@ class _VoicePromptManagementScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'YouTube Import',
+                    'URL Import',
                     style: TextStyle(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    'Step 1: Download a 20-second preview. Step 2: Listen. Step 3: Save as a voice prompt.',
+                    'Step 1: Download a 20-second preview from YouTube or a direct audio URL. Step 2: Listen. Step 3: Save as a voice prompt.',
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     controller: _youtubeUrlController,
                     decoration: const InputDecoration(
-                      labelText: 'YouTube URL',
-                      hintText: 'https://www.youtube.com/watch?v=...',
+                      labelText: 'Source URL',
+                      hintText:
+                          'https://www.youtube.com/watch?v=... or https://example.com/sample.mp3',
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -987,8 +1030,9 @@ class _VoicePromptManagementScreenState
                         width: 220,
                         child: TextField(
                           controller: _youtubeStartController,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
                           decoration: const InputDecoration(
                             labelText: 'Start Seconds (optional)',
                             hintText: 'Leave blank to use t= from URL',
@@ -1004,7 +1048,9 @@ class _VoicePromptManagementScreenState
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.download_rounded),
                         label: Text(
@@ -1020,7 +1066,9 @@ class _VoicePromptManagementScreenState
                     Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerLow,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerLow,
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: Theme.of(context).dividerColor,

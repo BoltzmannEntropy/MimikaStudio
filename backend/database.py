@@ -164,75 +164,75 @@ def seed_db():
             ),
             (
                 "qwen3",
-                "Natasha",
-                "Genesis 4 Preview (Natasha)",
+                "Yelena",
+                "Genesis 4 Preview (Yelena)",
                 "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
                 """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
-                str(pregen_dir / "qwen3-natasha-genesis4-demo.wav")
+                str(pregen_dir / "qwen3-yelena-genesis4-demo.wav")
             ),
             (
                 "qwen3",
-                "Suzan",
-                "Genesis 4 Preview (Suzan)",
+                "Svetlana",
+                "Genesis 4 Preview (Svetlana)",
                 "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
                 """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
-                str(pregen_dir / "qwen3-suzan-genesis4-demo.wav")
+                str(pregen_dir / "qwen3-svetlana-genesis4-demo.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Genesis 5 Neutral",
                 "Natural delivery for Genesis chapter 5 baseline",
                 genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-neutral.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-neutral.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Expressive: Chuckle",
                 "Genesis chapter 5 with [chuckle] cue",
                 "[chuckle] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-chuckle.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-chuckle.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Expressive: Sigh",
                 "Genesis chapter 5 with [sigh] cue",
                 "[sigh] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-sigh.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-sigh.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Expressive: Gasp",
                 "Genesis chapter 5 with [gasp] cue",
                 "[gasp] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-gasp.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-gasp.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Expressive: Laugh",
                 "Genesis chapter 5 with [laugh] cue",
                 "[laugh] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-expressive-laugh.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-laugh.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Exaggeration: Subtle (0.25)",
                 "Genesis chapter 5 with subtle exaggeration",
                 genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-exaggeration-subtle.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-exaggeration-subtle.wav")
             ),
             (
                 "chatterbox",
-                "Natasha",
+                "Yelena",
                 "Exaggeration: Dramatic (1.10)",
                 "Genesis chapter 5 with dramatic exaggeration",
                 genesis_ch5_text,
-                str(pregen_dir / "chatterbox-natasha-genesis5-exaggeration-dramatic.wav")
+                str(pregen_dir / "chatterbox-yelena-genesis5-exaggeration-dramatic.wav")
             ),
         ]
         for sample in pregenerated_samples:

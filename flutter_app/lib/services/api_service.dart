@@ -958,11 +958,7 @@ class ApiService {
 
   Future<Map<String, dynamic>> getEmmaIpaPregenerated() async {
     final text = _defaultEmmaIpaText;
-    return {
-      'text': text,
-      'ipa': _toIpaLike(text),
-      'status': 'local_defaults',
-    };
+    return {'text': text, 'ipa': _toIpaLike(text), 'status': 'local_defaults'};
   }
 
   static const String _defaultEmmaIpaText =
@@ -979,6 +975,7 @@ class ApiService {
   Future<Map<String, dynamic>> startAudiobookGeneration({
     required String text,
     String title = 'Untitled',
+    String engine = 'kokoro',
     String voice = 'bf_emma',
     double speed = 1.0,
     String outputFormat = 'wav',
@@ -986,6 +983,13 @@ class ApiService {
     bool smartChunking = true,
     int maxCharsPerChunk = 1500,
     int crossfadeMs = 40,
+    String qwenMode = 'clone',
+    String? qwenVoiceName,
+    String qwenLanguage = 'English',
+    String qwenModelSize = '0.6B',
+    String qwenModelQuantization = 'bf16',
+    String? qwenSpeaker,
+    String? qwenInstruct,
   }) async {
     final response = await _post(
       Uri.parse('$baseUrl/api/audiobook/generate'),
@@ -993,6 +997,7 @@ class ApiService {
       body: json.encode({
         'text': text,
         'title': title,
+        'engine': engine,
         'voice': voice,
         'speed': speed,
         'output_format': outputFormat,
@@ -1000,12 +1005,79 @@ class ApiService {
         'smart_chunking': smartChunking,
         'max_chars_per_chunk': maxCharsPerChunk,
         'crossfade_ms': crossfadeMs,
+        'qwen_mode': qwenMode,
+        'qwen_voice_name': qwenVoiceName,
+        'qwen_language': qwenLanguage,
+        'qwen_model_size': qwenModelSize,
+        'qwen_model_quantization': qwenModelQuantization,
+        'qwen_speaker': qwenSpeaker,
+        'qwen_instruct': qwenInstruct,
       }),
     );
     if (response.statusCode == 200) {
       return _decodeJson(response.body);
     }
     throw _apiError('Failed to start audiobook generation', response);
+  }
+
+  Future<Map<String, dynamic>> startAudiobookGenerationFromFile({
+    required Uint8List bytes,
+    required String filename,
+    String? title,
+    String engine = 'kokoro',
+    String voice = 'bf_emma',
+    double speed = 1.0,
+    String outputFormat = 'wav',
+    String subtitleFormat = 'none',
+    bool smartChunking = true,
+    int maxCharsPerChunk = 1500,
+    int crossfadeMs = 40,
+    String qwenMode = 'clone',
+    String? qwenVoiceName,
+    String qwenLanguage = 'English',
+    String qwenModelSize = '0.6B',
+    String qwenModelQuantization = 'bf16',
+    String? qwenSpeaker,
+    String? qwenInstruct,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/audiobook/generate-from-file'),
+    );
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
+    if (title != null && title.trim().isNotEmpty) {
+      request.fields['title'] = title.trim();
+    }
+    request.fields['engine'] = engine;
+    request.fields['voice'] = voice;
+    request.fields['speed'] = speed.toString();
+    request.fields['output_format'] = outputFormat;
+    request.fields['subtitle_format'] = subtitleFormat;
+    request.fields['smart_chunking'] = smartChunking.toString();
+    request.fields['max_chars_per_chunk'] = maxCharsPerChunk.toString();
+    request.fields['crossfade_ms'] = crossfadeMs.toString();
+    request.fields['qwen_mode'] = qwenMode;
+    if (qwenVoiceName != null && qwenVoiceName.trim().isNotEmpty) {
+      request.fields['qwen_voice_name'] = qwenVoiceName.trim();
+    }
+    request.fields['qwen_language'] = qwenLanguage;
+    request.fields['qwen_model_size'] = qwenModelSize;
+    request.fields['qwen_model_quantization'] = qwenModelQuantization;
+    if (qwenSpeaker != null && qwenSpeaker.trim().isNotEmpty) {
+      request.fields['qwen_speaker'] = qwenSpeaker.trim();
+    }
+    if (qwenInstruct != null && qwenInstruct.trim().isNotEmpty) {
+      request.fields['qwen_instruct'] = qwenInstruct.trim();
+    }
+
+    final streamed = await request.send().timeout(_requestTimeout);
+    final response = await http.Response.fromStream(streamed);
+    if (response.statusCode == 200) {
+      return _decodeJson(response.body);
+    }
+    throw _apiError('Failed to start audiobook generation from file', response);
   }
 
   /// Get the status of an audiobook generation job.
@@ -1194,7 +1266,18 @@ class ApiService {
     String filename = 'document.pdf',
   }) async {
     final lower = filename.toLowerCase();
-    final allowed = ['.pdf', '.txt', '.md', '.docx', '.epub'];
+    final allowed = [
+      '.pdf',
+      '.txt',
+      '.md',
+      '.docx',
+      '.epub',
+      '.html',
+      '.htm',
+      '.rtf',
+      '.odt',
+      '.doc',
+    ];
     final hasKnownExt = allowed.any(lower.endsWith);
     final safeFilename = hasKnownExt ? filename : '$filename.pdf';
     final request = http.MultipartRequest(
@@ -1362,7 +1445,7 @@ class ApiService {
       if (startSec != null) 'start_sec': startSec,
     };
     final response = await _post(
-      Uri.parse('$baseUrl/api/voice-prompts/import/youtube'),
+      Uri.parse('$baseUrl/api/voice-prompts/import/url'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(payload),
       timeout: const Duration(minutes: 6),
@@ -1386,7 +1469,7 @@ class ApiService {
       if (startSec != null) 'start_sec': startSec,
     };
     final response = await _post(
-      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/preview'),
+      Uri.parse('$baseUrl/api/voice-prompts/import/url/preview'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(payload),
       timeout: const Duration(minutes: 6),
@@ -1416,7 +1499,7 @@ class ApiService {
       'language': language,
     };
     final response = await _post(
-      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/commit'),
+      Uri.parse('$baseUrl/api/voice-prompts/import/url/commit'),
       headers: {'Content-Type': 'application/json'},
       body: json.encode(payload),
       timeout: const Duration(seconds: 120),
@@ -1434,7 +1517,7 @@ class ApiService {
   Future<void> deleteYoutubeVoicePromptPreview(String previewId) async {
     final safeId = Uri.encodeComponent(previewId);
     final response = await _delete(
-      Uri.parse('$baseUrl/api/voice-prompts/import/youtube/preview/$safeId'),
+      Uri.parse('$baseUrl/api/voice-prompts/import/url/preview/$safeId'),
     );
     if (response.statusCode != 200) {
       throw _apiError('Failed to delete YouTube preview', response);

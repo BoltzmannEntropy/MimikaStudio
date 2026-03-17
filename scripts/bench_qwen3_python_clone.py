@@ -49,14 +49,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=8)
     parser.add_argument("--models", type=str, default="0.6B,1.7B")
     parser.add_argument(
-        "--natasha-ref",
+        "--yelena-ref",
         type=str,
-        default=str(ROOT / "backend" / "data" / "samples" / "voices" / "Natasha.wav"),
+        default=str(ROOT / "backend" / "data" / "samples" / "voices" / "Yelena.wav"),
     )
     parser.add_argument(
-        "--suzan-ref",
+        "--svetlana-ref",
         type=str,
-        default=str(ROOT / "backend" / "data" / "samples" / "voices" / "Suzan.wav"),
+        default=str(ROOT / "backend" / "data" / "samples" / "voices" / "Svetlana.wav"),
     )
     parser.add_argument("--cleanup-output", action="store_true")
     return parser.parse_args()
@@ -74,7 +74,7 @@ def main() -> int:
     if not models:
         models = ["0.6B", "1.7B"]
 
-    for ref in (args.natasha_ref, args.suzan_ref):
+    for ref in (args.yelena_ref, args.svetlana_ref):
         if not Path(ref).exists():
             raise FileNotFoundError(f"Missing reference audio: {ref}")
 
@@ -83,14 +83,14 @@ def main() -> int:
         "Genesis chapter 5, verses 1 through 3: This is the book of the generations of Adam. "
         "In the day that God created man, in the likeness of God made he him; male and female created he them."
     )
-    natasha_ref_text = "Hello, this is the Natasha reference sample used for clone testing."
-    suzan_ref_text = "Hello, this is the Suzan reference sample used for clone testing."
+    yelena_ref_text = "Hello, this is the Yelena reference sample used for clone testing."
+    svetlana_ref_text = "Hello, this is the Svetlana reference sample used for clone testing."
 
     cases = [
-        BenchCase("natasha", args.natasha_ref, natasha_ref_text, "short", short_text),
-        BenchCase("natasha", args.natasha_ref, natasha_ref_text, "genesis5", genesis_text),
-        BenchCase("suzan", args.suzan_ref, suzan_ref_text, "short", short_text),
-        BenchCase("suzan", args.suzan_ref, suzan_ref_text, "genesis5", genesis_text),
+        BenchCase("yelena", args.yelena_ref, yelena_ref_text, "short", short_text),
+        BenchCase("yelena", args.yelena_ref, yelena_ref_text, "genesis5", genesis_text),
+        BenchCase("svetlana", args.svetlana_ref, svetlana_ref_text, "short", short_text),
+        BenchCase("svetlana", args.svetlana_ref, svetlana_ref_text, "genesis5", genesis_text),
     ]
 
     generation_params = GenerationParams(

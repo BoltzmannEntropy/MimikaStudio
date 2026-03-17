@@ -137,6 +137,17 @@ class _JobsScreenState extends State<JobsScreen> {
     }
   }
 
+  bool _isBusyStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'queued':
+      case 'processing':
+      case 'started':
+        return true;
+      default:
+        return false;
+    }
+  }
+
   String _humanTimestamp(String raw) {
     if (raw.isEmpty) return '-';
     final parsed = DateTime.tryParse(raw);
@@ -268,6 +279,7 @@ class _JobsScreenState extends State<JobsScreen> {
               final queuePosition =
                   (job['queue_position'] as num?)?.toInt() ?? 0;
               final outputPath = (job['output_path'] as String?) ?? '';
+              final isBusy = _isBusyStatus(status);
               final hasAudio =
                   (job['audio_url'] as String?) != null &&
                   (job['audio_url'] as String).isNotEmpty;
@@ -295,6 +307,19 @@ class _JobsScreenState extends State<JobsScreen> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          if (isBusy) ...[
+                            SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  statusColor,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 8,

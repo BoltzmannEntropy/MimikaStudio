@@ -57,6 +57,7 @@ def test_voice_prompt_crud_roundtrip():
     uploaded_voice = upload.json()["voice"]
     assert uploaded_voice["name"] == voice_name
     assert uploaded_voice["source"] == "local"
+    assert uploaded_voice["audio_path"].endswith(f"{voice_name}.wav")
 
     listed = client.get(f"/api/voice-prompts?search={voice_name}")
     assert listed.status_code == 200
@@ -102,17 +103,56 @@ def test_voice_prompt_upload_duplicate_name_returns_409():
     client.delete(f"/api/voice-prompts/{voice_name}")
 
 
-def test_voice_prompt_import_youtube_rejects_non_youtube_url():
+def test_voice_prompt_import_url_rejects_non_http_url():
     client = TestClient(app)
     response = client.post(
-        "/api/voice-prompts/import/youtube",
+        "/api/voice-prompts/import/url",
         json={
-            "url": "https://example.com/video.mp4",
+            "url": "file:///tmp/voice.mp3",
             "name": f"VoicePromptBadUrl{uuid.uuid4().hex[:8]}",
         },
     )
     assert response.status_code == 400
-    assert "youtube.com" in response.json().get("detail", "").lower()
+    assert "source url" in response.json().get("detail", "").lower()
+
+
+def test_voice_prompt_upload_transcodes_non_wav_with_ffmpeg_fallback(monkeypatch):
+    client = TestClient(app)
+    voice_name = f"VoicePromptMp3{uuid.uuid4().hex[:8]}"
+    original_sf_read = main.sf.read
+    executed_cmds: list[list[str]] = []
+
+    def fake_sf_read(path, *args, **kwargs):
+        if str(path).lower().endswith(".mp3"):
+            raise RuntimeError("unsupported format")
+        return original_sf_read(path, *args, **kwargs)
+
+    def fake_which(name: str):
+        if name in {"ffmpeg", "avconv"}:
+            return "/usr/local/bin/ffmpeg"
+        return None
+
+    def fake_run(cmd, capture_output, text, timeout, check):
+        executed_cmds.append(list(cmd))
+        output_path = Path(cmd[-1])
+        output_path.write_bytes(_make_minimal_wav_bytes())
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(main.sf, "read", fake_sf_read)
+    monkeypatch.setattr(main.shutil, "which", fake_which)
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+
+    upload = client.post(
+        "/api/voice-prompts",
+        files={"file": (f"{voice_name}.mp3", b"fake-mp3", "audio/mpeg")},
+        data={"name": voice_name},
+    )
+    assert upload.status_code == 200
+    payload = upload.json()["voice"]
+    assert payload["audio_path"].endswith(f"{voice_name}.wav")
+    assert any("ffmpeg" in cmd[0] for cmd in executed_cmds)
+
+    client.delete(f"/api/voice-prompts/{voice_name}")
 
 
 def test_voice_prompt_upload_cleanup_on_transcript_write_failure(monkeypatch):
@@ -198,6 +238,49 @@ def test_voice_prompt_import_youtube_uses_url_timestamp(monkeypatch):
     ss_idx = ffmpeg_cmd.index("-ss")
     assert ss_idx + 1 < len(ffmpeg_cmd)
     assert ffmpeg_cmd[ss_idx + 1].startswith("88")
+
+    client.delete(f"/api/voice-prompts/{voice_name}")
+
+
+def test_voice_prompt_import_direct_audio_url_skips_ytdlp(monkeypatch):
+    client = TestClient(app)
+    voice_name = f"VoicePromptDirect{uuid.uuid4().hex[:8]}"
+    executed_cmds: list[list[str]] = []
+
+    def fake_which(name: str):
+        if name in {"ffmpeg", "avconv"}:
+            return "/usr/local/bin/ffmpeg"
+        if name in {"yt-dlp", "yt_dlp"}:
+            return None
+        return None
+
+    def fake_run(cmd, capture_output, text, timeout, check):
+        executed_cmds.append(list(cmd))
+        binary = str(cmd[0])
+        if "ffmpeg" in binary:
+            output_path = Path(cmd[-1])
+            output_path.write_bytes(_make_minimal_wav_bytes(num_samples=24_000 * 20))
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="unsupported")
+
+    monkeypatch.setattr(main.shutil, "which", fake_which)
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+
+    response = client.post(
+        "/api/voice-prompts/import/url",
+        json={
+            "url": "https://www.bespokevoiceagency.co.uk/system/files_force/mp3_files/Anton%20Lesser%20Narration_0.mp3?download=1",
+            "name": voice_name,
+            "transcript": "sample transcript",
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()["voice"]
+    assert payload["name"] == voice_name
+    assert payload["source"] == "external"
+    assert payload["duration_sec"] >= 19.5
+    assert any("ffmpeg" in cmd[0] for cmd in executed_cmds)
+    assert all("yt-dlp" not in cmd[0] for cmd in executed_cmds)
 
     client.delete(f"/api/voice-prompts/{voice_name}")
 
