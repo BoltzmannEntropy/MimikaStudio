@@ -1,6 +1,8 @@
 """Chatterbox Multilingual TTS engine wrapper for voice cloning."""
 from __future__ import annotations
 
+import os
+import importlib
 import re
 import uuid
 from dataclasses import dataclass
@@ -15,6 +17,7 @@ from .audio_utils import merge_audio_chunks
 from .runtime_paths import (
     ensure_valid_cwd,
     get_cloner_user_voices_dir,
+    get_runtime_data_dir,
     get_runtime_output_dir,
 )
 from .text_chunking import smart_chunk_text
@@ -74,6 +77,62 @@ class ChatterboxEngine:
             return "mlx"
         return "cpu"
 
+    def _resolve_dicta_model_path(self) -> Optional[Path]:
+        env_path = (os.getenv("DICTA_ONNX_MODEL_PATH") or "").strip()
+        candidates = []
+        if env_path:
+            candidates.append(Path(env_path).expanduser())
+        candidates.extend(
+            [
+                Path(__file__).parent.parent / "models" / "dicta-onnx" / "dicta-1.0.onnx",
+                get_runtime_data_dir() / "models" / "dicta-onnx" / "dicta-1.0.onnx",
+            ]
+        )
+
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _configure_hebrew_diacritizer(self) -> None:
+        """Preload Dicta into the upstream Chatterbox tokenizer for Hebrew."""
+        try:
+            from dicta_onnx import Dicta
+        except Exception:
+            return
+
+        model_path = self._resolve_dicta_model_path()
+        if model_path is None:
+            return
+
+        module_names = [
+            "mlx_audio.tts.models.chatterbox.tokenizer",
+            "chatterbox.models.tokenizers.tokenizer",
+        ]
+
+        def _add_hebrew_diacritics(text: str, *, _tok) -> str:
+            try:
+                if getattr(_tok, "_dicta", None) is None:
+                    _tok._dicta = Dicta(str(model_path))
+                return _tok._dicta.add_diacritics(text)
+            except Exception:
+                return text
+
+        for module_name in module_names:
+            try:
+                tok = importlib.import_module(module_name)
+            except Exception:
+                continue
+
+            try:
+                if getattr(tok, "_dicta", None) is None:
+                    tok._dicta = Dicta(str(model_path))
+                tok.add_hebrew_diacritics = (
+                    lambda text, _tok=tok: _add_hebrew_diacritics(text, _tok=_tok)
+                )
+            except Exception:
+                continue
+
     def load_model(self):
         """Load the Chatterbox model."""
         if self.model is not None:
@@ -89,6 +148,7 @@ class ChatterboxEngine:
                 "mlx-audio not installed. Install with: pip install -U mlx-audio"
             ) from exc
 
+        self._configure_hebrew_diacritizer()
         self.device = self._get_device()
         self.model = load_tts_model("mlx-community/chatterbox-fp16")
         return self.model

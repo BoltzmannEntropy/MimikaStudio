@@ -1,61 +1,43 @@
-# MimikaStudio v2026.03.5 Release Notes
+# MimikaStudio v2026.03.8 Release Notes
 
-**Release Date:** March 9, 2026  
+**Release Date:** March 18, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.03.5
+## What's Fixed In v2026.03.8
 
-- Added unified **Voice Prompt Management** workflows to create user voices by:
-  - Uploading local WAV voice files, and
-  - Importing from **YouTube URL** via `yt-dlp`, then extracting a 20-second speech segment for cloning prompts.
-- Added explicit voice-name uniqueness validation in backend and UI to prevent collisions with existing voice prompts and default voices.
-- Voice prompt lists now refresh immediately after add/edit/delete/import so newly introduced voices are instantly available in clone workflows.
-
----
-
-## Voice Clone Workflow Changes
-
-- Moved user-voice creation surfaces out of clone screens and centralized them in **Voice Prompts**.
-- Updated clone screens to point users to Voice Prompt management and refresh voice choices when returning to clone tabs.
-- Verified compatibility of custom voice prompts for both **Qwen3 Clone** and **Chatterbox** workflows.
-- Moved **MCP**, **Pro**, and **About** into **Settings** as sub-tabs to reduce top-level navigation clutter.
+- Restored **Hebrew Dicta diacritization** for **Chatterbox Multilingual** after the MLX backend migration.
+- Fixed the regression where Hebrew Chatterbox generation could silently fall back to a broken tokenizer path and log:
+  `Dicta.__init__() missing 1 required positional argument: 'model_path'`
+- Rewired MimikaStudio's Chatterbox engine to preload the Dicta ONNX model into the tokenizer module actually used by the MLX runtime before model load.
 
 ---
 
-## Reliability and Pre-Production Hardening
+## User Impact
 
-- Added YouTube source URL allowlist checks (`youtube.com` / `youtu.be`) for safer import handling.
-- Added serialized voice mutation guards to reduce race-condition collisions on upload/update/delete/import endpoints.
-- Added failure cleanup paths to avoid orphaned audio/transcript/meta files when import/upload writes fail.
-- Added pre-production regression tests for voice prompt import validation and file-cleanup failure paths.
-- Added additional `OsxSkills` pre-production guardrail tests for:
-  - skill metadata/front matter integrity,
-  - required release script presence,
-  - shell script syntax checks.
+- **Hebrew Chatterbox smoke tests** now run without the Dicta initialization warning.
+- **Full Hebrew voice-clone renders** complete successfully again on the patched MLX path.
+- Existing Hebrew Dicta installs are now picked up from:
+  - `DICTA_ONNX_MODEL_PATH`
+  - bundled app model path
+  - Mimika runtime data model path
 
 ---
 
-## Previous Release: v2026.03.4
+## Technical Notes
 
-- Added a new copy-text action in **Qwen3 Clone -> Audio Library** so users can copy the source text used for a generated voice clone directly from each item.
-- Added a new copy-text action in the **Jobs** tab so users can copy the input text for completed/active generation jobs.
-- Extended job payload handling to retain source text for newly created jobs (with truncation safeguards), enabling copy behavior across Jobs and voice-clone audio list responses.
-
----
-
-## Supertonic UI Update
-
-- Added automatic **British** badge support in Supertonic voice cards when backend voice metadata indicates UK/British variants.
-- Current Supertonic runtime still exposes generic style IDs (`F1..F5`, `M1..M5`), so badge display activates when metadata becomes available.
+- Updated the backend Chatterbox engine to resolve an explicit Dicta ONNX path instead of relying on a zero-argument `Dicta()` constructor.
+- Patched both supported tokenizer import paths so Hebrew preprocessing is applied consistently across the MLX-backed Chatterbox runtime.
+- Verified generation with:
+  - a short Hebrew smoke test
+  - a full Hebrew `parashat_hashavua.txt` render using a custom uploaded reference voice
 
 ---
 
-## Reliability Improvements
+## Previous Release: v2026.03.7
 
-- Added bounded text retention controls for job records via `MIMIKA_MAX_JOB_TEXT_CHARS` (default `20000`) to avoid unbounded in-memory text growth.
-- Avoided storing full audiobook source text in job history to keep long-form flows lightweight.
+- Sandboxed release entitlement update and release-build hardening.
 
 ---
 
@@ -63,7 +45,7 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of March 2, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
+As of March 18, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.
@@ -72,11 +54,3 @@ macOS may block first launch until you explicitly allow it in security settings.
 4. If macOS still blocks launch, go to: System Settings -> Privacy & Security -> Open Anyway (for MimikaStudio), then confirm with password/Touch ID.
 5. On first launch, wait for the bundled backend to start.
 6. On first use, click Download for required models in-app.
-
----
-
-## System Requirements
-
-- macOS 13.0 or later
-- Apple Silicon (M1/M2/M3/M4)
-- 8 GB RAM minimum (16 GB recommended)
