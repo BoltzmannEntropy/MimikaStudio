@@ -74,6 +74,7 @@ def _env_int(name: str, default: int) -> int:
 
 BACKEND_HOST = (os.getenv("MIMIKA_BACKEND_HOST") or "127.0.0.1").strip() or "127.0.0.1"
 BACKEND_PORT = _env_int("MIMIKA_BACKEND_PORT", 7693)
+PARENT_PID = _env_int("MIMIKA_PARENT_PID", 0)
 
 
 def _ensure_dir_with_fallback(primary: Path, fallback: Path) -> Path:
@@ -103,6 +104,80 @@ _log_dir = _ensure_dir_with_fallback(
 _api_log_path = _log_dir / "backend_api.log"
 
 logger = logging.getLogger("mimika.backend.api")
+
+_parent_watch_stop_event: Optional[threading.Event] = None
+_parent_watch_thread: Optional[threading.Thread] = None
+
+
+def _parent_process_exists(parent_pid: int) -> bool:
+    if parent_pid <= 1:
+        return False
+    try:
+        os.kill(parent_pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def _watch_parent_process(
+    parent_pid: int,
+    stop_event,
+    *,
+    process_exists=_parent_process_exists,
+    exit_process=os._exit,
+    wait_seconds: float = 1.0,
+) -> None:
+    while not stop_event.wait(wait_seconds):
+        if process_exists(parent_pid):
+            continue
+        logger.warning(
+            "Parent process %s is gone; exiting backend to free port %s",
+            parent_pid,
+            BACKEND_PORT,
+            extra={"request_id": "watchdog"},
+        )
+        exit_process(0)
+        return
+
+
+def _start_parent_watchdog() -> None:
+    global _parent_watch_stop_event, _parent_watch_thread
+
+    if PARENT_PID <= 1:
+        return
+    if _parent_watch_thread is not None and _parent_watch_thread.is_alive():
+        return
+
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=_watch_parent_process,
+        args=(PARENT_PID, stop_event),
+        daemon=True,
+        name="mimika-parent-watchdog",
+    )
+    _parent_watch_stop_event = stop_event
+    _parent_watch_thread = thread
+    logger.info(
+        "Starting parent watchdog for pid=%s",
+        PARENT_PID,
+        extra={"request_id": "startup"},
+    )
+    thread.start()
+
+
+def _stop_parent_watchdog() -> None:
+    global _parent_watch_stop_event, _parent_watch_thread
+
+    if _parent_watch_stop_event is not None:
+        _parent_watch_stop_event.set()
+    if _parent_watch_thread is not None and _parent_watch_thread.is_alive():
+        _parent_watch_thread.join(timeout=1.0)
+    _parent_watch_stop_event = None
+    _parent_watch_thread = None
 
 
 def _init_mimetypes_for_sandbox() -> None:
@@ -295,9 +370,11 @@ async def lifespan(app: FastAPI):
     configured_output = str(env_output_override) if env_output_override else get_output_folder()
     _sync_output_folder_runtime(configured_output)
     _migrate_legacy_voice_samples()
+    _start_parent_watchdog()
     logger.info("Database ready.", extra={"request_id": "startup"})
     yield
     # Shutdown
+    _stop_parent_watchdog()
     logger.info("Shutting down...", extra={"request_id": "shutdown"})
 
 app = FastAPI(

@@ -85,6 +85,7 @@ class _ModelsScreenState extends State<ModelsScreen> {
   Future<void> _downloadModel(String modelName) async {
     try {
       await _api.downloadModel(modelName);
+      if (!mounted) return;
       // Update status to show downloading
       setState(() {
         for (final model in _models) {

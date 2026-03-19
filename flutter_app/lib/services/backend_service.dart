@@ -387,6 +387,7 @@ class BackendService {
       );
       env['MIMIKA_BACKEND_PORT'] = backendPort.toString();
       env['MIMIKA_BACKEND_HOST'] = backendHost;
+      env['MIMIKA_PARENT_PID'] = pid.toString();
 
       _updateStatus('Launching backend on $backendHost:$backendPort...');
       String? startupFailure;
