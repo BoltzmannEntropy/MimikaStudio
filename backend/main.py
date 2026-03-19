@@ -1769,7 +1769,7 @@ async def system_info():
         {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
         {
             "id": "default_voices",
-            "label": "Default Voices (Yelena/Mikhail)",
+            "label": "Default Voices (Shared Samples)",
             "path": str(SHARED_SAMPLE_VOICES_DIR),
         },
         {
@@ -1810,7 +1810,7 @@ async def system_folders():
             {"id": "logs", "label": "Log Folder", "path": str(_log_dir)},
             {
                 "id": "default_voices",
-                "label": "Default Voices (Yelena/Mikhail)",
+                "label": "Default Voices (Shared Samples)",
                 "path": str(SHARED_SAMPLE_VOICES_DIR),
             },
             {
