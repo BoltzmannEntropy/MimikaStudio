@@ -594,6 +594,7 @@ Paste your long text here.
       final file = File(path);
       final content = await file.readAsString();
       final readAloudText = _plainTextForReadAloud(content, path);
+      if (!mounted) return;
       setState(() {
         _textFileContent = content;
         _selectedText = readAloudText; // Auto-select all text for reading
@@ -2792,6 +2793,7 @@ Paste your long text here.
   Future<void> _pauseAudiobookPlayback() async {
     if (_playingAudiobookId != null) {
       await _audioPlayer.pause();
+      if (!mounted) return;
       setState(() => _isAudiobookPaused = true);
     }
   }
@@ -2800,6 +2802,7 @@ Paste your long text here.
     await _audiobookPlayerSubscription?.cancel();
     _audiobookPlayerSubscription = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingAudiobookId = null;
       _isAudiobookPaused = false;
@@ -2837,6 +2840,7 @@ Paste your long text here.
         // Stop if currently playing
         if (_playingAudiobookId == jobId) {
           await _audioPlayer.stop();
+          if (!mounted) return;
           setState(() => _playingAudiobookId = null);
         }
 

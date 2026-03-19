@@ -157,14 +157,18 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     }
   }
 
-  List<Map<String, dynamic>> _mergeAudiobooks(List<Map<String, dynamic>> books) {
+  List<Map<String, dynamic>> _mergeAudiobooks(
+    List<Map<String, dynamic>> books,
+  ) {
     if (_pendingAudiobooks.isEmpty) {
       return books;
     }
     // Filter out books that are in our pending map
     final pendingJobIds = _pendingAudiobooks.keys.toSet();
     final merged = books
-        .where((book) => !pendingJobIds.contains(book['job_id']?.toString() ?? ''))
+        .where(
+          (book) => !pendingJobIds.contains(book['job_id']?.toString() ?? ''),
+        )
         .toList();
     // Add all pending audiobooks at the front
     return [..._pendingAudiobooks.values, ...merged];
@@ -207,7 +211,13 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     setState(() {
       _pendingAudiobooks[jobId] = book;
       _audiobooks = _mergeAudiobooks(
-        _audiobooks.where((item) => !_pendingAudiobooks.containsKey(item['job_id']?.toString() ?? '')).toList(),
+        _audiobooks
+            .where(
+              (item) => !_pendingAudiobooks.containsKey(
+                item['job_id']?.toString() ?? '',
+              ),
+            )
+            .toList(),
       );
     });
   }
@@ -217,7 +227,13 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     setState(() {
       _pendingAudiobooks[jobId] = book;
       _audiobooks = _mergeAudiobooks(
-        _audiobooks.where((item) => !_pendingAudiobooks.containsKey(item['job_id']?.toString() ?? '')).toList(),
+        _audiobooks
+            .where(
+              (item) => !_pendingAudiobooks.containsKey(
+                item['job_id']?.toString() ?? '',
+              ),
+            )
+            .toList(),
       );
     });
   }
@@ -228,16 +244,25 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       _pendingAudiobookTimers[jobId]?.cancel();
       _pendingAudiobookTimers.remove(jobId);
       _audiobooks = _mergeAudiobooks(
-        _audiobooks.where((item) => !_pendingAudiobooks.containsKey(item['job_id']?.toString() ?? '')).toList(),
+        _audiobooks
+            .where(
+              (item) => !_pendingAudiobooks.containsKey(
+                item['job_id']?.toString() ?? '',
+              ),
+            )
+            .toList(),
       );
     });
   }
 
   void _startPendingAudiobookPolling(String jobId) {
     _pendingAudiobookTimers[jobId]?.cancel();
-    _pendingAudiobookTimers[jobId] = Timer.periodic(const Duration(seconds: 2), (_) {
-      unawaited(_pollPendingAudiobook(jobId));
-    });
+    _pendingAudiobookTimers[jobId] = Timer.periodic(
+      const Duration(seconds: 2),
+      (_) {
+        unawaited(_pollPendingAudiobook(jobId));
+      },
+    );
   }
 
   Future<void> _pollPendingAudiobook(String jobId) async {
@@ -275,9 +300,11 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
 
       final updated = Map<String, dynamic>.from(_pendingAudiobooks[jobId]!);
       updated['status'] = state;
-      updated['queue_position'] = (status['queue_position'] as num?)?.toInt() ?? 0;
+      updated['queue_position'] =
+          (status['queue_position'] as num?)?.toInt() ?? 0;
       updated['percent'] = (status['percent'] as num?)?.toInt() ?? 0;
-      updated['current_chunk'] = (status['current_chunk'] as num?)?.toInt() ?? 0;
+      updated['current_chunk'] =
+          (status['current_chunk'] as num?)?.toInt() ?? 0;
       updated['total_chunks'] = (status['total_chunks'] as num?)?.toInt() ?? 0;
       updated['eta_seconds'] = (status['eta_seconds'] as num?)?.toDouble();
       _updatePendingAudiobook(jobId, updated);
@@ -371,7 +398,9 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     // Capture current settings for background generation
     final bytes = _selectedBytes!;
     final filename = selected['name'] as String? ?? 'document.pdf';
-    final title = p.basenameWithoutExtension(selected['name'] as String? ?? 'Untitled');
+    final title = p.basenameWithoutExtension(
+      selected['name'] as String? ?? 'Untitled',
+    );
     final engine = _engine;
     final voice = engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena');
     final speed = _speed;
@@ -387,23 +416,25 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
 
     // Start queueing in background - don't await
     // The API call to queue is fast, so we just wait for the real job ID
-    unawaited(_queueGenerationInBackground(
-      bytes: bytes,
-      filename: filename,
-      title: title,
-      engine: engine,
-      voice: voice,
-      speed: speed,
-      outputFormat: outputFormat,
-      subtitleFormat: subtitleFormat,
-      smartChunking: smartChunking,
-      maxCharsPerChunk: maxCharsPerChunk,
-      crossfadeMs: crossfadeMs,
-      qwenVoice: qwenVoice,
-      qwenLanguage: qwenLanguage,
-      qwenModelSize: qwenModelSize,
-      qwenQuantization: qwenQuantization,
-    ));
+    unawaited(
+      _queueGenerationInBackground(
+        bytes: bytes,
+        filename: filename,
+        title: title,
+        engine: engine,
+        voice: voice,
+        speed: speed,
+        outputFormat: outputFormat,
+        subtitleFormat: subtitleFormat,
+        smartChunking: smartChunking,
+        maxCharsPerChunk: maxCharsPerChunk,
+        crossfadeMs: crossfadeMs,
+        qwenVoice: qwenVoice,
+        qwenLanguage: qwenLanguage,
+        qwenModelSize: qwenModelSize,
+        qwenQuantization: qwenQuantization,
+      ),
+    );
   }
 
   Future<void> _queueGenerationInBackground({
@@ -519,6 +550,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Future<void> _pausePlayback() async {
     if (_playingAudiobookId == null) return;
     await _audioPlayer.pause();
+    if (!mounted) return;
     setState(() => _isPlaybackPaused = true);
   }
 
@@ -526,6 +558,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     await _playerSub?.cancel();
     _playerSub = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingAudiobookId = null;
       _isPlaybackPaused = false;
@@ -585,9 +618,9 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       await LocalFileActions.openPath(filePath);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to open audiobook: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to open audiobook: $e')));
     }
   }
 
@@ -598,9 +631,9 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       await LocalFileActions.revealInFolder(filePath);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to reveal audiobook: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to reveal audiobook: $e')));
     }
   }
 
@@ -1042,8 +1075,8 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                     itemBuilder: (context, index) {
                       final book = _audiobooks[index];
                       final jobId = book['job_id'] as String? ?? '';
-                      final status =
-                          (book['status'] as String? ?? 'completed').toLowerCase();
+                      final status = (book['status'] as String? ?? 'completed')
+                          .toLowerCase();
                       final isPending = book['is_pending'] == true;
                       final filename =
                           book['filename'] as String? ?? 'audiobook';
@@ -1056,23 +1089,31 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                           (book['current_chunk'] as num?)?.toInt() ?? 0;
                       final totalChunks =
                           (book['total_chunks'] as num?)?.toInt() ?? 0;
-                      final etaSeconds =
-                          (book['eta_seconds'] as num?)?.toDouble();
+                      final etaSeconds = (book['eta_seconds'] as num?)
+                          ?.toDouble();
                       final hasAudio =
-                          ((book['audio_url'] as String?)?.isNotEmpty ?? false) &&
+                          ((book['audio_url'] as String?)?.isNotEmpty ??
+                              false) &&
                           !isPending;
                       final isPlaying = _playingAudiobookId == jobId;
                       // Get engine label for display
                       final engine = book['engine'] as String? ?? '';
-                      final engineLabel = book['engine_label'] as String? ??
-                          (engine == 'kokoro' ? 'Kokoro' : engine == 'qwen3' ? 'Qwen Clone' : '');
+                      final engineLabel =
+                          book['engine_label'] as String? ??
+                          (engine == 'kokoro'
+                              ? 'Kokoro'
+                              : engine == 'qwen3'
+                              ? 'Qwen Clone'
+                              : '');
                       final voice = book['voice'] as String? ?? '';
                       return ListTile(
                         leading: isPending
                             ? const SizedBox(
                                 width: 24,
                                 height: 24,
-                                child: CircularProgressIndicator(strokeWidth: 2.4),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                ),
                               )
                             : Icon(
                                 isPlaying
@@ -1115,26 +1156,32 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                               tooltip: 'Show in folder',
                             ),
                             IconButton(
-                              onPressed: hasAudio && (!isPlaying || _isPlaybackPaused)
+                              onPressed:
+                                  hasAudio && (!isPlaying || _isPlaybackPaused)
                                   ? () => _playAudiobook(book)
                                   : null,
                               icon: const Icon(Icons.play_arrow),
                               tooltip: 'Play',
                             ),
                             IconButton(
-                              onPressed: hasAudio && isPlaying && !_isPlaybackPaused
+                              onPressed:
+                                  hasAudio && isPlaying && !_isPlaybackPaused
                                   ? _pausePlayback
                                   : null,
                               icon: const Icon(Icons.pause),
                               tooltip: 'Pause',
                             ),
                             IconButton(
-                              onPressed: hasAudio && isPlaying ? _stopPlayback : null,
+                              onPressed: hasAudio && isPlaying
+                                  ? _stopPlayback
+                                  : null,
                               icon: const Icon(Icons.stop),
                               tooltip: 'Stop',
                             ),
                             IconButton(
-                              onPressed: hasAudio ? () => _downloadAudiobook(book) : null,
+                              onPressed: hasAudio
+                                  ? () => _downloadAudiobook(book)
+                                  : null,
                               icon: const Icon(Icons.download_rounded),
                               tooltip: 'Download',
                             ),

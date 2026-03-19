@@ -198,7 +198,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     }
   }
 
-  List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
+  List<Map<String, dynamic>> _mergeAudioFiles(
+    List<Map<String, dynamic>> files,
+  ) {
     if (_pendingAudioFiles.isEmpty) {
       return files;
     }
@@ -209,8 +211,12 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     // Add pending files at top, sorted by creation time (newest first)
     final pendingList = _pendingAudioFiles.values.toList()
       ..sort((a, b) {
-        final aTime = DateTime.tryParse(a['created_at'] as String? ?? '') ?? DateTime.now();
-        final bTime = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
+        final aTime =
+            DateTime.tryParse(a['created_at'] as String? ?? '') ??
+            DateTime.now();
+        final bTime =
+            DateTime.tryParse(b['created_at'] as String? ?? '') ??
+            DateTime.now();
         return bTime.compareTo(aTime);
       });
     return [...pendingList, ...merged];
@@ -221,7 +227,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     setState(() {
       _pendingAudioFiles[pendingId] = file;
       _audioFiles = _mergeAudioFiles(
-        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+        _audioFiles
+            .where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString()))
+            .toList(),
       );
     });
   }
@@ -230,7 +238,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     setState(() {
       _pendingAudioFiles.remove(pendingId);
       _audioFiles = _mergeAudioFiles(
-        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+        _audioFiles
+            .where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString()))
+            .toList(),
       );
     });
   }
@@ -328,7 +338,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     if (_textController.text.isEmpty) return;
 
     if (_qwen3Mode == 'clone' && _selectedQwen3Voice == null) {
-      setState(() => _error = 'Please add a voice first in the Voice Prompts tab');
+      setState(
+        () => _error = 'Please add a voice first in the Voice Prompts tab',
+      );
       return;
     }
 
@@ -351,7 +363,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final speed = _speed;
     final modelSize = _modelSize;
     final modelQuantization = _modelQuantization;
-    final instruct = _instructController.text.isNotEmpty ? _instructController.text : null;
+    final instruct = _instructController.text.isNotEmpty
+        ? _instructController.text
+        : null;
     final temperature = _temperature;
     final topP = _topP;
     final topK = _topK;
@@ -360,24 +374,26 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final unloadAfter = _unloadAfter;
 
     // Start generation in background - don't await
-    unawaited(_generateInBackground(
-      pendingId: pendingId,
-      text: text,
-      mode: mode,
-      voiceName: voiceName,
-      speaker: speaker,
-      language: language,
-      speed: speed,
-      modelSize: modelSize,
-      modelQuantization: modelQuantization,
-      instruct: instruct,
-      temperature: temperature,
-      topP: topP,
-      topK: topK,
-      repetitionPenalty: repetitionPenalty,
-      seed: seed,
-      unloadAfter: unloadAfter,
-    ));
+    unawaited(
+      _generateInBackground(
+        pendingId: pendingId,
+        text: text,
+        mode: mode,
+        voiceName: voiceName,
+        speaker: speaker,
+        language: language,
+        speed: speed,
+        modelSize: modelSize,
+        modelQuantization: modelQuantization,
+        instruct: instruct,
+        temperature: temperature,
+        topP: topP,
+        topK: topK,
+        repetitionPenalty: repetitionPenalty,
+        seed: seed,
+        unloadAfter: unloadAfter,
+      ),
+    );
   }
 
   Future<void> _generateInBackground({
@@ -437,7 +453,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       }
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      final filename = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : null;
 
       if (!mounted) return;
       _removePendingAudioFile(pendingId);
@@ -458,9 +476,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     } catch (e) {
       if (!mounted) return;
       _removePendingAudioFile(pendingId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Generation failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Generation failed: $e')));
     }
   }
 
@@ -692,6 +710,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   Future<void> _pausePreview() async {
     if (_previewVoiceName != null && !_isPreviewPaused) {
       await _audioPlayer.pause();
+      if (!mounted) return;
       setState(() => _isPreviewPaused = true);
     }
   }
@@ -759,6 +778,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
   Future<void> _pauseAudioPlayback() async {
     if (_playingAudioId != null) {
       await _audioPlayer.pause();
+      if (!mounted) return;
       setState(() => _isAudioPaused = true);
     }
   }
@@ -767,6 +787,7 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     await _playerSubscription?.cancel();
     _playerSubscription = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingAudioId = null;
       _isAudioPaused = false;
@@ -2340,7 +2361,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.content_copy_rounded, size: 16),
-                      onPressed: hasText ? () => _copyAudioFileText(file) : null,
+                      onPressed: hasText
+                          ? () => _copyAudioFileText(file)
+                          : null,
                       tooltip: hasText ? 'Copy text' : 'Text not available',
                       visualDensity: VisualDensity.compact,
                     ),
@@ -2362,13 +2385,17 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.download_rounded, size: 16),
-                      onPressed: isPending ? null : () => _downloadAudioFile(file),
+                      onPressed: isPending
+                          ? null
+                          : () => _downloadAudioFile(file),
                       tooltip: 'Download',
                       visualDensity: VisualDensity.compact,
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, size: 16),
-                      onPressed: isPending ? null : () => _deleteAudioFile(filename),
+                      onPressed: isPending
+                          ? null
+                          : () => _deleteAudioFile(filename),
                       tooltip: 'Delete',
                       visualDensity: VisualDensity.compact,
                     ),
@@ -2419,7 +2446,9 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.stop, size: 20),
-                  onPressed: !isPending && isThisPlaying ? _stopAudioPlayback : null,
+                  onPressed: !isPending && isThisPlaying
+                      ? _stopAudioPlayback
+                      : null,
                   tooltip: 'Stop',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,

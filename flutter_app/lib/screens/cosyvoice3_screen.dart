@@ -1150,6 +1150,7 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
   Future<void> _pauseAudioPlayback() async {
     if (_playingAudioId == null) return;
     await _audioPlayer.pause();
+    if (!mounted) return;
     setState(() => _isAudioPaused = true);
   }
 
@@ -1157,6 +1158,7 @@ class _CosyVoice3ScreenState extends State<CosyVoice3Screen> {
     await _playerSubscription?.cancel();
     _playerSubscription = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingAudioId = null;
       _isAudioPaused = false;

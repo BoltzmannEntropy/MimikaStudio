@@ -94,6 +94,7 @@ class _JobsScreenState extends State<JobsScreen> {
   Future<void> _pauseAudio() async {
     if (_playingJobId == null) return;
     await _audioPlayer.pause();
+    if (!mounted) return;
     setState(() => _isPaused = true);
   }
 
@@ -101,6 +102,7 @@ class _JobsScreenState extends State<JobsScreen> {
     await _playerSub?.cancel();
     _playerSub = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingJobId = null;
       _isPaused = false;
@@ -225,9 +227,9 @@ class _JobsScreenState extends State<JobsScreen> {
       await LocalFileActions.openPath(filePath);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to open file: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to open file: $e')));
     }
   }
 
@@ -238,9 +240,9 @@ class _JobsScreenState extends State<JobsScreen> {
       await LocalFileActions.revealInFolder(filePath);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to reveal file: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to reveal file: $e')));
     }
   }
 
@@ -269,14 +271,14 @@ class _JobsScreenState extends State<JobsScreen> {
       await file.create(recursive: true);
       await file.writeAsBytes(bytes, flush: true);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved to $savePath')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Saved to $savePath')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to download: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to download: $e')));
     }
   }
 
@@ -311,14 +313,14 @@ class _JobsScreenState extends State<JobsScreen> {
       await _api.deleteJob(jobId);
       await _loadJobs();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Job deleted')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Job deleted')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to delete: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete: $e')));
     }
   }
 
@@ -543,7 +545,10 @@ class _JobsScreenState extends State<JobsScreen> {
                           runSpacing: 4,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                              icon: const Icon(
+                                Icons.open_in_new_rounded,
+                                size: 18,
+                              ),
                               onPressed: outputPath.isNotEmpty
                                   ? () => _openJobExternally(job)
                                   : null,
@@ -551,7 +556,10 @@ class _JobsScreenState extends State<JobsScreen> {
                               visualDensity: VisualDensity.compact,
                             ),
                             IconButton(
-                              icon: const Icon(Icons.folder_open_rounded, size: 18),
+                              icon: const Icon(
+                                Icons.folder_open_rounded,
+                                size: 18,
+                              ),
                               onPressed: outputPath.isNotEmpty
                                   ? () => _revealJobInFolder(job)
                                   : null,
@@ -560,7 +568,8 @@ class _JobsScreenState extends State<JobsScreen> {
                             ),
                             IconButton(
                               icon: const Icon(Icons.play_arrow, size: 18),
-                              onPressed: hasAudio && (!isThisPlaying || _isPaused)
+                              onPressed:
+                                  hasAudio && (!isThisPlaying || _isPaused)
                                   ? () => _playJobAudio(job)
                                   : null,
                               tooltip: 'Play',
@@ -583,7 +592,10 @@ class _JobsScreenState extends State<JobsScreen> {
                               visualDensity: VisualDensity.compact,
                             ),
                             IconButton(
-                              icon: const Icon(Icons.download_rounded, size: 18),
+                              icon: const Icon(
+                                Icons.download_rounded,
+                                size: 18,
+                              ),
                               onPressed: hasAudio
                                   ? () => _downloadJobAudio(job)
                                   : null,

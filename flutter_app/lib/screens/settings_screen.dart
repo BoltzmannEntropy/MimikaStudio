@@ -124,12 +124,11 @@ class _SettingsScreenState extends State<SettingsScreen>
     if (result != null) {
       try {
         await _settingsService.setOutputFolder(result);
+        if (!mounted) return;
         setState(() => _outputFolder = result);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Output folder updated')),
-          );
-        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Output folder updated')));
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(

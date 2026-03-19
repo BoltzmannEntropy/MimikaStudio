@@ -276,7 +276,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     }
   }
 
-  List<Map<String, dynamic>> _mergeAudioFiles(List<Map<String, dynamic>> files) {
+  List<Map<String, dynamic>> _mergeAudioFiles(
+    List<Map<String, dynamic>> files,
+  ) {
     if (_pendingAudioFiles.isEmpty) {
       return files;
     }
@@ -286,8 +288,12 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
         .toList();
     final pendingList = _pendingAudioFiles.values.toList()
       ..sort((a, b) {
-        final aTime = DateTime.tryParse(a['created_at'] as String? ?? '') ?? DateTime.now();
-        final bTime = DateTime.tryParse(b['created_at'] as String? ?? '') ?? DateTime.now();
+        final aTime =
+            DateTime.tryParse(a['created_at'] as String? ?? '') ??
+            DateTime.now();
+        final bTime =
+            DateTime.tryParse(b['created_at'] as String? ?? '') ??
+            DateTime.now();
         return bTime.compareTo(aTime);
       });
     return [...pendingList, ...merged];
@@ -298,7 +304,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     setState(() {
       _pendingAudioFiles[pendingId] = file;
       _audioFiles = _mergeAudioFiles(
-        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+        _audioFiles
+            .where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString()))
+            .toList(),
       );
     });
   }
@@ -307,7 +315,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     setState(() {
       _pendingAudioFiles.remove(pendingId);
       _audioFiles = _mergeAudioFiles(
-        _audioFiles.where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString())).toList(),
+        _audioFiles
+            .where((f) => !_pendingAudioFiles.containsKey(f['id']?.toString()))
+            .toList(),
       );
     });
   }
@@ -507,17 +517,19 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     final unloadAfter = _unloadAfter;
 
     // Start generation in background - don't await
-    unawaited(_generateInBackground(
-      pendingId: pendingId,
-      text: text,
-      voiceName: voiceName,
-      language: language,
-      speed: speed,
-      temperature: temperature,
-      cfgWeight: cfgWeight,
-      seed: seed,
-      unloadAfter: unloadAfter,
-    ));
+    unawaited(
+      _generateInBackground(
+        pendingId: pendingId,
+        text: text,
+        voiceName: voiceName,
+        language: language,
+        speed: speed,
+        temperature: temperature,
+        cfgWeight: cfgWeight,
+        seed: seed,
+        unloadAfter: unloadAfter,
+      ),
+    );
   }
 
   Future<void> _generateInBackground({
@@ -544,7 +556,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
       );
 
       final uri = Uri.parse(audioUrl);
-      final filename = uri.pathSegments.isNotEmpty ? uri.pathSegments.last : null;
+      final filename = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.last
+          : null;
 
       if (!mounted) return;
       _removePendingAudioFile(pendingId);
@@ -565,9 +579,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     } catch (e) {
       if (!mounted) return;
       _removePendingAudioFile(pendingId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Generation failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Generation failed: $e')));
     }
   }
 
@@ -795,6 +809,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   Future<void> _pausePreview() async {
     if (_previewVoiceName != null && !_isPreviewPaused) {
       await _audioPlayer.pause();
+      if (!mounted) return;
       setState(() => _isPreviewPaused = true);
     }
   }
@@ -862,6 +877,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
   Future<void> _pauseAudioPlayback() async {
     if (_playingAudioId != null) {
       await _audioPlayer.pause();
+      if (!mounted) return;
       setState(() => _isAudioPaused = true);
     }
   }
@@ -870,6 +886,7 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
     await _playerSubscription?.cancel();
     _playerSubscription = null;
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _playingAudioId = null;
       _isAudioPaused = false;
@@ -2288,13 +2305,17 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.download_rounded, size: 16),
-                      onPressed: isPending ? null : () => _downloadAudioFile(file),
+                      onPressed: isPending
+                          ? null
+                          : () => _downloadAudioFile(file),
                       tooltip: 'Download',
                       visualDensity: VisualDensity.compact,
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, size: 16),
-                      onPressed: isPending ? null : () => _deleteAudioFile(filename),
+                      onPressed: isPending
+                          ? null
+                          : () => _deleteAudioFile(filename),
                       tooltip: 'Delete',
                       visualDensity: VisualDensity.compact,
                     ),
@@ -2343,7 +2364,9 @@ class _ChatterboxCloneScreenState extends State<ChatterboxCloneScreen> {
                 ),
                 IconButton(
                   icon: const Icon(Icons.stop, size: 20),
-                  onPressed: !isPending && isThisPlaying ? _stopAudioPlayback : null,
+                  onPressed: !isPending && isThisPlaying
+                      ? _stopAudioPlayback
+                      : null,
                   tooltip: 'Stop',
                   visualDensity: VisualDensity.compact,
                   padding: EdgeInsets.zero,

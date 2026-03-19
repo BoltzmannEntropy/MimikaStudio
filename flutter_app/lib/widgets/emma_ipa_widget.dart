@@ -9,11 +9,7 @@ class EmmaIpaWidget extends StatefulWidget {
   final ApiService api;
   final Map<String, dynamic>? llmConfig;
 
-  const EmmaIpaWidget({
-    super.key,
-    required this.api,
-    this.llmConfig,
-  });
+  const EmmaIpaWidget({super.key, required this.api, this.llmConfig});
 
   @override
   State<EmmaIpaWidget> createState() => _EmmaIpaWidgetState();
@@ -50,7 +46,11 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
 
   final _providers = ['claude', 'openai', 'ollama', 'claude_code_cli'];
   final _modelsByProvider = {
-    'claude': ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-haiku-3-20240307'],
+    'claude': [
+      'claude-sonnet-4-20250514',
+      'claude-opus-4-20250514',
+      'claude-haiku-3-20240307',
+    ],
     'openai': ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     'ollama': ['llama3.2', 'llama3.1', 'mistral'],
     'claude_code_cli': ['default'],
@@ -104,7 +104,8 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
     if (widget.llmConfig != null) {
       setState(() {
         _selectedProvider = widget.llmConfig!['provider'] ?? 'claude';
-        _selectedModel = widget.llmConfig!['model'] ?? 'claude-sonnet-4-20250514';
+        _selectedModel =
+            widget.llmConfig!['model'] ?? 'claude-sonnet-4-20250514';
       });
     }
   }
@@ -113,6 +114,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
     setState(() => _isLoading = true);
     try {
       final samples = await widget.api.getEmmaIpaSamples();
+      if (!mounted) return;
       setState(() {
         _samples = samples;
         _isLoading = false;
@@ -126,6 +128,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
         }
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _isLoading = false;
@@ -166,6 +169,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
         provider: _selectedProvider,
         model: _selectedModel,
       );
+      if (!mounted) return;
       setState(() {
         // Use version1 (or ipa field if backend is updated)
         _ipaOutput = result['ipa'] as String? ?? result['version1'] as String?;
@@ -188,7 +192,9 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
       String audioUrl;
       if (_selectedSample != null && _selectedSample!['audio_url'] != null) {
         // Use preloaded audio
-        audioUrl = widget.api.getPregeneratedAudioUrl(_selectedSample!['audio_url']);
+        audioUrl = widget.api.getPregeneratedAudioUrl(
+          _selectedSample!['audio_url'],
+        );
       } else {
         // Generate audio on demand using Kokoro Lily voice
         audioUrl = await widget.api.generateKokoro(
@@ -198,6 +204,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
         );
       }
 
+      if (!mounted) return;
       setState(() {
         _currentAudioUrl = audioUrl;
         _isLoadingAudio = false;
@@ -206,12 +213,11 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
       await _audioPlayer.setUrl(audioUrl);
       await _audioPlayer.play();
     } catch (e) {
+      if (!mounted) return;
       setState(() => _isLoadingAudio = false);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Audio failed: $e')),
-        );
-      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Audio failed: $e')));
     }
   }
 
@@ -228,6 +234,7 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
 
   void _stopAudio() async {
     await _audioPlayer.stop();
+    if (!mounted) return;
     setState(() {
       _position = Duration.zero;
       _isPlaying = false;
@@ -265,7 +272,10 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                       const SizedBox(width: 8),
                       const Text(
                         'Input Text',
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                       const Spacer(),
                       // LLM Provider dropdown
@@ -276,20 +286,28 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                           decoration: const InputDecoration(
                             labelText: 'LLM',
                             border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             isDense: true,
                           ),
                           items: _providers.map((p) {
                             return DropdownMenuItem(
                               value: p,
-                              child: Text(_providerLabel(p), style: const TextStyle(fontSize: 12)),
+                              child: Text(
+                                _providerLabel(p),
+                                style: const TextStyle(fontSize: 12),
+                              ),
                             );
                           }).toList(),
                           onChanged: (value) {
                             if (value != null) {
                               setState(() {
                                 _selectedProvider = value;
-                                _selectedModel = _modelsByProvider[value]?.first ?? 'default';
+                                _selectedModel =
+                                    _modelsByProvider[value]?.first ??
+                                    'default';
                               });
                             }
                           },
@@ -300,21 +318,35 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                       SizedBox(
                         width: 180,
                         child: DropdownButtonFormField<String>(
-                          initialValue: _modelsByProvider[_selectedProvider]?.contains(_selectedModel) == true
+                          initialValue:
+                              _modelsByProvider[_selectedProvider]?.contains(
+                                    _selectedModel,
+                                  ) ==
+                                  true
                               ? _selectedModel
                               : _modelsByProvider[_selectedProvider]?.first,
                           decoration: const InputDecoration(
                             labelText: 'Model',
                             border: OutlineInputBorder(),
-                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 4,
+                            ),
                             isDense: true,
                           ),
-                          items: (_modelsByProvider[_selectedProvider] ?? ['default']).map((m) {
-                            return DropdownMenuItem(
-                              value: m,
-                              child: Text(m, style: const TextStyle(fontSize: 11)),
-                            );
-                          }).toList(),
+                          items:
+                              (_modelsByProvider[_selectedProvider] ??
+                                      ['default'])
+                                  .map((m) {
+                                    return DropdownMenuItem(
+                                      value: m,
+                                      child: Text(
+                                        m,
+                                        style: const TextStyle(fontSize: 11),
+                                      ),
+                                    );
+                                  })
+                                  .toList(),
                           onChanged: (value) {
                             if (value != null) {
                               setState(() => _selectedModel = value);
@@ -332,8 +364,10 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                       spacing: 8,
                       runSpacing: 8,
                       children: _samples.map((sample) {
-                        final isSelected = _selectedSample?['id'] == sample['id'];
-                        final hasPreloadedIpa = sample['has_preloaded_ipa'] == true;
+                        final isSelected =
+                            _selectedSample?['id'] == sample['id'];
+                        final hasPreloadedIpa =
+                            sample['has_preloaded_ipa'] == true;
                         final hasAudio = sample['has_audio'] == true;
                         return ActionChip(
                           label: Row(
@@ -351,7 +385,9 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                                 Icon(
                                   Icons.check_circle,
                                   size: 14,
-                                  color: isSelected ? Colors.white : Colors.green,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.green,
                                 ),
                               ],
                             ],
@@ -359,13 +395,15 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                           backgroundColor: isSelected
                               ? Theme.of(context).colorScheme.primary
                               : hasPreloadedIpa
-                                  ? Colors.green.shade50
-                                  : null,
+                              ? Colors.green.shade50
+                              : null,
                           avatar: hasAudio
                               ? Icon(
                                   Icons.audiotrack,
                                   size: 16,
-                                  color: isSelected ? Colors.white : Colors.green,
+                                  color: isSelected
+                                      ? Colors.white
+                                      : Colors.green,
                                 )
                               : null,
                           onPressed: () => _selectSample(sample),
@@ -384,7 +422,9 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                     ),
                     onChanged: (_) {
                       // Clear selection when user edits
-                      if (_selectedSample != null && _textController.text != _selectedSample!['input_text']) {
+                      if (_selectedSample != null &&
+                          _textController.text !=
+                              _selectedSample!['input_text']) {
                         setState(() {
                           _selectedSample = null;
                           _currentAudioUrl = null;
@@ -399,7 +439,9 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
@@ -408,14 +450,22 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                             children: [
                               // Play/Pause button
                               IconButton(
-                                onPressed: _isLoadingAudio ? null : _togglePlayPause,
+                                onPressed: _isLoadingAudio
+                                    ? null
+                                    : _togglePlayPause,
                                 icon: _isLoadingAudio
                                     ? const SizedBox(
                                         width: 24,
                                         height: 24,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
                                       )
-                                    : Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_filled),
+                                    : Icon(
+                                        _isPlaying
+                                            ? Icons.pause_circle_filled
+                                            : Icons.play_circle_filled,
+                                      ),
                                 iconSize: 40,
                                 color: Theme.of(context).colorScheme.primary,
                               ),
@@ -434,28 +484,42 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                                     SliderTheme(
                                       data: SliderTheme.of(context).copyWith(
                                         trackHeight: 4,
-                                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                        thumbShape: const RoundSliderThumbShape(
+                                          enabledThumbRadius: 6,
+                                        ),
                                       ),
                                       child: Slider(
                                         value: _duration.inMilliseconds > 0
-                                            ? _position.inMilliseconds / _duration.inMilliseconds
+                                            ? _position.inMilliseconds /
+                                                  _duration.inMilliseconds
                                             : 0,
                                         onChanged: (value) async {
                                           final newPosition = Duration(
-                                            milliseconds: (value * _duration.inMilliseconds).toInt(),
+                                            milliseconds:
+                                                (value *
+                                                        _duration
+                                                            .inMilliseconds)
+                                                    .toInt(),
                                           );
                                           await _audioPlayer.seek(newPosition);
                                         },
                                       ),
                                     ),
                                     Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceBetween,
                                       children: [
                                         Text(
                                           _formatDuration(_position),
                                           style: const TextStyle(fontSize: 11),
                                         ),
-                                        const Text('Lily Voice', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                        const Text(
+                                          'Lily Voice',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
                                         Text(
                                           _formatDuration(_duration),
                                           style: const TextStyle(fontSize: 11),
@@ -478,16 +542,22 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                     children: [
                       // Play Lily button (loads audio if not loaded)
                       FilledButton.tonalIcon(
-                        onPressed: _isLoadingAudio || _textController.text.isEmpty
+                        onPressed:
+                            _isLoadingAudio || _textController.text.isEmpty
                             ? null
                             : _togglePlayPause,
                         icon: _isLoadingAudio
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
-                            : Icon(_isPlaying ? Icons.pause : Icons.volume_up, size: 18),
+                            : Icon(
+                                _isPlaying ? Icons.pause : Icons.volume_up,
+                                size: 18,
+                              ),
                         label: Text(_isPlaying ? 'Pause' : 'Play Lily'),
                       ),
                       const Spacer(),
@@ -500,10 +570,15 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                             ? const SizedBox(
                                 width: 16,
                                 height: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
                               )
                             : const Icon(Icons.auto_awesome, size: 18),
-                        label: Text(_isGenerating ? 'Generating...' : 'Generate IPA'),
+                        label: Text(
+                          _isGenerating ? 'Generating...' : 'Generate IPA',
+                        ),
                       ),
                     ],
                   ),
@@ -534,14 +609,21 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                     Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: Colors.indigo,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: const Text(
                             'British IPA',
-                            style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -570,7 +652,11 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
                 child: Center(
                   child: Column(
                     children: [
-                      Icon(Icons.record_voice_over, size: 48, color: Colors.grey),
+                      Icon(
+                        Icons.record_voice_over,
+                        size: 48,
+                        color: Colors.grey,
+                      ),
                       SizedBox(height: 12),
                       Text(
                         'Enter text and click "Generate IPA" to create\nBritish IPA-like transcriptions',
@@ -599,10 +685,15 @@ class _EmmaIpaWidgetState extends State<EmmaIpaWidget> {
         spans.add(TextSpan(text: text.substring(lastEnd, match.start)));
       }
       // Add bold text
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepOrange),
-      ));
+      spans.add(
+        TextSpan(
+          text: match.group(1),
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            color: Colors.deepOrange,
+          ),
+        ),
+      );
       lastEnd = match.end;
     }
 
