@@ -94,6 +94,19 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
     }
   }
 
+  String _formatProgressBytes(num? bytes) {
+    if (bytes == null) return '0.00 GB';
+    return '${(bytes / 1000000000).toStringAsFixed(2)} GB';
+  }
+
+  String _downloadProgressLabel(num? downloadedBytes, num? expectedBytes) {
+    final downloadedLabel = _formatProgressBytes(downloadedBytes);
+    if (expectedBytes == null || expectedBytes <= 0) {
+      return '$downloadedLabel downloaded';
+    }
+    return '$downloadedLabel / ${_formatProgressBytes(expectedBytes)}';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -219,6 +232,9 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
     final isDownloading = _downloadingModels.contains(name);
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
+    final downloadedBytes = model['downloaded_bytes'] as num?;
+    final expectedBytes = model['expected_bytes'] as num?;
+    final downloadProgress = model['download_progress'] as num?;
     final downloadedPath = (model['downloaded_path'] as String?)?.trim();
     final cacheDir = (model['cache_dir'] as String?)?.trim();
     final modelPath = (downloadedPath != null && downloadedPath.isNotEmpty)
@@ -267,6 +283,17 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
                     'Error: $downloadError',
                     style: TextStyle(fontSize: 10, color: Colors.red.shade700),
                   ),
+                if (isDownloading || downloadStatus == 'downloading') ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    _downloadProgressLabel(downloadedBytes, expectedBytes),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.amber.shade900,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -277,10 +304,26 @@ class _ModelStatusBannerState extends State<ModelStatusBanner> {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 if (isDownloading || downloadStatus == 'downloading')
-                  const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                  SizedBox(
+                    width: 220,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            value: downloadProgress?.toDouble(),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        LinearProgressIndicator(
+                          value: downloadProgress?.toDouble(),
+                          minHeight: 6,
+                        ),
+                      ],
+                    ),
                   )
                 else
                   FilledButton.tonalIcon(

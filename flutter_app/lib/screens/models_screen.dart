@@ -197,6 +197,44 @@ class _ModelsScreenState extends State<ModelsScreen> {
     }
   }
 
+  String _formatProgressBytes(num? bytes) {
+    if (bytes == null) return '0.00 GB';
+    return '${(bytes / 1000000000).toStringAsFixed(2)} GB';
+  }
+
+  String _downloadProgressLabel(num? downloadedBytes, num? expectedBytes) {
+    final downloadedLabel = _formatProgressBytes(downloadedBytes);
+    if (expectedBytes == null || expectedBytes <= 0) {
+      return '$downloadedLabel downloaded';
+    }
+    return '$downloadedLabel / ${_formatProgressBytes(expectedBytes)}';
+  }
+
+  Widget _buildDownloadProgress(
+    num? downloadedBytes,
+    num? expectedBytes,
+    num? progress,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _downloadProgressLabel(downloadedBytes, expectedBytes),
+          style: TextStyle(fontSize: 11, color: Colors.blue.shade700),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            minHeight: 8,
+            value: progress?.toDouble(),
+            backgroundColor: Colors.blue.withValues(alpha: 0.12),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildModelCard(Map<String, dynamic> model) {
     final name = model['name'] as String;
     final engine = model['engine'] as String;
@@ -207,6 +245,9 @@ class _ModelsScreenState extends State<ModelsScreen> {
     final hfRepo = model['hf_repo'] as String? ?? '';
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
+    final downloadedBytes = model['downloaded_bytes'] as num?;
+    final expectedBytes = model['expected_bytes'] as num?;
+    final downloadProgress = model['download_progress'] as num?;
     final downloadedPath = (model['downloaded_path'] as String?)?.trim();
     final cacheDir = (model['cache_dir'] as String?)?.trim();
     final resolvedPath = (downloadedPath != null && downloadedPath.isNotEmpty)
@@ -370,6 +411,14 @@ class _ModelsScreenState extends State<ModelsScreen> {
                       ],
                     ],
                   ),
+                  if (isDownloading) ...[
+                    const SizedBox(height: 10),
+                    _buildDownloadProgress(
+                      downloadedBytes,
+                      expectedBytes,
+                      downloadProgress,
+                    ),
+                  ],
                   if (resolvedPath != null && modelType != 'pip') ...[
                     const SizedBox(height: 8),
                     SelectableText(

@@ -4610,6 +4610,68 @@ def _download_status_for_model(model) -> Optional[dict]:
     return status_info
 
 
+def _expected_download_bytes(model) -> Optional[int]:
+    size_gb = getattr(model, "size_gb", None)
+    if size_gb is None:
+        return None
+    try:
+        return max(0, int(float(size_gb) * 1_000_000_000))
+    except (TypeError, ValueError):
+        return None
+
+
+def _cache_downloaded_bytes(cache_dir: Path) -> int:
+    if not cache_dir.exists():
+        return 0
+
+    total = 0
+    try:
+        for entry in cache_dir.rglob("*"):
+            if not entry.is_file() or entry.is_symlink():
+                continue
+            try:
+                total += entry.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        return 0
+    return total
+
+
+def _set_download_status(download_key: str, **updates) -> None:
+    with _download_status_lock:
+        current = dict(_download_status.get(download_key, {}))
+        current.update(updates)
+
+        downloaded_bytes = current.get("downloaded_bytes")
+        expected_bytes = current.get("expected_bytes")
+        if (
+            isinstance(downloaded_bytes, int)
+            and isinstance(expected_bytes, int)
+            and expected_bytes > 0
+        ):
+            current["progress_fraction"] = max(
+                0.0,
+                min(downloaded_bytes / expected_bytes, 1.0),
+            )
+        elif current.get("status") == "completed":
+            current["progress_fraction"] = 1.0
+        else:
+            current["progress_fraction"] = None
+
+        _download_status[download_key] = current
+
+
+def _monitor_model_download_progress(
+    download_key: str,
+    cache_dir: Path,
+    stop_event: threading.Event,
+) -> None:
+    while not stop_event.wait(0.75):
+        downloaded_bytes = _cache_downloaded_bytes(cache_dir)
+        _set_download_status(download_key, downloaded_bytes=downloaded_bytes)
+
+
 @app.get("/api/models/status")
 async def models_status():
     """Check which models are downloaded and their sizes."""
@@ -4632,6 +4694,9 @@ async def models_status():
             "downloaded": downloaded,
             "download_status": status_info.get("status") if status_info else None,
             "download_error": status_info.get("error") if status_info else None,
+            "downloaded_bytes": status_info.get("downloaded_bytes") if status_info else None,
+            "expected_bytes": status_info.get("expected_bytes") if status_info else None,
+            "download_progress": status_info.get("progress_fraction") if status_info else None,
             "cache_dir": str(cache_dir),
             "downloaded_path": status_path or (str(snapshot_path) if snapshot_path else None),
         })
@@ -4656,6 +4721,7 @@ async def model_download(model_name: str):
         raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
 
     download_key = _download_key_for_model(model)
+    cache_dir = registry.get_model_cache_dir(model)
 
     # Check if already downloading
     with _download_status_lock:
@@ -4664,33 +4730,58 @@ async def model_download(model_name: str):
         return {
             "message": "Download already in progress",
             "model": model_name,
-            "cache_dir": str(registry.get_model_cache_dir(model)),
+            "cache_dir": str(cache_dir),
             "downloaded_path": current.get("path"),
         }
 
+    if cache_dir.exists() and not registry.is_model_downloaded(model):
+        shutil.rmtree(cache_dir, ignore_errors=True)
+
+    _set_download_status(
+        download_key,
+        status="downloading",
+        error=None,
+        path=None,
+        downloaded_bytes=_cache_downloaded_bytes(cache_dir),
+        expected_bytes=_expected_download_bytes(model),
+    )
     with _download_status_lock:
-        _download_status[download_key] = {"status": "downloading", "error": None, "path": None}
-        # Keep legacy name-key in sync if present, but do not rely on it.
         if model_name in _download_status:
             del _download_status[model_name]
 
     def _do_download():
+        stop_event = threading.Event()
+        monitor_thread = threading.Thread(
+            target=_monitor_model_download_progress,
+            args=(download_key, cache_dir, stop_event),
+            daemon=True,
+        )
+        monitor_thread.start()
         try:
             from huggingface_hub import snapshot_download
-            snapshot_path = snapshot_download(model.hf_repo)
-            with _download_status_lock:
-                _download_status[download_key] = {
-                    "status": "completed",
-                    "error": None,
-                    "path": str(snapshot_path),
-                }
+            snapshot_path = snapshot_download(
+                model.hf_repo,
+                cache_dir=str(registry.models_dir),
+            )
+            final_bytes = _cache_downloaded_bytes(cache_dir)
+            _set_download_status(
+                download_key,
+                status="completed",
+                error=None,
+                path=str(snapshot_path),
+                downloaded_bytes=final_bytes,
+            )
         except Exception as e:
-            with _download_status_lock:
-                _download_status[download_key] = {
-                    "status": "failed",
-                    "error": str(e),
-                    "path": None,
-                }
+            _set_download_status(
+                download_key,
+                status="failed",
+                error=str(e),
+                path=None,
+                downloaded_bytes=_cache_downloaded_bytes(cache_dir),
+            )
+        finally:
+            stop_event.set()
+            monitor_thread.join(timeout=1.0)
 
     thread = threading.Thread(target=_do_download, daemon=True)
     thread.start()
@@ -4700,7 +4791,7 @@ async def model_download(model_name: str):
         "model": model_name,
         "hf_repo": model.hf_repo,
         "size_gb": model.size_gb,
-        "cache_dir": str(registry.get_model_cache_dir(model)),
+        "cache_dir": str(cache_dir),
     }
 
 
@@ -4721,14 +4812,8 @@ async def model_delete(model_name: str):
     if not model.hf_repo:
         raise HTTPException(status_code=400, detail="Model has no HuggingFace repo")
 
-    # Check if downloaded
-    if not registry.is_model_downloaded(model):
-        raise HTTPException(status_code=400, detail=f"Model '{model_name}' is not downloaded")
-
-    # Delete the model cache directory
     cache_dir = registry.get_model_cache_dir(model)
     if cache_dir.exists():
-        import shutil
         try:
             shutil.rmtree(cache_dir)
             # Clear download status if any
@@ -4746,7 +4831,10 @@ async def model_delete(model_name: str):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete model: {str(e)}")
     else:
-        raise HTTPException(status_code=404, detail=f"Model cache directory not found")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model cache directory not found for '{model_name}'",
+        )
 
 
 def _audiobook_job_to_history_item(job) -> dict:

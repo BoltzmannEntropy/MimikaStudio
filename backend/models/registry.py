@@ -244,20 +244,36 @@ class ModelRegistry:
             "preprocessor_config.json",
         }
 
-        for entry in snapshot_dir.rglob("*"):
-            if not entry.is_file():
-                continue
-            lowered = entry.name.lower()
-            if lowered in metadata_names or lowered.endswith(".json"):
-                has_metadata = True
-            if lowered.endswith(weight_suffixes):
-                has_weight = True
-            if has_weight and has_metadata:
-                return True
+        stack = [snapshot_dir]
+        while stack:
+            current = stack.pop()
+            try:
+                children = list(current.iterdir())
+            except OSError:
+                return False
+
+            for entry in children:
+                if entry.is_symlink():
+                    if not entry.exists():
+                        return False
+                    if entry.is_dir():
+                        continue
+                elif entry.is_dir():
+                    stack.append(entry)
+                    continue
+
+                if not entry.is_file():
+                    continue
+
+                lowered = entry.name.lower()
+                if lowered in metadata_names or lowered.endswith(".json"):
+                    has_metadata = True
+                if lowered.endswith(weight_suffixes):
+                    has_weight = True
 
         # Keep compatibility with minimal model snapshots that only expose
         # weights but no obvious metadata.
-        return has_weight
+        return has_weight and has_metadata or has_weight
 
     def get_downloaded_snapshot_path(self, model: ModelInfo) -> Optional[Path]:
         """Return a usable snapshot path if present."""

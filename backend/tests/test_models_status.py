@@ -39,3 +39,32 @@ def test_models_status_keeps_cosyvoice3_download_state_independent():
     finally:
         with main._download_status_lock:
             main._download_status.pop(repo_key, None)
+
+
+def test_models_status_includes_download_progress_fields():
+    repo_key = "hf:Supertone/supertonic-2"
+    with main._download_status_lock:
+        main._download_status[repo_key] = {
+            "status": "downloading",
+            "error": None,
+            "path": None,
+            "downloaded_bytes": 123456789,
+            "expected_bytes": 300000000,
+            "progress_fraction": 0.4115,
+        }
+
+    try:
+        client = TestClient(main.app)
+        response = client.get("/api/models/status")
+        assert response.status_code == 200
+        models = response.json()["models"]
+        by_name = {m["name"]: m for m in models}
+
+        status = by_name["Supertonic-2"]
+        assert status["download_status"] == "downloading"
+        assert status["downloaded_bytes"] == 123456789
+        assert status["expected_bytes"] == 300000000
+        assert status["download_progress"] == 0.4115
+    finally:
+        with main._download_status_lock:
+            main._download_status.pop(repo_key, None)

@@ -110,6 +110,19 @@ class _ModelsDialogState extends State<ModelsDialog> {
     }
   }
 
+  String _formatProgressBytes(num? bytes) {
+    if (bytes == null) return '0.00 GB';
+    return '${(bytes / 1000000000).toStringAsFixed(2)} GB';
+  }
+
+  String _downloadProgressLabel(num? downloadedBytes, num? expectedBytes) {
+    final downloadedLabel = _formatProgressBytes(downloadedBytes);
+    if (expectedBytes == null || expectedBytes <= 0) {
+      return '$downloadedLabel downloaded';
+    }
+    return '$downloadedLabel / ${_formatProgressBytes(expectedBytes)}';
+  }
+
   Widget _buildModelTile(Map<String, dynamic> model) {
     final name = model['name'] as String;
     final engine = model['engine'] as String;
@@ -119,6 +132,9 @@ class _ModelsDialogState extends State<ModelsDialog> {
     final description = model['description'] as String? ?? '';
     final downloadStatus = model['download_status'] as String?;
     final downloadError = model['download_error'] as String?;
+    final downloadedBytes = model['downloaded_bytes'] as num?;
+    final expectedBytes = model['expected_bytes'] as num?;
+    final downloadProgress = model['download_progress'] as num?;
 
     final isDownloading = downloadStatus == 'downloading';
     final downloadFailed = downloadStatus == 'failed';
@@ -173,6 +189,15 @@ class _ModelsDialogState extends State<ModelsDialog> {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
+            if (isDownloading) ...[
+              const SizedBox(height: 6),
+              Text(
+                _downloadProgressLabel(downloadedBytes, expectedBytes),
+                style: TextStyle(fontSize: 10, color: Colors.blue.shade700),
+              ),
+              const SizedBox(height: 4),
+              LinearProgressIndicator(value: downloadProgress?.toDouble()),
+            ],
           ],
         ),
         trailing: _buildStatusWidget(
