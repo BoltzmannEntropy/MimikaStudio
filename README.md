@@ -34,7 +34,25 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 
 [![Star History Chart](https://api.star-history.com/svg?repos=BoltzmannEntropy/MimikaStudio&type=Date)](https://star-history.com/#BoltzmannEntropy/MimikaStudio&Date)
 
-![MimikaStudio Main Screen](assets/01-mimikastudio.png)
+![AI Models screen](assets/screen-models-ai-models.png)
+
+## Current UI Screens
+
+| Screen | Image |
+|-------|-------|
+| AI Models | `assets/screen-models-ai-models.png` |
+| Kokoro TTS | `assets/screen-kokoro-tts.png` |
+| Supertonic TTS | `assets/screen-supertonic-tts.png` |
+| Qwen3-TTS Preset Voice | `assets/screen-qwen3-preset-voice.png` |
+| Qwen3-TTS Voice Clone | `assets/screen-qwen3-voice-clone.png` |
+| Chatterbox | `assets/screen-chatterbox-voice-clone.png` |
+| Read Aloud | `assets/screen-read-aloud.png` |
+| Audiobook Generation | `assets/screen-audiobook-generation.png` |
+| Jobs | `assets/screen-jobs.png` |
+| Voice Prompt Management | `assets/screen-voice-prompt-management.png` |
+| Settings > MCP | `assets/screen-settings-mcp.png` |
+| Settings > About | `assets/screen-settings-about.png` |
+| Settings > Pro | `assets/screen-settings-pro.png` |
 
 ---
 
@@ -54,7 +72,7 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 | [Supertonic-2](https://huggingface.co/Supertone/supertonic-2) | — | Multilingual TTS (ONNX) | 5 languages (en, ko, es, pt, fr) |
 
-![MimikaStudio](assets/01-mimikastudio.png)
+![AI Models screen](assets/screen-models-ai-models.png)
 
 ## Audio Samples
 
@@ -292,7 +310,7 @@ MCP Server started on port 8010
 Starting Flutter UI (dev mode)...
 ```
 
-![MimikaStudio Running](assets/07-mimikastudio.png)
+![AI Models screen](assets/screen-models-ai-models.png)
 
 ---
 
@@ -302,7 +320,7 @@ MimikaStudio ships a desktop UI backed by the same local FastAPI agentic voice c
 
 **macOS Desktop App** (default): `./bin/mimikactl up`
 
-![MimikaStudio App Running](assets/01-mimikastudio.png)
+![Qwen3-TTS Voice Clone screen](assets/screen-qwen3-voice-clone.png)
 
 ---
 
@@ -315,7 +333,7 @@ MimikaStudio brings together the latest advances in neural text-to-speech into a
 **[Kokoro TTS](https://github.com/hexgrad/kokoro)** delivers sub-200ms latency with crystal-clear British and American accents. The 82M parameter model runs effortlessly on any machine, generating natural-sounding speech with Emma, George, Lily, and other premium voices.
 
 
-![Kokoro TTS](assets/02-mimikastudio.png)
+![Kokoro TTS screen](assets/screen-kokoro-tts.png)
 
 ### Voice Cloning Without Limits
 
@@ -338,7 +356,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 | **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
 | **[Supertonic-2](https://huggingface.co/Supertone/supertonic-2)** | Multilingual ONNX TTS | Low-latency local synthesis across 5 languages |
 
-![Qwen3-TTS Voice Clone](assets/03-mimikastudio.png)
+![Qwen3-TTS Voice Clone screen](assets/screen-qwen3-voice-clone.png)
 
 ### Beyond Simple TTS
 
@@ -352,8 +370,8 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 - **Real-time System Monitoring**: CPU, RAM, and GPU usage in the app header
 - **Multi-LLM Support**: Claude, OpenAI, Ollama (local), or Claude Code CLI
 
-![PDF Reader & Audiobook Creator](assets/08-mimikastudio-readaloud.png)
-![Jobs Queue](assets/15-mimikastudio-jobs-queue.png)
+![Read Aloud screen](assets/screen-read-aloud.png)
+![Jobs screen](assets/screen-jobs.png)
 
 ---
 
@@ -389,19 +407,19 @@ The **Voice Prompts** tab is the shared library for voice cloning. Add a voice o
 - Default voices ship with the app, and uploaded prompts appear immediately in clone screens
 - The same prompt metadata is reused across local clone engines
 
-![Voice Prompts Library](assets/17-voice-prompts.png)
+![Voice Prompt Management screen](assets/screen-voice-prompt-management.png)
 
 ### Clone from YouTube
 
 MimikaStudio can turn a YouTube clip into a reusable voice prompt without leaving the app:
 
-1. Open **Voice Prompts > Import YouTube**
+1. Open **Voice Prompts > Import URL**
 2. Paste a YouTube URL and optionally set a start time
 3. Download a 20-second preview and listen to it locally
 4. Save the preview as a named voice prompt with optional transcript, gender, and language metadata
 5. Use that saved prompt from the clone screens just like any uploaded reference voice
 
-![YouTube Voice Prompt Import](assets/16-voice-prompt-youtube.png)
+![Voice Prompt Management screen with Voice Library and Import URL tabs](assets/screen-voice-prompt-management.png)
 
 ---
 
@@ -586,7 +604,7 @@ All format dependencies are included in `requirements.txt`.
 
 Fast, high-quality British English synthesis (82M parameters, 24kHz). Features 8 premium British voices including Emma, Alice, Isabella, Lily, George, Daniel, Fable, and Lewis.
 
-![TTS Screen](assets/02-mimikastudio.png)
+![Kokoro TTS screen](assets/screen-kokoro-tts.png)
 
 ### Qwen3-TTS
 
@@ -644,7 +662,7 @@ Use 9 premium preset speakers without any reference audio.
 | Repetition Penalty | 1.0 | 1.0-2.0 | Reduce repetition |
 | Seed | -1 | -1 or 0+ | Reproducible generation (-1=random) |
 
-![Qwen3-TTS](assets/03-mimikastudio.png)
+![Qwen3-TTS Voice Clone screen](assets/screen-qwen3-voice-clone.png)
 
 ### Chatterbox Multilingual TTS
 
@@ -679,7 +697,7 @@ curl -L -o backend/models/dicta-onnx/dicta-1.0.onnx \
 
 **Note**: On Apple Silicon, Chatterbox runs on CPU due to MPS resampling limitations.
 
-![Chatterbox Voice Clone](assets/04-mimikastudio.png)
+![Chatterbox screen](assets/screen-chatterbox-voice-clone.png)
 
 ---
 
@@ -873,7 +891,7 @@ Track audiobook_status every 10 seconds and report final audio_url.
 
 ### MCP & API Dashboard (In-App)
 
-The **MCP & API** tab in the Flutter app provides a live dashboard showing:
+The **Settings > MCP** screen in the Flutter app provides a live dashboard showing:
 
 - **Server status** — Backend API (port 7693), MCP Server (port 8010), and API Docs availability with green/red indicators
 - **All MCP tools** grouped by category (System, Kokoro, Qwen3, Chatterbox, Audiobook, Voice Management, Models, Samples) with expandable parameter details
@@ -882,7 +900,7 @@ The **MCP & API** tab in the Flutter app provides a live dashboard showing:
 
 The dashboard fetches MCP tools live from the MCP server via JSON-RPC, so it always reflects the current tool set.
 
-![MCP & API Dashboard](assets/06-mimikastudio.png)
+![Settings MCP screen](assets/screen-settings-mcp.png)
 
 ---
 
