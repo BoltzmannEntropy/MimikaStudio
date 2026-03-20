@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.datastructures import Headers
 from starlette.staticfiles import NotModifiedResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pathlib import Path
 from contextlib import asynccontextmanager, contextmanager
 from collections import deque
@@ -45,12 +45,6 @@ from tts.supertonic_engine import (
     SupertonicParams,
     SUPPORTED_LANGUAGES as SUPERTONIC_LANGUAGES,
     DEFAULT_VOICE_NAME as SUPERTONIC_DEFAULT_VOICE,
-)
-from tts.cosyvoice3_engine import (
-    get_cosyvoice3_engine,
-    CosyVoice3Params,
-    SUPPORTED_LANGUAGES as COSYVOICE3_LANGUAGES,
-    DEFAULT_VOICE_NAME as COSYVOICE3_DEFAULT_VOICE,
 )
 from tts.text_chunking import smart_chunk_text
 from tts.audio_utils import merge_audio_chunks, resample_audio
@@ -279,6 +273,8 @@ class SupertonicRequest(BaseModel):
 
 
 class Qwen3Request(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     text: str
     mode: str = "clone"  # "clone" or "custom"
     voice_name: Optional[str] = None  # For clone mode
@@ -311,14 +307,6 @@ class ChatterboxRequest(BaseModel):
     cfg_weight: float = 1.0
     exaggeration: float = 0.5
     seed: int = -1
-    max_chars: int = 300
-    crossfade_ms: int = 0
-    unload_after: bool = False
-
-class IndexTTS2Request(BaseModel):
-    text: str
-    voice_name: str
-    speed: float = 1.0
     max_chars: int = 300
     crossfade_ms: int = 0
     unload_after: bool = False
@@ -365,7 +353,6 @@ async def lifespan(app: FastAPI):
     init_db()
     seed_db()
     _ensure_supertonic_pregenerated_rows()
-    _ensure_cosyvoice3_pregenerated_rows()
     env_output_override = _env_path("MIMIKA_OUTPUT_DIR")
     configured_output = str(env_output_override) if env_output_override else get_output_folder()
     _sync_output_folder_runtime(configured_output)
@@ -1136,111 +1123,6 @@ def _ensure_supertonic_pregenerated_rows() -> None:
     conn.close()
 
 
-def _ensure_cosyvoice3_pregenerated_rows() -> None:
-    """Ensure CosyVoice3 pregenerated Bible sample rows/files exist."""
-    pregen_dir = _bundled_data_dir / "pregenerated"
-    if not pregen_dir.exists():
-        return
-
-    # Keep separate filenames/rows so the UI and filtering are engine-specific.
-    source_to_target = [
-        ("supertonic-f1-genesis4-demo.wav", "cosyvoice3-f1-genesis4-demo.wav"),
-        ("supertonic-m2-genesis4-demo.wav", "cosyvoice3-m2-genesis4-demo.wav"),
-    ]
-    for source_name, target_name in source_to_target:
-        source_path = pregen_dir / source_name
-        target_path = pregen_dir / target_name
-        if source_path.exists() and not target_path.exists():
-            shutil.copy2(source_path, target_path)
-
-    samples = [
-        {
-            "engine": "cosyvoice3",
-            "voice": "Eden",
-            "title": "Genesis 4 Preview (Eden)",
-            "description": "CosyVoice3 Eden English preview for instant playback",
-            "text": (
-                "Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, "
-                "Why art thou wroth? and why is thy countenance fallen? If thou doest well, "
-                "shalt thou not be accepted? and if thou doest not well, sin lieth at the door."
-            ),
-            "file_name": "cosyvoice3-f1-genesis4-demo.wav",
-        },
-        {
-            "engine": "cosyvoice3",
-            "voice": "Atlas",
-            "title": "Genesis 4 Preview (Atlas)",
-            "description": "CosyVoice3 Atlas English preview using Genesis 4:8-9",
-            "text": (
-                "Genesis chapter 4, verses 8 and 9: And Cain talked with Abel his brother: "
-                "and it came to pass, when they were in the field, that Cain rose up against Abel his brother, "
-                "and slew him. And the Lord said unto Cain, Where is Abel thy brother? "
-                "And he said, I know not: Am I my brother's keeper?"
-            ),
-            "file_name": "cosyvoice3-m2-genesis4-demo.wav",
-        },
-    ]
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    removed = 0
-    inserted = 0
-    for sample in samples:
-        file_path = pregen_dir / sample["file_name"]
-        if not file_path.exists():
-            continue
-        cursor.execute(
-            "SELECT id FROM pregenerated_samples WHERE engine = ? AND file_path = ?",
-            (sample["engine"], str(file_path)),
-        )
-        if cursor.fetchone() is not None:
-            continue
-        cursor.execute(
-            """
-            INSERT INTO pregenerated_samples (engine, voice, title, description, text, file_path)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                sample["engine"],
-                sample["voice"],
-                sample["title"],
-                sample["description"],
-                sample["text"],
-                str(file_path),
-            ),
-        )
-        inserted += 1
-
-    expected_paths = {str((pregen_dir / sample["file_name"]).resolve()) for sample in samples}
-
-    # Remove stale CosyVoice3 rows if file is missing or not part of the expected set.
-    cursor.execute(
-        "SELECT id, file_path FROM pregenerated_samples WHERE engine = ?",
-        ("cosyvoice3",),
-    )
-    stale_ids = []
-    for row in cursor.fetchall():
-        sid, file_path = row
-        resolved_path = str(Path(file_path).resolve())
-        if (not Path(file_path).exists()) or (resolved_path not in expected_paths):
-            stale_ids.append((sid,))
-    if stale_ids:
-        cursor.executemany(
-            "DELETE FROM pregenerated_samples WHERE id = ?",
-            stale_ids,
-        )
-        removed = len(stale_ids)
-
-    if inserted > 0 or removed > 0:
-        conn.commit()
-        logger.info(
-            "Reconciled CosyVoice3 pregenerated rows (inserted=%s removed=%s)",
-            inserted,
-            removed,
-            extra={"request_id": "startup"},
-        )
-    conn.close()
-
 # Qwen3 voice storage locations
 SHARED_SAMPLE_VOICES_DIR = _bundled_data_dir / "samples" / "voices"
 QWEN3_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
@@ -1251,9 +1133,6 @@ QWEN3_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 CHATTERBOX_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
 CHATTERBOX_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 
-# IndexTTS-2 voice storage locations
-INDEXTTS2_SAMPLE_VOICES_DIR = SHARED_SAMPLE_VOICES_DIR
-INDEXTTS2_USER_VOICES_DIR = CLONER_USER_VOICES_DIR
 _bundled_dicta_model_dir = _backend_dir / "models" / "dicta-onnx"
 _runtime_dicta_model_dir = _runtime_data_dir / "models" / "dicta-onnx"
 if (_bundled_dicta_model_dir / "dicta-1.0.onnx").exists():
@@ -1264,19 +1143,6 @@ DICTA_MODEL_PATH = DICTA_MODEL_DIR / "dicta-1.0.onnx"
 DICTA_MODEL_URL = (
     "https://github.com/thewh1teagle/dicta-onnx/releases/download/model-files-v1.0/dicta-1.0.onnx"
 )
-
-
-def _get_indextts2_engine():
-    """Lazy-load IndexTTS-2 to keep backend bootable without torch."""
-    try:
-        from tts.indextts2_engine import get_indextts2_engine as _factory
-    except Exception as exc:
-        raise ImportError(
-            "IndexTTS-2 runtime unavailable. This build is configured for MLX-Audio engines only."
-        ) from exc
-    return _factory()
-
-
 def _get_all_voices() -> list:
     """List all voice samples across all engines (shared pool)."""
     all_dirs = [
@@ -1309,7 +1175,7 @@ def _get_all_voices() -> list:
                     "gender": meta.get("gender", ""),
                     "language": meta.get("language", ""),
                     "source_label": source_label,
-                    "engines_supported": ["qwen3", "chatterbox", "indextts2"],
+                    "engines_supported": ["qwen3", "chatterbox"],
                 }
     return list(voices.values())
 
@@ -1386,10 +1252,8 @@ def _migrate_legacy_voice_samples() -> None:
     legacy_user_dirs = (
         runtime_user_root / "qwen3",
         runtime_user_root / "chatterbox",
-        runtime_user_root / "indextts2",
         _bundled_data_dir / "user_voices" / "qwen3",
         _bundled_data_dir / "user_voices" / "chatterbox",
-        _bundled_data_dir / "user_voices" / "indextts2",
     )
     for legacy_user_dir in legacy_user_dirs:
         if legacy_user_dir.resolve() == cloner_user_dir.resolve():
@@ -1756,11 +1620,6 @@ async def system_info():
         "backend": "onnxruntime",
         "features": "multilingual on-device synthesis",
     }
-    cosyvoice3_info = {
-        "model": "ayousanz/cosy-voice3-onnx",
-        "backend": "onnxruntime",
-        "features": "expressive preset multilingual TTS (separate ONNX stack)",
-    }
     folders = [
         {"id": "user_home", "label": "User Home", "path": str(Path.home())},
         {"id": "runtime_home", "label": "Mimika User Folder", "path": str(_runtime_home)},
@@ -1792,7 +1651,6 @@ async def system_info():
             "qwen3": qwen3_info,
             "chatterbox": chatterbox_info,
             "supertonic": supertonic_info,
-            "cosyvoice3": cosyvoice3_info,
         },
         "folders": folders,
     }
@@ -1997,7 +1855,7 @@ def _voice_prompt_payload(voice: dict) -> dict:
         "duration_sec": float(duration_sec or 0.0),
         "source": source_label,
         "transcript": (voice.get("transcript") or "").strip(),
-        "engines_supported": list(voice.get("engines_supported") or ["qwen3", "chatterbox", "indextts2"]),
+        "engines_supported": list(voice.get("engines_supported") or ["qwen3", "chatterbox"]),
         "audio_url": f"/api/voice-prompts/{quote(name)}/audio" if name else None,
         "audio_path": str(audio_path) if audio_path is not None else "",
     }
@@ -3105,89 +2963,6 @@ async def supertonic_info():
     return info
 
 
-# ============== CosyVoice3 Endpoints (Isolated from Supertonic UI namespace) ==============
-
-@app.get("/api/cosyvoice3/voices")
-async def cosyvoice3_list_voices():
-    """List available CosyVoice3 ONNX preset voices."""
-    engine = get_cosyvoice3_engine()
-    return {"voices": engine.get_voices(), "default": COSYVOICE3_DEFAULT_VOICE}
-
-
-@app.get("/api/cosyvoice3/languages")
-async def cosyvoice3_list_languages():
-    """List languages supported by CosyVoice3 backend."""
-    return {"languages": list(COSYVOICE3_LANGUAGES), "default": "Auto"}
-
-
-@app.get("/api/cosyvoice3/info")
-async def cosyvoice3_info():
-    engine = get_cosyvoice3_engine()
-    info = engine.get_model_info()
-    info["installed"] = bool(engine.is_runtime_available())
-    return info
-
-
-@app.post("/api/cosyvoice3/generate")
-async def cosyvoice3_generate(request: SupertonicRequest, http_request: Request):
-    """Generate speech using the dedicated CosyVoice3 ONNX runtime."""
-    try:
-        snapshot_path = _ensure_named_model_ready("CosyVoice3", engine_label="CosyVoice3")
-        engine = get_cosyvoice3_engine()
-        engine.outputs_dir = outputs_dir
-        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
-        generation_started = time.time()
-        params = CosyVoice3Params(
-            speed=request.speed,
-            language=request.language,
-            total_steps=request.total_steps,
-        )
-        output_path = engine.generate(
-            text=request.text,
-            voice=request.voice,
-            params=params,
-            snapshot_dir=snapshot_path,
-        )
-        generation_completed = time.time()
-        resolved_voice = request.voice if request.voice else COSYVOICE3_DEFAULT_VOICE
-        _write_audio_metrics_sidecar(
-            output_path,
-            _build_generation_metrics(
-                started_at_epoch=generation_started,
-                completed_at_epoch=generation_completed,
-                chunk_durations=[generation_completed - generation_started],
-            ),
-        )
-        _log_generation_event(
-            http_request,
-            engine="cosyvoice3",
-            mode="tts",
-            text=request.text,
-            output_path=output_path,
-            voice=resolved_voice,
-            language=request.language,
-            model_name="CosyVoice3",
-        )
-        return {
-            "audio_url": f"/audio/{output_path.name}",
-            "filename": output_path.name,
-            "voice": resolved_voice,
-            "language": request.language,
-        }
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "CosyVoice3 ONNX runtime unavailable. Install dependencies: "
-                "onnxruntime==1.18.0 librosa transformers soundfile scipy. "
-                f"Error: {e}"
-            ),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
 # ============== Qwen3-TTS Endpoints (Voice Clone + Custom Voice) ==============
 
 def _qwen3_model_name_for_request(mode: str, model_size: str, model_quantization: str) -> str:
@@ -3223,12 +2998,59 @@ def _ensure_qwen3_model_ready(mode: str, model_size: str, model_quantization: st
     return _ensure_named_model_ready(model_name, engine_label="Qwen3")
 
 
-def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
+def _validate_qwen3_request(request: Qwen3Request) -> str:
+    """Normalize and validate request fields before model/runtime checks."""
+    request.text = (request.text or "").strip()
+    if not request.text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    request.mode = (request.mode or "").strip().lower()
+    if request.mode not in {"clone", "custom"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown mode: {request.mode}. Use 'clone' or 'custom'",
+        )
+
+    request.model_size = (request.model_size or "").strip()
+    if request.model_size not in {"0.6B", "1.7B"}:
+        raise HTTPException(
+            status_code=400,
+            detail="model_size must be '0.6B' or '1.7B'",
+        )
+
+    request.model_quantization = (request.model_quantization or "").strip().lower()
     if request.model_quantization not in {"bf16", "8bit"}:
         raise HTTPException(
             status_code=400,
             detail="model_quantization must be 'bf16' or '8bit'",
         )
+
+    request.voice_name = (request.voice_name or "").strip() or None
+    request.speaker = (request.speaker or "").strip() or None
+
+    if request.mode == "clone":
+        if not request.voice_name:
+            raise HTTPException(
+                status_code=400,
+                detail="Clone mode requires voice_name",
+            )
+    else:
+        if not request.speaker:
+            raise HTTPException(
+                status_code=400,
+                detail="Custom mode requires speaker",
+            )
+        if request.speaker not in QWEN_SPEAKERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}",
+            )
+
+    return request.mode
+
+
+def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
+    _validate_qwen3_request(request)
     _ensure_qwen3_model_ready(
         mode=request.mode,
         model_size=request.model_size,
@@ -3245,12 +3067,6 @@ def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
     generation_started = time.time()
 
     if request.mode == "clone":
-        if not request.voice_name:
-            raise HTTPException(
-                status_code=400,
-                detail="Clone mode requires voice_name"
-            )
-
         engine = get_qwen3_engine(
             model_size=request.model_size,
             quantization=request.model_quantization,
@@ -3298,18 +3114,6 @@ def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
         }
 
     elif request.mode == "custom":
-        if not request.speaker:
-            raise HTTPException(
-                status_code=400,
-                detail="Custom mode requires speaker"
-            )
-
-        if request.speaker not in QWEN_SPEAKERS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}"
-            )
-
         engine = get_qwen3_engine(
             model_size=request.model_size,
             quantization=request.model_quantization,
@@ -3365,11 +3169,7 @@ def _run_qwen3_generation(request: Qwen3Request) -> tuple[dict, Path]:
 
 
 def _queue_qwen3_job(request: Qwen3Request, http_request: Request) -> dict:
-    if request.model_quantization not in {"bf16", "8bit"}:
-        raise HTTPException(
-            status_code=400,
-            detail="model_quantization must be 'bf16' or '8bit'",
-        )
+    _validate_qwen3_request(request)
     _ensure_qwen3_model_ready(
         mode=request.mode,
         model_size=request.model_size,
@@ -3587,11 +3387,7 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
     from fastapi.responses import StreamingResponse
 
     try:
-        if request.model_quantization not in {"bf16", "8bit"}:
-            raise HTTPException(
-                status_code=400,
-                detail="model_quantization must be 'bf16' or '8bit'",
-            )
+        _validate_qwen3_request(request)
         # Best-effort preflight check for locally managed model artifacts.
         # Streaming should still proceed when a backend engine can resolve models
         # dynamically (or when tests monkeypatch the engine).
@@ -3602,7 +3398,7 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
                 model_quantization=request.model_quantization,
             )
         except HTTPException as preflight_error:
-            if preflight_error.status_code != 404:
+            if preflight_error.status_code not in {404, 409}:
                 raise
 
         params = GenerationParams(
@@ -3615,12 +3411,6 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
         prepared_ref_path: Optional[Path] = None
 
         if request.mode == "clone":
-            if not request.voice_name:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Clone mode requires voice_name"
-                )
-
             engine = get_qwen3_engine(
                 model_size=request.model_size,
                 quantization=request.model_quantization,
@@ -3676,18 +3466,6 @@ async def qwen3_generate_stream(request: Qwen3Request, http_request: Request):
             )
 
         elif request.mode == "custom":
-            if not request.speaker:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Custom mode requires speaker"
-                )
-
-            if request.speaker not in QWEN_SPEAKERS:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Unknown speaker: {request.speaker}. Available: {list(QWEN_SPEAKERS)}"
-                )
-
             engine = get_qwen3_engine(
                 model_size=request.model_size,
                 quantization=request.model_quantization,
@@ -4356,231 +4134,6 @@ async def chatterbox_dicta_download():
     payload["message"] = "Dicta download started"
     payload["url"] = DICTA_MODEL_URL
     return payload
-
-
-# ============== IndexTTS-2 Endpoints (Voice Clone) ==============
-
-@app.post("/api/indextts2/generate")
-async def indextts2_generate(request: IndexTTS2Request, http_request: Request):
-    """Generate speech using IndexTTS-2 voice cloning."""
-    try:
-        engine = _get_indextts2_engine()
-        engine.outputs_dir = outputs_dir
-        engine.outputs_dir.mkdir(parents=True, exist_ok=True)
-        generation_started = time.time()
-        voices = engine.get_saved_voices()
-        voice = next((v for v in voices if v["name"] == request.voice_name), None)
-        if voice is None:
-            # Search across all engine voice directories
-            audio_file = _find_voice_audio(request.voice_name)
-            if audio_file is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Voice '{request.voice_name}' not found. Upload a voice first.",
-                )
-            voice = {"name": request.voice_name, "audio_path": str(audio_file)}
-
-        output_path = engine.generate(
-            text=request.text,
-            voice_name=request.voice_name,
-            ref_audio_path=voice["audio_path"],
-            speed=request.speed,
-            max_chars=request.max_chars,
-            crossfade_ms=request.crossfade_ms,
-        )
-        generation_completed = time.time()
-        _write_audio_metrics_sidecar(
-            output_path,
-            _build_generation_metrics(
-                started_at_epoch=generation_started,
-                completed_at_epoch=generation_completed,
-                chunk_durations=[generation_completed - generation_started],
-            ),
-        )
-
-        if request.unload_after:
-            engine.unload()
-
-        _log_generation_event(
-            http_request,
-            engine="indextts2",
-            mode="clone",
-            text=request.text,
-            output_path=output_path,
-            voice=request.voice_name,
-            model_name="IndexTTS-2",
-        )
-        return {
-            "audio_url": f"/audio/{output_path.name}",
-            "filename": output_path.name,
-            "mode": "clone",
-            "voice": request.voice_name,
-        }
-    except ImportError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"IndexTTS not installed. Run: pip install indextts>=0.2.0. Error: {e}",
-        )
-
-
-@app.get("/api/indextts2/voices")
-async def indextts2_list_voices():
-    """List all voice samples available for IndexTTS-2 cloning (shared across engines)."""
-    voices = _get_all_voices()
-    for voice in voices:
-        name = voice.get("name")
-        if name:
-            voice["audio_url"] = f"/api/indextts2/voices/{name}/audio"
-    return {"voices": voices}
-
-
-@app.get("/api/indextts2/voices/{name}/audio")
-async def indextts2_voice_audio(name: str):
-    """Serve a voice sample audio file for preview (searches all engines)."""
-    if not name or "/" in name or ".." in name:
-        raise HTTPException(status_code=400, detail="Invalid voice name")
-
-    audio_file = _find_voice_audio(name)
-    if audio_file:
-        return FileResponse(audio_file, media_type="audio/wav")
-
-    raise HTTPException(status_code=404, detail="Voice sample not found")
-
-
-@app.post("/api/indextts2/voices")
-async def indextts2_upload_voice(
-    name: str = Form(...),
-    file: UploadFile = File(...),
-    transcript: Optional[str] = Form(""),
-):
-    """Upload a new voice sample for IndexTTS-2 cloning."""
-    name = (name or "").strip()
-    if not name or len(name.strip()) == 0:
-        raise HTTPException(status_code=400, detail="Voice name is required")
-    async with _guard_voice_mutation_async():
-        if _is_shared_default_voice(name):
-            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
-        if _voice_name_conflicts(name):
-            raise HTTPException(status_code=409, detail=f"Voice '{name}' already exists")
-
-        INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-        file_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
-
-        with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-        _write_voice_metadata_sidecar(file_path, source="local")
-
-        transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
-        if transcript is not None:
-            transcript_path.write_text(transcript.strip())
-
-        try:
-            engine = _get_indextts2_engine()
-            return {
-                "message": "Voice uploaded successfully",
-                "voice": engine.get_saved_voices(),
-            }
-        except ImportError:
-            return {"message": "Voice uploaded (engine not installed)", "name": name}
-
-
-@app.delete("/api/indextts2/voices/{name}")
-async def indextts2_delete_voice(name: str):
-    """Delete an IndexTTS-2 voice sample."""
-    async with _guard_voice_mutation_async():
-        if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
-            raise HTTPException(status_code=400, detail="Default voices cannot be deleted")
-
-        audio_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
-        transcript_path = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
-        meta_path = _voice_metadata_sidecar_path(audio_path)
-
-        if not audio_path.exists():
-            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
-
-        audio_path.unlink()
-        transcript_path.unlink(missing_ok=True)
-        meta_path.unlink(missing_ok=True)
-
-    return {"message": f"Voice '{name}' deleted"}
-
-
-@app.put("/api/indextts2/voices/{name}")
-async def indextts2_update_voice(
-    name: str,
-    new_name: Optional[str] = Form(None),
-    transcript: Optional[str] = Form(None),
-    file: Optional[UploadFile] = File(None),
-):
-    """Update an IndexTTS-2 voice sample (rename, update transcript, or replace audio)."""
-    async with _guard_voice_mutation_async():
-        if (INDEXTTS2_SAMPLE_VOICES_DIR / f"{name}.wav").exists():
-            raise HTTPException(status_code=400, detail="Default voices cannot be modified")
-
-        old_audio = INDEXTTS2_USER_VOICES_DIR / f"{name}.wav"
-        old_transcript = INDEXTTS2_USER_VOICES_DIR / f"{name}.txt"
-        if not old_audio.exists():
-            raise HTTPException(status_code=404, detail=f"Voice '{name}' not found")
-
-        final_name = (new_name or name).strip()
-        if not final_name or "/" in final_name or ".." in final_name:
-            raise HTTPException(status_code=400, detail="Invalid voice name")
-        if _is_shared_default_voice(final_name):
-            raise HTTPException(status_code=400, detail="That name is reserved for default voices")
-        if _voice_name_conflicts(final_name, exclude_name=name):
-            raise HTTPException(status_code=409, detail=f"Voice '{final_name}' already exists")
-
-        INDEXTTS2_USER_VOICES_DIR.mkdir(parents=True, exist_ok=True)
-        new_audio = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.wav"
-        new_transcript = INDEXTTS2_USER_VOICES_DIR / f"{final_name}.txt"
-        old_meta = _voice_metadata_sidecar_path(old_audio)
-        new_meta = _voice_metadata_sidecar_path(new_audio)
-        existing_meta = _read_voice_metadata_sidecar(old_audio)
-
-        if file:
-            with open(new_audio, "wb") as f:
-                shutil.copyfileobj(file.file, f)
-            if old_audio.exists() and old_audio != new_audio:
-                old_audio.unlink()
-        elif old_audio != new_audio:
-            old_audio.rename(new_audio)
-
-        if transcript is not None:
-            new_transcript.write_text(transcript.strip())
-        elif old_transcript.exists() and old_transcript != new_transcript:
-            old_transcript.rename(new_transcript)
-
-        if old_transcript.exists() and old_transcript != new_transcript:
-            old_transcript.unlink(missing_ok=True)
-
-        _write_voice_metadata_sidecar(
-            new_audio,
-            gender=existing_meta.get("gender"),
-            language=existing_meta.get("language"),
-            source=(existing_meta.get("source") or "local"),
-        )
-        if old_meta.exists() and old_meta != new_meta:
-            old_meta.unlink(missing_ok=True)
-
-    return {
-        "message": "Voice updated successfully",
-        "name": final_name,
-        "transcript": transcript or (_safe_read_text(new_transcript) if new_transcript.exists() else ""),
-    }
-
-
-@app.get("/api/indextts2/info")
-async def indextts2_info():
-    """Get IndexTTS-2 model information."""
-    try:
-        engine = _get_indextts2_engine()
-        return engine.get_model_info()
-    except ImportError:
-        return {
-            "name": "IndexTTS-2",
-            "installed": False,
-            "error": "Run: pip install indextts>=0.2.0",
-        }
 
 
 # ============== Model Management Endpoints ==============
@@ -5711,60 +5264,6 @@ async def supertonic_audio_delete(filename: str):
     return {"message": "Audio file deleted", "filename": filename}
 
 
-# ============== CosyVoice3 Audio Library Endpoints ==============
-
-@app.get("/api/cosyvoice3/audio/list")
-async def cosyvoice3_audio_list():
-    """List all generated CosyVoice3 audio files."""
-    from datetime import datetime
-
-    audio_files = []
-    for file in outputs_dir.glob("cosyvoice3-*.wav"):
-        stat = file.stat()
-        stem = file.stem
-        parts = stem.split("-")
-        alias = parts[1] if len(parts) > 2 else COSYVOICE3_DEFAULT_VOICE
-
-        try:
-            info = sf.info(str(file))
-            duration_seconds = info.duration
-        except Exception:
-            duration_seconds = 0
-
-        audio_files.append(
-            {
-                "id": stem,
-                "filename": file.name,
-                "engine": "cosyvoice3",
-                "voice": alias,
-                "label": f"CosyVoice3 {alias}",
-                "audio_url": f"/audio/{file.name}",
-                "size_mb": round(stat.st_size / (1024 * 1024), 2),
-                "duration_seconds": round(duration_seconds, 1),
-                "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
-                "metrics_available": _audio_metrics_sidecar_path(file).exists(),
-            }
-        )
-
-    audio_files.sort(key=lambda x: x["created_at"], reverse=True)
-    return {"audio_files": audio_files, "total": len(audio_files)}
-
-
-@app.delete("/api/cosyvoice3/audio/{filename}")
-async def cosyvoice3_audio_delete(filename: str):
-    """Delete a CosyVoice3 audio file."""
-    if not filename.startswith("cosyvoice3-") or not filename.endswith(".wav"):
-        raise HTTPException(status_code=400, detail="Invalid filename")
-
-    file_path = outputs_dir / filename
-    if not file_path.exists():
-        raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found")
-
-    _delete_audio_sidecars(file_path)
-    file_path.unlink()
-    return {"message": "Audio file deleted", "filename": filename}
-
-
 # ============== Voice Clone Audio Library Endpoints ==============
 
 def _job_output_filename(item: dict) -> str:
@@ -5784,7 +5283,7 @@ def _voice_clone_text_lookup() -> dict[tuple[str, str], dict]:
         items.extend(list(_job_history))
 
     lookup: dict[tuple[str, str], dict] = {}
-    supported_engines = {"qwen3", "chatterbox", "indextts2"}
+    supported_engines = {"qwen3", "chatterbox"}
     for item in items:
         engine = str(item.get("engine") or "").strip().lower()
         if engine not in supported_engines:
@@ -5816,7 +5315,6 @@ async def voice_clone_audio_list():
     patterns = [
         ("qwen3", "qwen3-*.wav"),
         ("chatterbox", "chatterbox-*.wav"),
-        ("indextts2", "indextts2-*.wav"),
     ]
 
     for engine, pattern in patterns:
@@ -5830,8 +5328,6 @@ async def voice_clone_audio_list():
 
             if engine == "qwen3":
                 label = f"Qwen3 {voice}" if voice else "Qwen3 Clone"
-            elif engine == "indextts2":
-                label = f"IndexTTS-2 {voice}" if voice else "IndexTTS-2 Clone"
             else:
                 label = f"Chatterbox {voice}" if voice else "Chatterbox Clone"
 
@@ -5874,7 +5370,7 @@ async def voice_clone_audio_list():
 async def voice_clone_audio_delete(filename: str):
     """Delete a voice clone audio file."""
     # Security: ensure filename starts with allowed prefixes and ends with .wav
-    valid_prefixes = ("qwen3-", "chatterbox-", "indextts2-")
+    valid_prefixes = ("qwen3-", "chatterbox-")
     if not (filename.endswith(".wav") and filename.startswith(valid_prefixes)):
         raise HTTPException(status_code=400, detail="Invalid filename")
 

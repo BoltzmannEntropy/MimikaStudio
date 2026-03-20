@@ -53,9 +53,6 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 | [Qwen3-TTS 1.7B CustomVoice-8bit](https://github.com/QwenLM/Qwen3-TTS) | 1.7B | Preset Speakers (8-bit) | 4 languages (en, zh, ja, ko) |
 | [Chatterbox Multilingual](https://github.com/resemble-ai/chatterbox) | — | Voice Cloning | 23 languages |
 | [Supertonic-2](https://huggingface.co/Supertone/supertonic-2) | — | Multilingual TTS (ONNX) | 5 languages (en, ko, es, pt, fr) |
-| [CosyVoice3 ONNX](https://huggingface.co/ayousanz/cosy-voice3-onnx) | — | Expressive TTS (ONNX backend) | 10 languages (auto, en, zh, ja, ko, de, es, fr, it, ru) |
-
-> **Note:** CosyVoice3 uses its own dedicated ONNX model package (`ayousanz/cosy-voice3-onnx`) and is independent from `Supertonic-2`.
 
 ![MimikaStudio](assets/01-mimikastudio.png)
 
@@ -72,6 +69,8 @@ Voice cloning from a 3-second sample. Compare the reference voice with the gener
 | **Yelena Clone** (Genesis4 Style) | [Yelena.wav](backend/data/samples/voices/Yelena.wav) | [qwen3-yelena-genesis4-demo.wav](backend/data/pregenerated/qwen3-yelena-genesis4-demo.wav) |
 | **Svetlana Clone** (Genesis4 Style) | [Svetlana.wav](backend/data/samples/voices/Svetlana.wav) | [qwen3-svetlana-genesis4-demo.wav](backend/data/pregenerated/qwen3-svetlana-genesis4-demo.wav) |
 | **Yelena (Hebrew)** (Cross-language) | [Yelena.wav](backend/data/samples/voices/Yelena.wav) | [qwen3-yelena-hebrew-demo.wav](backend/data/pregenerated/qwen3-yelena-hebrew-demo.wav) |
+
+MimikaStudio also ships with **8 custom-designed reference voices** for local cloning workflows: **Alistair, Anastasia, Beatrice, Eleanor, Harriet, Mikhail, Svetlana, and Yelena**.
 
 ### Qwen3-TTS CustomVoice (Preset Speakers)
 
@@ -112,13 +111,6 @@ Full audiobook excerpts generated with Kokoro TTS from Marcus Aurelius' "Meditat
 | **Female (F1)** (Genesis4 Style) | [supertonic-f1-genesis4-demo.wav](backend/data/pregenerated/supertonic-f1-genesis4-demo.wav) |
 | **Male (M2)** (Genesis4 Style) | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) |
 
-### CosyVoice3 TTS
-
-| Voice | Sample |
-|-------|--------|
-| **Female (F1 / Eden Alias)** (Genesis4 Style) | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) |
-| **Male (M2 / Atlas Alias)** (Genesis4 Style) | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) |
-
 ### Complete Pregenerated Example Index
 
 All shipped pregenerated demo files in `backend/data/pregenerated`:
@@ -134,8 +126,6 @@ All shipped pregenerated demo files in `backend/data/pregenerated`:
 | Chatterbox | [chatterbox-svetlana-demo-1770830815.wav](backend/data/pregenerated/chatterbox-svetlana-demo-1770830815.wav) | Emotional clone demo (Svetlana) |
 | Supertonic | [supertonic-f1-genesis4-demo.wav](backend/data/pregenerated/supertonic-f1-genesis4-demo.wav) | Preset F1 multilingual ONNX demo |
 | Supertonic | [supertonic-m2-genesis4-demo.wav](backend/data/pregenerated/supertonic-m2-genesis4-demo.wav) | Preset M2 multilingual ONNX demo |
-| CosyVoice3 | [cosyvoice3-f1-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-f1-genesis4-demo.wav) | CosyVoice3 F1/Eden standalone ONNX demo |
-| CosyVoice3 | [cosyvoice3-m2-genesis4-demo.wav](backend/data/pregenerated/cosyvoice3-m2-genesis4-demo.wav) | CosyVoice3 M2/Atlas standalone ONNX demo |
 | Kokoro | [long-meditations-emma.mp3](backend/data/pregenerated/long-meditations-emma.mp3) | Long-form audiobook demo (Emma, British female, Marcus Aurelius excerpt, 0.95x speed) |
 | Kokoro | [long-meditations-george.mp3](backend/data/pregenerated/long-meditations-george.mp3) | Long-form audiobook demo (George, British male, Marcus Aurelius excerpt, 0.95x speed) |
 
@@ -347,7 +337,6 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 | **Qwen3-TTS 8-bit variants (0.6B/1.7B Base + CustomVoice)** | Low-memory mode | Smaller footprint with strong quality/speed tradeoff |
 | **[Chatterbox Multilingual TTS](https://huggingface.co/spaces/ResembleAI/Chatterbox-Multilingual-TTS)** | Voice Cloning | Multilingual cloning with prompt audio |
 | **[Supertonic-2](https://huggingface.co/Supertone/supertonic-2)** | Multilingual ONNX TTS | Low-latency local synthesis across 5 languages |
-| **[CosyVoice3 ONNX](https://huggingface.co/ayousanz/cosy-voice3-onnx)** | Expressive preset TTS | Dedicated ONNX model with independent download/status and UI/API surface |
 
 ![Qwen3-TTS Voice Clone](assets/03-mimikastudio.png)
 
@@ -394,7 +383,7 @@ MimikaStudio includes **9 premium preset speakers** across 4 languages (English,
 
 ### Voice Prompts Workflow
 
-The **Voice Prompts** tab is the shared library for voice cloning. Add a voice once and reuse it across **Qwen3 Clone**, **Chatterbox**, and **IndexTTS-2** clone flows without re-uploading the sample for each engine.
+The **Voice Prompts** tab is the shared library for voice cloning. Add a voice once and reuse it across **Qwen3 Clone** and **Chatterbox** flows without re-uploading the sample for each engine.
 
 - Search, filter, preview, edit, and delete saved prompts from one library
 - Default voices ship with the app, and uploaded prompts appear immediately in clone screens
@@ -610,6 +599,23 @@ Clone any voice from just 3+ seconds of reference audio.
 - `Qwen3-TTS-12Hz-1.7B-Base` - Higher quality, 3.6GB
 
 **Languages**: Chinese, English, Japanese, Korean, German, French, Russian, Portuguese, Spanish, Italian
+
+MimikaStudio ships these **8 custom-designed clone voices** for local Qwen3 prompting and demos: **Alistair, Anastasia, Beatrice, Eleanor, Harriet, Mikhail, Svetlana, and Yelena**.
+
+**Supported Language Showcase**: Genesis 1:1 generated with the shipped Mimika voices across every Qwen3 clone language. Korean is included with **Eleanor**.
+
+| Language | Voice | Transcript | Sample |
+|----------|-------|------------|--------|
+| English | Alistair | In the beginning God created the heaven and the earth. | [qwen3-alistair-english-genesis1-demo.wav](backend/data/pregenerated/qwen3-alistair-english-genesis1-demo.wav) |
+| Chinese | Anastasia | 起初，神创造天地。 | [qwen3-anastasia-chinese-genesis1-demo.wav](backend/data/pregenerated/qwen3-anastasia-chinese-genesis1-demo.wav) |
+| Japanese | Beatrice | 初めに、神は天と地を創造された。 | [qwen3-beatrice-japanese-genesis1-demo.wav](backend/data/pregenerated/qwen3-beatrice-japanese-genesis1-demo.wav) |
+| Korean | Eleanor | 태초에 하나님이 천지를 창조하시니라. | [qwen3-eleanor-korean-genesis1-demo.wav](backend/data/pregenerated/qwen3-eleanor-korean-genesis1-demo.wav) |
+| German | Harriet | Am Anfang schuf Gott Himmel und Erde. | [qwen3-harriet-german-genesis1-demo.wav](backend/data/pregenerated/qwen3-harriet-german-genesis1-demo.wav) |
+| French | Mikhail | Au commencement, Dieu créa les cieux et la terre. | [qwen3-mikhail-french-genesis1-demo.wav](backend/data/pregenerated/qwen3-mikhail-french-genesis1-demo.wav) |
+| Russian | Svetlana | В начале сотворил Бог небо и землю. | [qwen3-svetlana-russian-genesis1-demo.wav](backend/data/pregenerated/qwen3-svetlana-russian-genesis1-demo.wav) |
+| Portuguese | Yelena | No princípio, Deus criou os céus e a terra. | [qwen3-yelena-portuguese-genesis1-demo.wav](backend/data/pregenerated/qwen3-yelena-portuguese-genesis1-demo.wav) |
+| Spanish | Alistair | En el principio creó Dios los cielos y la tierra. | [qwen3-alistair-spanish-genesis1-demo.wav](backend/data/pregenerated/qwen3-alistair-spanish-genesis1-demo.wav) |
+| Italian | Anastasia | Nel principio Dio creò i cieli e la terra. | [qwen3-anastasia-italian-genesis1-demo.wav](backend/data/pregenerated/qwen3-anastasia-italian-genesis1-demo.wav) |
 
 **How It Works**:
 1. Upload a 3+ second audio sample

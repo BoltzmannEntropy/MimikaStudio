@@ -39,6 +39,30 @@ def test_qwen3_generate_invalid_mode():
     assert response.status_code == 400
 
 
+def test_qwen3_generate_empty_text_returns_400():
+    """Test that empty text is rejected before model checks."""
+    client = TestClient(app)
+    response = client.post("/api/qwen3/generate", json={
+        "text": "   ",
+        "mode": "clone",
+        "voice_name": "Yelena",
+    })
+    assert response.status_code == 400
+    assert "text cannot be empty" in response.json()["detail"].lower()
+
+
+def test_qwen3_enqueue_requires_voice_before_model_check():
+    """Queued clone requests should validate request shape before model readiness."""
+    client = TestClient(app)
+    response = client.post("/api/qwen3/generate", json={
+        "text": "hello",
+        "mode": "clone",
+        "enqueue": True,
+    })
+    assert response.status_code == 400
+    assert "voice_name" in response.json()["detail"].lower()
+
+
 def test_qwen3_generate_enqueue_creates_trackable_job(tmp_path):
     """Queued Qwen3 generation should return job_id and finish in /api/jobs/{id}."""
     client = TestClient(app)

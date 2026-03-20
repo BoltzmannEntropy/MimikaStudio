@@ -22,7 +22,6 @@ class AboutScreen extends StatelessWidget {
     'Supertonic': 'https://github.com/supertone-inc/supertonic',
     'Qwen3-TTS': 'https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base',
     'Chatterbox': 'https://huggingface.co/ResembleAI/chatterbox',
-    'IndexTTS-2': 'https://huggingface.co/IndexTeam/IndexTTS-v2',
   };
 
   Future<void> _launchUrl(String url) async {
@@ -307,18 +306,12 @@ class AboutScreen extends StatelessWidget {
                             Colors.orange,
                             _engineUrls['Chatterbox']!,
                           ),
-                          _buildEngineChip(
-                            'IndexTTS-2',
-                            Colors.purple,
-                            _engineUrls['IndexTTS-2']!,
-                          ),
                         ],
                       ),
                       const SizedBox(height: 12),
                       Text(
                         'Kokoro (Apache-2.0) · Supertonic (OpenRail) · '
-                        'Qwen3-TTS (Apache-2.0) · Chatterbox (MIT) · '
-                        'IndexTTS-2 (open model license)',
+                        'Qwen3-TTS (Apache-2.0) · Chatterbox (MIT)',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),

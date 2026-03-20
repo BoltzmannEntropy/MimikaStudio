@@ -11,7 +11,6 @@ class ModelsDialog extends StatefulWidget {
 
 class _ModelsDialogState extends State<ModelsDialog> {
   final ApiService _api = ApiService();
-  static const Set<String> _hiddenEngines = {'cosyvoice3'};
   List<Map<String, dynamic>> _models = [];
   bool _isLoading = true;
   String? _error;
@@ -35,9 +34,7 @@ class _ModelsDialogState extends State<ModelsDialog> {
 
   Future<void> _loadModels() async {
     try {
-      final models = (await _api.getModelsStatus())
-          .where((m) => !_hiddenEngines.contains(m['engine']))
-          .toList();
+      final models = await _api.getModelsStatus();
       if (mounted) {
         setState(() {
           _models = models;
@@ -86,8 +83,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
         return Icons.mic;
       case 'supertonic':
         return Icons.bolt;
-      case 'indextts2':
-        return Icons.auto_awesome;
       default:
         return Icons.model_training;
     }
@@ -102,8 +97,6 @@ class _ModelsDialogState extends State<ModelsDialog> {
       case 'chatterbox':
         return Colors.orange;
       case 'supertonic':
-        return Colors.deepPurple;
-      case 'indextts2':
         return Colors.deepPurple;
       default:
         return Colors.grey;
@@ -306,14 +299,12 @@ class _ModelsDialogState extends State<ModelsDialog> {
       'supertonic',
       'qwen3',
       'chatterbox',
-      'indextts2',
     ];
     final engineLabels = {
       'kokoro': 'Kokoro',
       'supertonic': 'Supertonic',
       'qwen3': 'Qwen3-TTS',
       'chatterbox': 'Chatterbox',
-      'indextts2': 'IndexTTS-2',
     };
 
     final grouped = <String, List<Map<String, dynamic>>>{};
