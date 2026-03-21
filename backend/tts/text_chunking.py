@@ -38,7 +38,24 @@ def split_into_sentences(text: str) -> list[str]:
     if not text:
         return []
 
-    doc = nlp(text)
+    max_length = getattr(nlp, "max_length", 1_000_000)
+    if len(text) > max_length:
+        print(
+            f"[Chunking] Text length {len(text)} exceeds spaCy max_length "
+            f"{max_length}; using regex sentence splitter"
+        )
+        return split_into_sentences_regex(text)
+
+    try:
+        doc = nlp(text)
+    except ValueError as exc:
+        # spaCy raises E088 on oversized texts. Fall back to regex chunking so
+        # long-form audiobook generation can continue instead of failing early.
+        if "E088" in str(exc):
+            print(f"[Chunking] spaCy rejected text; using regex sentence splitter: {exc}")
+            return split_into_sentences_regex(text)
+        raise
+
     sentences = [sent.text.strip() for sent in doc.sents if sent.text.strip()]
     return sentences if sentences else [text]
 

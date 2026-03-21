@@ -500,10 +500,27 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to start audiobook: $e')));
+      await _showAudiobookStartErrorDialog(e);
     }
+  }
+
+  Future<void> _showAudiobookStartErrorDialog(Object error) async {
+    final message = 'Failed to start audiobook:\n\n$error';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Audiobook generation failed'),
+          content: SingleChildScrollView(child: SelectableText(message)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<void> _playAudiobook(Map<String, dynamic> book) async {

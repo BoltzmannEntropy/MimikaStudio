@@ -1,43 +1,38 @@
-# MimikaStudio v2026.03.8 Release Notes
+# MimikaStudio v2026.03.9 Release Notes
 
-**Release Date:** March 18, 2026  
+**Release Date:** March 21, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's Fixed In v2026.03.8
+## What's Fixed In v2026.03.9
 
-- Restored **Hebrew Dicta diacritization** for **Chatterbox Multilingual** after the MLX backend migration.
-- Fixed the regression where Hebrew Chatterbox generation could silently fall back to a broken tokenizer path and log:
-  `Dicta.__init__() missing 1 required positional argument: 'model_path'`
-- Rewired MimikaStudio's Chatterbox engine to preload the Dicta ONNX model into the tokenizer module actually used by the MLX runtime before model load.
+- Fixed long-form audiobook generation failures for very large EPUB and document inputs that exceeded spaCy's default 1,000,000-character limit during sentence splitting.
+- Added a safe fallback so oversized audiobook texts use regex sentence splitting instead of aborting before chunking begins.
+- Replaced the transient audiobook start-failure snackbar with a readable dialog so users can inspect the full backend error message.
 
 ---
 
 ## User Impact
 
-- **Hebrew Chatterbox smoke tests** now run without the Dicta initialization warning.
-- **Full Hebrew voice-clone renders** complete successfully again on the patched MLX path.
-- Existing Hebrew Dicta installs are now picked up from:
-  - `DICTA_ONNX_MODEL_PATH`
-  - bundled app model path
-  - Mimika runtime data model path
+- Large books that previously failed with errors like `Text Length 1015801 exceeds 1000000` can now proceed into audiobook chunking and queueing.
+- Users now get a persistent error dialog when audiobook startup fails, instead of a brief bottom toast that disappears before the message can be read.
+- EPUB chapter extraction remains in place; the failure was in full-document sentence splitting after extraction, not in the chapter parser itself.
 
 ---
 
 ## Technical Notes
 
-- Updated the backend Chatterbox engine to resolve an explicit Dicta ONNX path instead of relying on a zero-argument `Dicta()` constructor.
-- Patched both supported tokenizer import paths so Hebrew preprocessing is applied consistently across the MLX-backed Chatterbox runtime.
-- Verified generation with:
-  - a short Hebrew smoke test
-  - a full Hebrew `parashat_hashavua.txt` render using a custom uploaded reference voice
+- Updated `backend/tts/text_chunking.py` to detect texts beyond spaCy's `max_length` and fall back to the regex sentence splitter.
+- Added a second fallback path for spaCy `E088` errors so oversized texts continue through audiobook chunking without raising.
+- Added backend regression tests covering both oversized-input fallback and explicit `E088` fallback behavior.
+- Updated the Flutter audiobook screen to present startup errors in a modal dialog with selectable text.
 
 ---
 
-## Previous Release: v2026.03.7
+## Previous Release: v2026.03.8
 
-- Sandboxed release entitlement update and release-build hardening.
+- Restored Hebrew Dicta support for the MLX Chatterbox runtime.
 
 ---
 
@@ -45,7 +40,7 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of March 18, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
+As of March 21, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.
