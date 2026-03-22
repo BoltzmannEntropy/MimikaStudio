@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +20,12 @@ class AudiobookScreen extends StatefulWidget {
 }
 
 class _AudiobookScreenState extends State<AudiobookScreen> {
+  static const double _collapsedPaneWidth = 72;
+  static const double _collapsedSectionHeight = 68;
+  static const double _minDocumentsPaneWidth = 240;
+  static const double _maxDocumentsPaneWidth = 420;
+  static const double _minAudiobooksPaneHeight = 190;
+  static const double _minMainPaneHeight = 220;
   static const List<String> _supportedExtensions = [
     'pdf',
     'txt',
@@ -69,6 +77,11 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   // Track multiple pending audiobooks keyed by job_id
   final Map<String, Map<String, dynamic>> _pendingAudiobooks = {};
   final Map<String, Timer> _pendingAudiobookTimers = {};
+  bool _isDocumentsPaneCollapsed = false;
+  bool _isAudiobooksPaneCollapsed = false;
+  bool _isDocumentDropActive = false;
+  double _documentsPaneWidth = 280;
+  double _audiobooksPaneHeight = 250;
 
   @override
   void initState() {
@@ -331,10 +344,94 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       'bytes': file.bytes,
     };
 
+    await _addDocuments([entry]);
+  }
+
+  bool _isSupportedDocumentName(String name) {
+    final extension = p.extension(name).replaceFirst('.', '').toLowerCase();
+    return _supportedExtensions.contains(extension);
+  }
+
+  String _documentKey(Map<String, dynamic> document) {
+    final name = (document['name'] as String? ?? '').trim().toLowerCase();
+    final path = (document['path'] as String? ?? '').trim().toLowerCase();
+    return '$name::$path';
+  }
+
+  List<Map<String, dynamic>> _prependDocuments(
+    List<Map<String, dynamic>> documents,
+  ) {
+    final seenKeys = documents.map(_documentKey).toSet();
+    final dedupedExisting = _documents
+        .where((document) => !seenKeys.contains(_documentKey(document)))
+        .toList();
+    return [...documents, ...dedupedExisting];
+  }
+
+  Future<void> _addDocuments(List<Map<String, dynamic>> documents) async {
+    if (documents.isEmpty) {
+      return;
+    }
     setState(() {
-      _documents.insert(0, entry);
+      _documents = _prependDocuments(documents);
+      _isDocumentsPaneCollapsed = false;
     });
-    await _selectDocument(entry);
+    await _selectDocument(documents.first);
+  }
+
+  Future<void> _handleDocumentDrop(DropDoneDetails detail) async {
+    final droppedDocuments = <Map<String, dynamic>>[];
+    final rejectedNames = <String>[];
+
+    for (final file in detail.files) {
+      final droppedPath = file.path.trim();
+      final name = droppedPath.isNotEmpty ? p.basename(droppedPath) : file.name;
+      if (!_isSupportedDocumentName(name)) {
+        rejectedNames.add(name.isEmpty ? 'unknown file' : name);
+        continue;
+      }
+
+      try {
+        final entry = <String, dynamic>{
+          'name': name,
+          'path': droppedPath.isNotEmpty
+              ? droppedPath
+              : 'dropped://${DateTime.now().microsecondsSinceEpoch}_$name',
+        };
+        if (droppedPath.isEmpty) {
+          entry['bytes'] = await file.readAsBytes();
+        }
+        droppedDocuments.add(entry);
+      } catch (_) {
+        rejectedNames.add(name.isEmpty ? 'unknown file' : name);
+      }
+    }
+
+    if (droppedDocuments.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Drop a PDF, EPUB, DOCX, HTML, RTF, ODT, DOC, TXT, or MD file',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await _addDocuments(droppedDocuments);
+
+    if (!mounted) return;
+    final addedCount = droppedDocuments.length;
+    final skippedCount = rejectedNames.length;
+    final addedLabel = addedCount == 1 ? 'document' : 'documents';
+    final skippedLabel = skippedCount == 1 ? 'file' : 'files';
+    final message = skippedCount == 0
+        ? 'Added $addedCount $addedLabel from drop'
+        : 'Added $addedCount $addedLabel from drop, skipped $skippedCount unsupported $skippedLabel';
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _selectDocument(Map<String, dynamic> doc) async {
@@ -682,45 +779,279 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     }
   }
 
+  double _clampDocumentsPaneWidth(double width, double availableWidth) {
+    final maxWidth = math.min(_maxDocumentsPaneWidth, availableWidth);
+    final minWidth = math.min(_minDocumentsPaneWidth, maxWidth);
+    return width.clamp(minWidth, maxWidth).toDouble();
+  }
+
+  double _clampAudiobooksPaneHeight(double height, double availableHeight) {
+    final maxHeight = math.max(
+      _minAudiobooksPaneHeight,
+      availableHeight - _minMainPaneHeight,
+    );
+    return height.clamp(_minAudiobooksPaneHeight, maxHeight).toDouble();
+  }
+
+  Widget _buildVerticalResizeHandle({
+    required ValueChanged<double> onDragUpdate,
+  }) {
+    final dividerColor = Theme.of(context).dividerColor;
+    return Tooltip(
+      message: 'Drag to resize',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeLeftRight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragUpdate: (details) => onDragUpdate(details.delta.dx),
+          child: SizedBox(
+            width: 12,
+            child: Center(
+              child: RotatedBox(
+                quarterTurns: 1,
+                child: Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 18,
+                  color: dividerColor,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHorizontalResizeHandle({
+    required ValueChanged<double> onDragUpdate,
+  }) {
+    final dividerColor = Theme.of(context).dividerColor;
+    return Tooltip(
+      message: 'Drag to resize',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeUpDown,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragUpdate: (details) => onDragUpdate(details.delta.dy),
+          child: SizedBox(
+            height: 12,
+            child: Center(
+              child: Icon(
+                Icons.drag_indicator_rounded,
+                size: 18,
+                color: dividerColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildDocumentList() {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          ListTile(
-            title: const Text('Documents'),
-            subtitle: const Text(
-              'PDF, EPUB, DOCX, HTML, RTF, ODT, DOC, TXT, MD',
-            ),
-            trailing: FilledButton.tonalIcon(
-              onPressed: _pickLocalDocument,
-              icon: const Icon(Icons.upload_file),
-              label: const Text('Add'),
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final selectedKey = _selectedDocument == null
+        ? null
+        : _documentKey(_selectedDocument!);
+
+    return DropTarget(
+      onDragEntered: (_) {
+        setState(() {
+          _isDocumentDropActive = true;
+          _isDocumentsPaneCollapsed = false;
+        });
+      },
+      onDragExited: (_) {
+        if (_isDocumentDropActive) {
+          setState(() => _isDocumentDropActive = false);
+        }
+      },
+      onDragDone: (detail) async {
+        if (_isDocumentDropActive) {
+          setState(() => _isDocumentDropActive = false);
+        }
+        await _handleDocumentDrop(detail);
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        child: Card(
+          clipBehavior: Clip.antiAlias,
+          margin: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: BorderSide(
+              color: _isDocumentDropActive
+                  ? colorScheme.primary
+                  : theme.dividerColor.withValues(alpha: 0.45),
+              width: _isDocumentDropActive ? 1.6 : 1,
             ),
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: _isLoadingDocuments
-                ? const Center(child: CircularProgressIndicator())
-                : ListView.builder(
-                    itemCount: _documents.length,
-                    itemBuilder: (context, index) {
-                      final doc = _documents[index];
-                      final name = doc['name'] as String? ?? 'document';
-                      final selected = identical(_selectedDocument, doc);
-                      return ListTile(
-                        selected: selected,
-                        leading: const Icon(Icons.description_outlined),
-                        title: Text(name, overflow: TextOverflow.ellipsis),
-                        subtitle: Text(
-                          p.extension(name).replaceFirst('.', '').toUpperCase(),
+          child: _isDocumentsPaneCollapsed
+              ? InkWell(
+                  onTap: () {
+                    setState(() => _isDocumentsPaneCollapsed = false);
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 14,
+                    ),
+                    child: Column(
+                      children: [
+                        Icon(
+                          Icons.library_books_rounded,
+                          color: colorScheme.primary,
                         ),
-                        onTap: () => _selectDocument(doc),
-                      );
-                    },
+                        const SizedBox(height: 12),
+                        RotatedBox(
+                          quarterTurns: 3,
+                          child: Text(
+                            'Documents',
+                            style: theme.textTheme.titleSmall,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: _pickLocalDocument,
+                          tooltip: 'Add document',
+                          icon: const Icon(Icons.upload_file_rounded),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            setState(() => _isDocumentsPaneCollapsed = false);
+                          },
+                          tooltip: 'Expand documents',
+                          icon: const Icon(Icons.chevron_right_rounded),
+                        ),
+                      ],
+                    ),
                   ),
-          ),
-        ],
+                )
+              : Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 14, 12, 12),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.library_books_rounded,
+                            color: colorScheme.primary,
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Documents',
+                                  style: theme.textTheme.titleMedium,
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  'Drop PDF, EPUB, DOCX, HTML, RTF, ODT, DOC, TXT, or MD',
+                                  style: theme.textTheme.bodySmall,
+                                ),
+                              ],
+                            ),
+                          ),
+                          FilledButton.tonalIcon(
+                            onPressed: _pickLocalDocument,
+                            icon: const Icon(Icons.upload_file_rounded),
+                            label: const Text('Add'),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            onPressed: () {
+                              setState(() => _isDocumentsPaneCollapsed = true);
+                            },
+                            tooltip: 'Collapse documents',
+                            icon: const Icon(Icons.chevron_left_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 10,
+                      ),
+                      color: _isDocumentDropActive
+                          ? colorScheme.primaryContainer.withValues(alpha: 0.5)
+                          : colorScheme.surfaceContainerLowest,
+                      child: Text(
+                        _isDocumentDropActive
+                            ? 'Release to drop documents into this list'
+                            : 'Drop files here or click Add',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: _isDocumentDropActive
+                              ? colorScheme.onPrimaryContainer
+                              : colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    Expanded(
+                      child: _isLoadingDocuments
+                          ? const Center(child: CircularProgressIndicator())
+                          : _documents.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.move_to_inbox_outlined,
+                                      size: 42,
+                                      color: colorScheme.primary,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    Text(
+                                      'Drop a document here',
+                                      style: theme.textTheme.titleSmall,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'You can also click Add to import a local file.',
+                                      style: theme.textTheme.bodySmall,
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              itemCount: _documents.length,
+                              itemBuilder: (context, index) {
+                                final doc = _documents[index];
+                                final name =
+                                    doc['name'] as String? ?? 'document';
+                                final selected =
+                                    selectedKey != null &&
+                                    selectedKey == _documentKey(doc);
+                                final type = _documentTypeLabel(doc);
+                                return ListTile(
+                                  selected: selected,
+                                  leading: Icon(_documentTypeIcon(type)),
+                                  title: Text(
+                                    name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  subtitle: Text(type),
+                                  onTap: () => _selectDocument(doc),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+        ),
       ),
     );
   }
@@ -1071,148 +1402,199 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Widget _buildAudiobookLibrary() {
     return Card(
       clipBehavior: Clip.antiAlias,
+      margin: EdgeInsets.zero,
       child: Column(
         children: [
-          ListTile(
-            title: const Text('Generated Audiobooks'),
-            trailing: IconButton(
-              onPressed: _loadAudiobooks,
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Refresh',
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.library_music_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Generated Audiobooks',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _isAudiobooksPaneCollapsed
+                            ? 'Expand this pane to see queued and completed runs.'
+                            : 'Drag the divider above to move this pane.',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: _loadAudiobooks,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh',
+                ),
+                IconButton(
+                  onPressed: () {
+                    setState(
+                      () => _isAudiobooksPaneCollapsed =
+                          !_isAudiobooksPaneCollapsed,
+                    );
+                  },
+                  tooltip: _isAudiobooksPaneCollapsed
+                      ? 'Expand audiobooks'
+                      : 'Collapse audiobooks',
+                  icon: Icon(
+                    _isAudiobooksPaneCollapsed
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                  ),
+                ),
+              ],
             ),
           ),
-          const Divider(height: 1),
-          Expanded(
-            child: _isLoadingAudiobooks
-                ? const Center(child: CircularProgressIndicator())
-                : _audiobooks.isEmpty
-                ? const Center(child: Text('No audiobooks yet'))
-                : ListView.builder(
-                    itemCount: _audiobooks.length,
-                    itemBuilder: (context, index) {
-                      final book = _audiobooks[index];
-                      final jobId = book['job_id'] as String? ?? '';
-                      final status = (book['status'] as String? ?? 'completed')
-                          .toLowerCase();
-                      final isPending = book['is_pending'] == true;
-                      final filename =
-                          book['filename'] as String? ?? 'audiobook';
-                      final filePath =
-                          (book['file_path'] as String?)?.trim() ?? '';
-                      final queuePosition =
-                          (book['queue_position'] as num?)?.toInt() ?? 0;
-                      final percent = (book['percent'] as num?)?.toInt() ?? 0;
-                      final currentChunk =
-                          (book['current_chunk'] as num?)?.toInt() ?? 0;
-                      final totalChunks =
-                          (book['total_chunks'] as num?)?.toInt() ?? 0;
-                      final etaSeconds = (book['eta_seconds'] as num?)
-                          ?.toDouble();
-                      final hasAudio =
-                          ((book['audio_url'] as String?)?.isNotEmpty ??
-                              false) &&
-                          !isPending;
-                      final isPlaying = _playingAudiobookId == jobId;
-                      // Get engine label for display
-                      final engine = book['engine'] as String? ?? '';
-                      final engineLabel =
-                          book['engine_label'] as String? ??
-                          (engine == 'kokoro'
-                              ? 'Kokoro'
-                              : engine == 'qwen3'
-                              ? 'Qwen Clone'
-                              : '');
-                      final voice = book['voice'] as String? ?? '';
-                      return ListTile(
-                        leading: isPending
-                            ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2.4,
+          if (!_isAudiobooksPaneCollapsed) ...[
+            const Divider(height: 1),
+            Expanded(
+              child: _isLoadingAudiobooks
+                  ? const Center(child: CircularProgressIndicator())
+                  : _audiobooks.isEmpty
+                  ? const Center(child: Text('No audiobooks yet'))
+                  : ListView.builder(
+                      itemCount: _audiobooks.length,
+                      itemBuilder: (context, index) {
+                        final book = _audiobooks[index];
+                        final jobId = book['job_id'] as String? ?? '';
+                        final status =
+                            (book['status'] as String? ?? 'completed')
+                                .toLowerCase();
+                        final isPending = book['is_pending'] == true;
+                        final filename =
+                            book['filename'] as String? ?? 'audiobook';
+                        final filePath =
+                            (book['file_path'] as String?)?.trim() ?? '';
+                        final queuePosition =
+                            (book['queue_position'] as num?)?.toInt() ?? 0;
+                        final percent = (book['percent'] as num?)?.toInt() ?? 0;
+                        final currentChunk =
+                            (book['current_chunk'] as num?)?.toInt() ?? 0;
+                        final totalChunks =
+                            (book['total_chunks'] as num?)?.toInt() ?? 0;
+                        final etaSeconds = (book['eta_seconds'] as num?)
+                            ?.toDouble();
+                        final hasAudio =
+                            ((book['audio_url'] as String?)?.isNotEmpty ??
+                                false) &&
+                            !isPending;
+                        final isPlaying = _playingAudiobookId == jobId;
+                        // Get engine label for display
+                        final engine = book['engine'] as String? ?? '';
+                        final engineLabel =
+                            book['engine_label'] as String? ??
+                            (engine == 'kokoro'
+                                ? 'Kokoro'
+                                : engine == 'qwen3'
+                                ? 'Qwen Clone'
+                                : '');
+                        final voice = book['voice'] as String? ?? '';
+                        return ListTile(
+                          leading: isPending
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.4,
+                                  ),
+                                )
+                              : Icon(
+                                  isPlaying
+                                      ? Icons.graphic_eq_rounded
+                                      : Icons.audiotrack,
                                 ),
-                              )
-                            : Icon(
-                                isPlaying
-                                    ? Icons.graphic_eq_rounded
-                                    : Icons.audiotrack,
-                              ),
-                        title: Text(filename, overflow: TextOverflow.ellipsis),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              isPending
-                                  ? '${status.toUpperCase()}${engineLabel.isNotEmpty ? ' • $engineLabel' : ''}${voice.isNotEmpty ? ' ($voice)' : ''}${queuePosition > 0 ? ' • Queue #$queuePosition' : ''}${percent > 0 ? ' • $percent%' : ''}${totalChunks > 0 ? ' • Chunk $currentChunk/$totalChunks' : ''}${etaSeconds != null ? ' • ETA ${etaSeconds.round()}s' : ''}'
-                                  : '${book['format'] ?? 'audio'} • ${(book['size_mb'] as num?)?.toStringAsFixed(1) ?? '0.0'} MB${engineLabel.isNotEmpty ? ' • $engineLabel' : ''}${voice.isNotEmpty ? ' ($voice)' : ''}',
-                            ),
-                            if (!isPending && filePath.isNotEmpty)
+                          title: Text(
+                            filename,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
                               Text(
-                                filePath,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall,
+                                isPending
+                                    ? '${status.toUpperCase()}${engineLabel.isNotEmpty ? ' • $engineLabel' : ''}${voice.isNotEmpty ? ' ($voice)' : ''}${queuePosition > 0 ? ' • Queue #$queuePosition' : ''}${percent > 0 ? ' • $percent%' : ''}${totalChunks > 0 ? ' • Chunk $currentChunk/$totalChunks' : ''}${etaSeconds != null ? ' • ETA ${etaSeconds.round()}s' : ''}'
+                                    : '${book['format'] ?? 'audio'} • ${(book['size_mb'] as num?)?.toStringAsFixed(1) ?? '0.0'} MB${engineLabel.isNotEmpty ? ' • $engineLabel' : ''}${voice.isNotEmpty ? ' ($voice)' : ''}',
                               ),
-                          ],
-                        ),
-                        trailing: Wrap(
-                          spacing: 4,
-                          children: [
-                            IconButton(
-                              onPressed: hasAudio && filePath.isNotEmpty
-                                  ? () => _openAudiobookExternally(book)
-                                  : null,
-                              icon: const Icon(Icons.open_in_new_rounded),
-                              tooltip: 'Open externally',
-                            ),
-                            IconButton(
-                              onPressed: hasAudio && filePath.isNotEmpty
-                                  ? () => _revealAudiobookInFolder(book)
-                                  : null,
-                              icon: const Icon(Icons.folder_open_rounded),
-                              tooltip: 'Show in folder',
-                            ),
-                            IconButton(
-                              onPressed:
-                                  hasAudio && (!isPlaying || _isPlaybackPaused)
-                                  ? () => _playAudiobook(book)
-                                  : null,
-                              icon: const Icon(Icons.play_arrow),
-                              tooltip: 'Play',
-                            ),
-                            IconButton(
-                              onPressed:
-                                  hasAudio && isPlaying && !_isPlaybackPaused
-                                  ? _pausePlayback
-                                  : null,
-                              icon: const Icon(Icons.pause),
-                              tooltip: 'Pause',
-                            ),
-                            IconButton(
-                              onPressed: hasAudio && isPlaying
-                                  ? _stopPlayback
-                                  : null,
-                              icon: const Icon(Icons.stop),
-                              tooltip: 'Stop',
-                            ),
-                            IconButton(
-                              onPressed: hasAudio
-                                  ? () => _downloadAudiobook(book)
-                                  : null,
-                              icon: const Icon(Icons.download_rounded),
-                              tooltip: 'Download',
-                            ),
-                            IconButton(
-                              onPressed: () => _deleteAudiobook(jobId),
-                              icon: const Icon(Icons.delete_outline),
-                              tooltip: 'Delete',
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
-          ),
+                              if (!isPending && filePath.isNotEmpty)
+                                Text(
+                                  filePath,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                            ],
+                          ),
+                          trailing: Wrap(
+                            spacing: 4,
+                            children: [
+                              IconButton(
+                                onPressed: hasAudio && filePath.isNotEmpty
+                                    ? () => _openAudiobookExternally(book)
+                                    : null,
+                                icon: const Icon(Icons.open_in_new_rounded),
+                                tooltip: 'Open externally',
+                              ),
+                              IconButton(
+                                onPressed: hasAudio && filePath.isNotEmpty
+                                    ? () => _revealAudiobookInFolder(book)
+                                    : null,
+                                icon: const Icon(Icons.folder_open_rounded),
+                                tooltip: 'Show in folder',
+                              ),
+                              IconButton(
+                                onPressed:
+                                    hasAudio &&
+                                        (!isPlaying || _isPlaybackPaused)
+                                    ? () => _playAudiobook(book)
+                                    : null,
+                                icon: const Icon(Icons.play_arrow),
+                                tooltip: 'Play',
+                              ),
+                              IconButton(
+                                onPressed:
+                                    hasAudio && isPlaying && !_isPlaybackPaused
+                                    ? _pausePlayback
+                                    : null,
+                                icon: const Icon(Icons.pause),
+                                tooltip: 'Pause',
+                              ),
+                              IconButton(
+                                onPressed: hasAudio && isPlaying
+                                    ? _stopPlayback
+                                    : null,
+                                icon: const Icon(Icons.stop),
+                                tooltip: 'Stop',
+                              ),
+                              IconButton(
+                                onPressed: hasAudio
+                                    ? () => _downloadAudiobook(book)
+                                    : null,
+                                icon: const Icon(Icons.download_rounded),
+                                tooltip: 'Download',
+                              ),
+                              IconButton(
+                                onPressed: () => _deleteAudiobook(jobId),
+                                icon: const Icon(Icons.delete_outline),
+                                tooltip: 'Delete',
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
         ],
       ),
     );
@@ -1222,37 +1604,86 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(width: 280, child: _buildDocumentList()),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 3,
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(flex: 2, child: _buildSettingsPane()),
-                            const SizedBox(width: 12),
-                            Expanded(flex: 3, child: _buildPreviewPane()),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Expanded(flex: 2, child: _buildAudiobookLibrary()),
-                    ],
-                  ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final maxDocumentsPaneWidth = math.max(
+            _minDocumentsPaneWidth,
+            constraints.maxWidth - 520,
+          );
+          final documentsPaneWidth = _isDocumentsPaneCollapsed
+              ? _collapsedPaneWidth
+              : _clampDocumentsPaneWidth(
+                  _documentsPaneWidth,
+                  maxDocumentsPaneWidth,
+                );
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: documentsPaneWidth, child: _buildDocumentList()),
+              if (!_isDocumentsPaneCollapsed) ...[
+                _buildVerticalResizeHandle(
+                  onDragUpdate: (delta) {
+                    setState(() {
+                      _documentsPaneWidth = _clampDocumentsPaneWidth(
+                        _documentsPaneWidth + delta,
+                        maxDocumentsPaneWidth,
+                      );
+                    });
+                  },
                 ),
-              ],
-            ),
-          ),
-        ],
+                const SizedBox(width: 8),
+              ] else
+                const SizedBox(width: 12),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, rightConstraints) {
+                    final audiobooksPaneHeight = _isAudiobooksPaneCollapsed
+                        ? _collapsedSectionHeight
+                        : _clampAudiobooksPaneHeight(
+                            _audiobooksPaneHeight,
+                            rightConstraints.maxHeight,
+                          );
+
+                    return Column(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(flex: 2, child: _buildSettingsPane()),
+                              const SizedBox(width: 12),
+                              Expanded(flex: 3, child: _buildPreviewPane()),
+                            ],
+                          ),
+                        ),
+                        if (!_isAudiobooksPaneCollapsed) ...[
+                          _buildHorizontalResizeHandle(
+                            onDragUpdate: (delta) {
+                              setState(() {
+                                _audiobooksPaneHeight =
+                                    _clampAudiobooksPaneHeight(
+                                      _audiobooksPaneHeight - delta,
+                                      rightConstraints.maxHeight,
+                                    );
+                              });
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                        ] else
+                          const SizedBox(height: 12),
+                        SizedBox(
+                          height: audiobooksPaneHeight,
+                          child: _buildAudiobookLibrary(),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }

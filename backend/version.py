@@ -1,8 +1,8 @@
 """MimikaStudio version information."""
 
-VERSION = "2026.03.9"
-BUILD_NUMBER = 15
-VERSION_NAME = "Fix Long-Form Audiobook Startup Failures"
+VERSION = "2026.03.10"
+BUILD_NUMBER = 16
+VERSION_NAME = "Add Drag-and-Drop Audiobooks and Resizable Voice Panels"
 
 def get_version_string() -> str:
     """Return formatted version string."""

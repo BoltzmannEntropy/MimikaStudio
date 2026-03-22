@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -32,6 +33,9 @@ class VoicePromptManagementScreen extends StatefulWidget {
 
 class _VoicePromptManagementScreenState
     extends State<VoicePromptManagementScreen> {
+  static const double _collapsedUploadPaneHeight = 68;
+  static const double _minUploadPaneHeight = 120;
+  static const double _minVoiceLibraryTableHeight = 220;
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final AudioPlayer _youtubePreviewPlayer = AudioPlayer();
@@ -69,6 +73,8 @@ class _VoicePromptManagementScreenState
   double? _youtubePreviewDurationSec;
   bool _isYoutubePreviewPaused = false;
   String? _youtubeImportError;
+  bool _isUploadPaneCollapsed = false;
+  double _uploadPaneHeight = 146;
 
   @override
   void initState() {
@@ -702,6 +708,40 @@ class _VoicePromptManagementScreenState
     _loadVoices();
   }
 
+  double _clampUploadPaneHeight(double height, double availableHeight) {
+    final maxHeight = math.max(
+      _minUploadPaneHeight,
+      availableHeight - _minVoiceLibraryTableHeight,
+    );
+    return height.clamp(_minUploadPaneHeight, maxHeight).toDouble();
+  }
+
+  Widget _buildHorizontalResizeHandle({
+    required ValueChanged<double> onDragUpdate,
+  }) {
+    final dividerColor = Theme.of(context).dividerColor;
+    return Tooltip(
+      message: 'Drag to resize',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeUpDown,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onVerticalDragUpdate: (details) => onDragUpdate(details.delta.dy),
+          child: SizedBox(
+            height: 12,
+            child: Center(
+              child: Icon(
+                Icons.drag_indicator_rounded,
+                size: 18,
+                color: dividerColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final genders = <String>{
@@ -768,88 +808,290 @@ class _VoicePromptManagementScreenState
     required List<String> genders,
     required List<String> languages,
   }) {
-    return Column(
-      children: [
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            border: Border(
-              bottom: BorderSide(color: Theme.of(context).dividerColor),
-            ),
-          ),
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            crossAxisAlignment: WrapCrossAlignment.center,
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final uploadPaneHeight = _isUploadPaneCollapsed
+              ? _collapsedUploadPaneHeight
+              : _clampUploadPaneHeight(
+                  _uploadPaneHeight,
+                  constraints.maxHeight,
+                );
+          final theme = Theme.of(context);
+          final colorScheme = theme.colorScheme;
+
+          return Column(
             children: [
               SizedBox(
-                width: 260,
-                child: TextField(
-                  controller: _searchController,
-                  onSubmitted: (_) => _loadVoices(),
-                  decoration: InputDecoration(
-                    hintText: 'Search by name',
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      icon: const Icon(Icons.refresh, size: 18),
-                      onPressed: _loadVoices,
-                    ),
+                height: uploadPaneHeight,
+                child: Card(
+                  clipBehavior: Clip.antiAlias,
+                  margin: EdgeInsets.zero,
+                  child: Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+                        child: Row(
+                          children: [
+                            Icon(
+                              Icons.upload_file_rounded,
+                              color: colorScheme.primary,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Upload Voice',
+                                    style: theme.textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _isUploadPaneCollapsed
+                                        ? 'Expand this pane to add reusable voice prompts.'
+                                        : 'Drag the divider below to move this pane.',
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            FilledButton.icon(
+                              onPressed: _isUploading
+                                  ? null
+                                  : _uploadVoicePrompt,
+                              icon: _isUploading
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.upload_rounded),
+                              label: Text(
+                                _isUploading ? 'Uploading...' : 'Upload Voice',
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            IconButton(
+                              onPressed: () {
+                                setState(
+                                  () => _isUploadPaneCollapsed =
+                                      !_isUploadPaneCollapsed,
+                                );
+                              },
+                              tooltip: _isUploadPaneCollapsed
+                                  ? 'Expand upload voice'
+                                  : 'Collapse upload voice',
+                              icon: Icon(
+                                _isUploadPaneCollapsed
+                                    ? Icons.expand_less_rounded
+                                    : Icons.expand_more_rounded,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (!_isUploadPaneCollapsed) ...[
+                        const Divider(height: 1),
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(18),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerLow,
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: theme.dividerColor.withValues(
+                                    alpha: 0.55,
+                                  ),
+                                ),
+                              ),
+                              child: LayoutBuilder(
+                                builder: (context, uploadConstraints) {
+                                  final isCompact =
+                                      uploadConstraints.maxWidth < 760;
+                                  final textBlock = Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        'Bring a local reference clip into the shared voice library.',
+                                        style: theme.textTheme.titleSmall,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Supports WAV, MP3, M4A, FLAC, OGG, AAC, OPUS, AIFF, CAF, WEBM, and MP4.',
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'Once uploaded, the same prompt is available to Qwen3 Clone and Chatterbox.',
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  );
+
+                                  if (isCompact) {
+                                    return Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Container(
+                                          width: 52,
+                                          height: 52,
+                                          decoration: BoxDecoration(
+                                            color: colorScheme.primaryContainer,
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: Icon(
+                                            Icons.library_music_rounded,
+                                            color:
+                                                colorScheme.onPrimaryContainer,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 14),
+                                        textBlock,
+                                      ],
+                                    );
+                                  }
+
+                                  return Row(
+                                    children: [
+                                      Container(
+                                        width: 56,
+                                        height: 56,
+                                        decoration: BoxDecoration(
+                                          color: colorScheme.primaryContainer,
+                                          borderRadius: BorderRadius.circular(
+                                            16,
+                                          ),
+                                        ),
+                                        child: Icon(
+                                          Icons.library_music_rounded,
+                                          color: colorScheme.onPrimaryContainer,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(child: textBlock),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),
-              _buildFilterDropdown(
-                label: 'Gender',
-                value: _genderFilter,
-                values: genders,
-                onChanged: (value) {
-                  setState(() => _genderFilter = value ?? '');
-                  _loadVoices();
-                },
-              ),
-              _buildFilterDropdown(
-                label: 'Language',
-                value: _languageFilter,
-                values: languages,
-                onChanged: (value) {
-                  setState(() => _languageFilter = value ?? '');
-                  _loadVoices();
-                },
-              ),
-              _buildFilterDropdown(
-                label: 'Source',
-                value: _sourceFilter,
-                values: const ['local', 'external'],
-                onChanged: (value) {
-                  setState(() => _sourceFilter = value ?? '');
-                  _loadVoices();
-                },
-              ),
-              FilledButton.icon(
-                onPressed: _isUploading ? null : _uploadVoicePrompt,
-                icon: _isUploading
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.upload_rounded),
-                label: Text(_isUploading ? 'Uploading...' : 'Upload Voice'),
-              ),
-              Text(
-                'Supports WAV, MP3, M4A, FLAC, OGG, AAC, and similar formats.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+              if (!_isUploadPaneCollapsed) ...[
+                _buildHorizontalResizeHandle(
+                  onDragUpdate: (delta) {
+                    setState(() {
+                      _uploadPaneHeight = _clampUploadPaneHeight(
+                        _uploadPaneHeight - delta,
+                        constraints.maxHeight,
+                      );
+                    });
+                  },
+                ),
+                const SizedBox(height: 8),
+              ] else
+                const SizedBox(height: 12),
+              Expanded(
+                child: Card(
+                  clipBehavior: Clip.antiAlias,
+                  margin: EdgeInsets.zero,
+                  child: Column(
+                    children: [
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceContainerLow,
+                          border: Border(
+                            bottom: BorderSide(color: theme.dividerColor),
+                          ),
+                        ),
+                        child: Wrap(
+                          spacing: 10,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 260,
+                              child: TextField(
+                                controller: _searchController,
+                                onSubmitted: (_) => _loadVoices(),
+                                decoration: InputDecoration(
+                                  hintText: 'Search by name',
+                                  prefixIcon: const Icon(
+                                    Icons.search,
+                                    size: 18,
+                                  ),
+                                  isDense: true,
+                                  suffixIcon: IconButton(
+                                    icon: const Icon(Icons.refresh, size: 18),
+                                    onPressed: _loadVoices,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            _buildFilterDropdown(
+                              label: 'Gender',
+                              value: _genderFilter,
+                              values: genders,
+                              onChanged: (value) {
+                                setState(() => _genderFilter = value ?? '');
+                                _loadVoices();
+                              },
+                            ),
+                            _buildFilterDropdown(
+                              label: 'Language',
+                              value: _languageFilter,
+                              values: languages,
+                              onChanged: (value) {
+                                setState(() => _languageFilter = value ?? '');
+                                _loadVoices();
+                              },
+                            ),
+                            _buildFilterDropdown(
+                              label: 'Source',
+                              value: _sourceFilter,
+                              values: const ['local', 'external'],
+                              onChanged: (value) {
+                                setState(() => _sourceFilter = value ?? '');
+                                _loadVoices();
+                              },
+                            ),
+                            Text(
+                              'Search, filter, audition, and edit the shared library.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Expanded(child: _buildVoiceLibraryTable()),
+                    ],
+                  ),
                 ),
               ),
             ],
-          ),
-        ),
-        Expanded(child: _buildVoiceLibraryTable()),
-      ],
+          );
+        },
+      ),
     );
   }
 

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>v2026.03.6</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
+  <code>v2026.03.10</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i> + Agentic Voice Cloning Server</h1>
   <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and an agentic voice cloning server with state-of-the-art job queue orchestration.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
@@ -27,6 +27,10 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 [we currently provide macOS binaries only.](https://boltzmannentropy.github.io/mimikastudio.github.io/)
 
 > **Note:** Windows support is planned for a future release.
+
+## Latest Release
+
+**v2026.03.10** adds drag-and-drop document import to the Audiobooks workflow, plus collapsible and draggable split panes for Documents, Generated Audiobooks, and Upload Voice management. The latest DMG is published on the GitHub releases page and linked from the website download section.
 
 ## Stars
 
@@ -168,7 +172,7 @@ Kokoro short examples are bundled under `backend/data/samples/kokoro/`. Long-for
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of **February 19, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.
+As of **March 22, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag `MimikaStudio.app` to `/Applications`.
