@@ -164,6 +164,8 @@ rsync -a \
     --exclude '*.pyc' \
     --exclude '*.pyo' \
     --exclude '.DS_Store' \
+    --exclude 'data/pregenerated/_tmp*/' \
+    --exclude 'data/pregenerated/tmp*/' \
     --exclude 'tests/' \
     --exclude 'venv/' \
     --exclude 'venv_broken*/' \
