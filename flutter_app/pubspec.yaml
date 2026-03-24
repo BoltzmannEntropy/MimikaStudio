@@ -1,7 +1,7 @@
 name: mimika_studio
 description: "MimikaStudio - Local-first Voice Cloning with Qwen3-TTS"
 publish_to: 'none'
-version: 2026.03.10+16
+version: 2026.03.11+17
 
 environment:
   sdk: ^3.10.7

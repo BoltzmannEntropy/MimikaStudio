@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>v2026.03.10</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
+  <code>v2026.03.11</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i> + Agentic Voice Cloning Server</h1>
   <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and an agentic voice cloning server with state-of-the-art job queue orchestration.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
@@ -30,7 +30,7 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 
 ## Latest Release
 
-**v2026.03.10** adds drag-and-drop document import to the Audiobooks workflow, plus collapsible and draggable split panes for Documents, Generated Audiobooks, and Upload Voice management. The latest DMG is published on the GitHub releases page and linked from the website download section.
+**v2026.03.11** fixes the macOS DMG packaging regression that caused the bundled backend to exit on first launch, and rebuilds the release app bundle with a valid final signature after embedded backend resources are added. The latest DMG is published on the GitHub releases page and linked from the website download section.
 
 ## Stars
 
