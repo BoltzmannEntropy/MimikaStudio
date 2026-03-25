@@ -2,6 +2,8 @@ import sqlite3
 import os
 from pathlib import Path
 
+from pregenerated_catalog import get_bundled_pregenerated_samples
+
 
 def _resolve_data_dir() -> Path:
     configured = (os.getenv("MIMIKA_DATA_DIR") or "").strip()
@@ -24,6 +26,102 @@ DB_PATH = _resolve_data_dir() / "mimikastudio.db"
 def get_connection():
     # Use one connection per caller/thread; avoid cross-thread reuse hazards.
     return sqlite3.connect(DB_PATH, timeout=30)
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def reconcile_bundled_pregenerated_samples(
+    conn: sqlite3.Connection | None = None,
+    pregen_dir: Path | None = None,
+) -> dict[str, int]:
+    pregen_dir = pregen_dir or (Path(__file__).parent / "data" / "pregenerated")
+    own_connection = conn is None
+    if conn is None:
+        conn = get_connection()
+    cursor = conn.cursor()
+
+    desired_samples = [
+        sample
+        for sample in get_bundled_pregenerated_samples(pregen_dir)
+        if Path(sample["file_path"]).exists()
+    ]
+
+    inserted = 0
+    updated = 0
+    removed = 0
+
+    for sample in desired_samples:
+        cursor.execute(
+            """
+            SELECT id, description, text, file_path
+            FROM pregenerated_samples
+            WHERE engine = ? AND voice = ? AND title = ?
+            """,
+            (sample["engine"], sample["voice"], sample["title"]),
+        )
+        existing = cursor.fetchone()
+        if existing is None:
+            cursor.execute(
+                """
+                INSERT INTO pregenerated_samples (engine, voice, title, description, text, file_path)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    sample["engine"],
+                    sample["voice"],
+                    sample["title"],
+                    sample["description"],
+                    sample["text"],
+                    sample["file_path"],
+                ),
+            )
+            inserted += 1
+            continue
+
+        existing_id, existing_description, existing_text, existing_path = existing
+        if (
+            existing_description != sample["description"]
+            or existing_text != sample["text"]
+            or existing_path != sample["file_path"]
+        ):
+            cursor.execute(
+                """
+                UPDATE pregenerated_samples
+                SET description = ?, text = ?, file_path = ?
+                WHERE id = ?
+                """,
+                (
+                    sample["description"],
+                    sample["text"],
+                    sample["file_path"],
+                    existing_id,
+                ),
+            )
+            updated += 1
+
+    cursor.execute("SELECT id, file_path FROM pregenerated_samples")
+    for sample_id, raw_path in cursor.fetchall():
+        file_path = Path(raw_path)
+        if _is_within(file_path, pregen_dir) and not file_path.exists():
+            cursor.execute(
+                "DELETE FROM pregenerated_samples WHERE id = ?",
+                (sample_id,),
+            )
+            removed += 1
+
+    if inserted or updated or removed:
+        conn.commit()
+
+    if own_connection:
+        conn.close()
+
+    return {"inserted": inserted, "updated": updated, "removed": removed}
 
 def init_db():
     """Initialize database schema."""
@@ -114,10 +212,12 @@ def seed_db():
     """Seed database with initial data."""
     conn = get_connection()
     cursor = conn.cursor()
+    pregen_dir = Path(__file__).parent / "data" / "pregenerated"
 
     # Check if already seeded
     cursor.execute("SELECT COUNT(*) FROM kokoro_voices")
     if cursor.fetchone()[0] > 0:
+        reconcile_bundled_pregenerated_samples(conn, pregen_dir)
         conn.close()
         return
 
@@ -148,99 +248,7 @@ def seed_db():
         "INSERT INTO sample_texts (engine, text, language, category) VALUES (?, ?, ?, ?)",
         sample_texts
     )
-
-    # Seed pregenerated samples
-    pregen_dir = Path(__file__).parent / "data" / "pregenerated"
-    if pregen_dir.exists():
-        genesis_ch5_text = """Genesis chapter 5, verses 1 through 3: This is the book of the generations of Adam. In the day that God created man, in the likeness of God made he him; male and female created he them. And Adam lived an hundred and thirty years, and begat a son in his own likeness."""
-        pregenerated_samples = [
-            (
-                "kokoro",
-                "bf_lily",
-                "Nuclear Policy Analysis",
-                "Geopolitical analysis on Russia's nuclear posture - Lily voice",
-                """Russia's nuclear pivot is best understood as a response to geographic insecurity: compressed warning times, limited strategic depth, and constrained maritime access create acute pressure in crises. Treating nuclear signaling as a substitute for conventional resilience, however, introduces severe instability. Compressed decision cycles and ambiguous indications leave little room for interpretation, and the historical record of accidents and false alarms shows that such conditions are a poor foundation for deterrence. When the instrument of policy with the most irreversible consequences is moved downward into earlier stages of escalation, the central danger becomes misreading rather than intent.""",
-                str(pregen_dir / "kokoro-lily-nuclear-policy.wav")
-            ),
-            (
-                "qwen3",
-                "Yelena",
-                "Genesis 4 Preview (Yelena)",
-                "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
-                """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
-                str(pregen_dir / "qwen3-yelena-genesis4-demo.wav")
-            ),
-            (
-                "qwen3",
-                "Svetlana",
-                "Genesis 4 Preview (Svetlana)",
-                "Qwen3 voice preview using Genesis 4:6-7 for voice cloning reference",
-                """Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, Why art thou wroth? and why is thy countenance fallen? If thou doest well, shalt thou not be accepted? and if thou doest not well, sin lieth at the door.""",
-                str(pregen_dir / "qwen3-svetlana-genesis4-demo.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Genesis 5 Neutral",
-                "Natural delivery for Genesis chapter 5 baseline",
-                genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-neutral.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Expressive: Chuckle",
-                "Genesis chapter 5 with [chuckle] cue",
-                "[chuckle] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-chuckle.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Expressive: Sigh",
-                "Genesis chapter 5 with [sigh] cue",
-                "[sigh] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-sigh.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Expressive: Gasp",
-                "Genesis chapter 5 with [gasp] cue",
-                "[gasp] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-gasp.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Expressive: Laugh",
-                "Genesis chapter 5 with [laugh] cue",
-                "[laugh] " + genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-expressive-laugh.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Exaggeration: Subtle (0.25)",
-                "Genesis chapter 5 with subtle exaggeration",
-                genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-exaggeration-subtle.wav")
-            ),
-            (
-                "chatterbox",
-                "Yelena",
-                "Exaggeration: Dramatic (1.10)",
-                "Genesis chapter 5 with dramatic exaggeration",
-                genesis_ch5_text,
-                str(pregen_dir / "chatterbox-yelena-genesis5-exaggeration-dramatic.wav")
-            ),
-        ]
-        for sample in pregenerated_samples:
-            if Path(sample[5]).exists():
-                cursor.execute(
-                    "INSERT OR IGNORE INTO pregenerated_samples (engine, voice, title, description, text, file_path) VALUES (?, ?, ?, ?, ?, ?)",
-                    sample
-                )
+    reconcile_bundled_pregenerated_samples(conn, pregen_dir)
 
     # Seed Emma IPA samples with preloaded IPA transcriptions
     emma_ipa_sample_text = """For many, the experience of Vietnam had a radicalizing effect, leading them to conclude that US military intervention was not a well-intentioned mistake by policymakers, but part of a consistent effort to preserve American political, economic, and military domination globally, largely in service of corporate profits. From this perspective, embraced by the "New Left"—as opposed to the old-line socialist and communist groups marginalized by the early 1950s—official rhetoric about freedom, democracy, and progress was seen as mere lip service."""

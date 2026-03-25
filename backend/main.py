@@ -35,7 +35,12 @@ from urllib.parse import quote, urlparse, parse_qs, unquote
 import uuid
 import soundfile as sf
 
-from database import init_db, seed_db, get_connection
+from database import (
+    get_connection,
+    init_db,
+    reconcile_bundled_pregenerated_samples,
+    seed_db,
+)
 from version import VERSION, VERSION_NAME
 from tts.kokoro_engine import get_kokoro_engine, BRITISH_VOICES, DEFAULT_VOICE
 from tts.qwen3_engine import get_qwen3_engine, GenerationParams, QWEN_SPEAKERS, unload_all_engines
@@ -352,7 +357,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...", extra={"request_id": "startup"})
     init_db()
     seed_db()
-    _ensure_supertonic_pregenerated_rows()
+    _ensure_bundled_pregenerated_rows()
     env_output_override = _env_path("MIMIKA_OUTPUT_DIR")
     configured_output = str(env_output_override) if env_output_override else get_output_folder()
     _sync_output_folder_runtime(configured_output)
@@ -1025,102 +1030,17 @@ def _normalize_pdf_text_for_tts(text: str) -> str:
     return normalized.strip()
 
 
-def _ensure_supertonic_pregenerated_rows() -> None:
-    """Ensure Supertonic pregenerated sample rows exist in the database."""
-    pregen_dir = _bundled_data_dir / "pregenerated"
-    samples = [
-        {
-            "engine": "supertonic",
-            "voice": "F1",
-            "title": "Genesis 4 Preview (F1)",
-            "description": "Supertonic F1 English preview for instant playback",
-            "text": (
-                "Genesis chapter 4, verses 6 and 7: And the Lord said unto Cain, "
-                "Why art thou wroth? and why is thy countenance fallen? If thou doest well, "
-                "shalt thou not be accepted? and if thou doest not well, sin lieth at the door."
-            ),
-            "file_name": "supertonic-f1-genesis4-demo.wav",
-        },
-        {
-            "engine": "supertonic",
-            "voice": "M2",
-            "title": "Genesis 4 Preview (M2)",
-            "description": "Supertonic M2 English preview using Genesis 4:8-9",
-            "text": (
-                "Genesis chapter 4, verses 8 and 9: And Cain talked with Abel his brother: "
-                "and it came to pass, when they were in the field, that Cain rose up against Abel his brother, "
-                "and slew him. And the Lord said unto Cain, Where is Abel thy brother? "
-                "And he said, I know not: Am I my brother's keeper?"
-            ),
-            "file_name": "supertonic-m2-genesis4-demo.wav",
-        },
-    ]
-
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        DELETE FROM pregenerated_samples
-        WHERE engine = ?
-          AND (
-                title = ?
-                OR file_path LIKE ?
-          )
-        """,
-        ("supertonic", "Deterrence Brief (M2)", "%/supertonic-m2-geopolitics-demo.wav"),
-    )
-    removed = cursor.rowcount
-    inserted = 0
-    for sample in samples:
-        file_path = pregen_dir / sample["file_name"]
-        if not file_path.exists():
-            continue
-        cursor.execute(
-            "SELECT id FROM pregenerated_samples WHERE engine = ? AND file_path = ?",
-            (sample["engine"], str(file_path)),
-        )
-        existing = cursor.fetchone()
-        if existing is not None:
-            cursor.execute(
-                """
-                UPDATE pregenerated_samples
-                SET voice = ?, title = ?, description = ?, text = ?
-                WHERE id = ?
-                """,
-                (
-                    sample["voice"],
-                    sample["title"],
-                    sample["description"],
-                    sample["text"],
-                    existing[0],
-                ),
-            )
-            continue
-        cursor.execute(
-            """
-            INSERT INTO pregenerated_samples (engine, voice, title, description, text, file_path)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                sample["engine"],
-                sample["voice"],
-                sample["title"],
-                sample["description"],
-                sample["text"],
-                str(file_path),
-            ),
-        )
-        inserted += 1
-
-    if inserted > 0 or removed > 0:
-        conn.commit()
+def _ensure_bundled_pregenerated_rows() -> None:
+    """Ensure bundled pregenerated sample rows match the shipped asset layout."""
+    stats = reconcile_bundled_pregenerated_samples()
+    if any(stats.values()):
         logger.info(
-            "Reconciled Supertonic pregenerated rows (inserted=%s removed=%s)",
-            inserted,
-            removed,
+            "Reconciled bundled pregenerated rows (inserted=%s updated=%s removed=%s)",
+            stats["inserted"],
+            stats["updated"],
+            stats["removed"],
             extra={"request_id": "startup"},
         )
-    conn.close()
 
 
 # Qwen3 voice storage locations
@@ -5411,6 +5331,17 @@ async def get_sample_texts(engine: str):
 
 # ============== Pregenerated Samples Endpoints ==============
 
+def _pregenerated_relative_path(file_path: Path) -> Path:
+    try:
+        return file_path.resolve().relative_to(pregen_dir.resolve())
+    except ValueError:
+        return Path(file_path.name)
+
+
+def _pregenerated_sample_kind(relative_path: Path) -> str:
+    return "audiobook" if relative_path.parts[:1] == ("audiobooks",) else "preview"
+
+
 @app.get("/api/pregenerated")
 async def list_pregenerated_samples(engine: Optional[str] = None):
     """List pregenerated audio samples for instant playback."""
@@ -5419,12 +5350,21 @@ async def list_pregenerated_samples(engine: Optional[str] = None):
 
     if engine:
         cursor.execute(
-            "SELECT id, engine, voice, title, description, text, file_path FROM pregenerated_samples WHERE engine = ?",
-            (engine,)
+            """
+            SELECT id, engine, voice, title, description, text, file_path
+            FROM pregenerated_samples
+            WHERE engine = ?
+            ORDER BY title, voice
+            """,
+            (engine,),
         )
     else:
         cursor.execute(
-            "SELECT id, engine, voice, title, description, text, file_path FROM pregenerated_samples"
+            """
+            SELECT id, engine, voice, title, description, text, file_path
+            FROM pregenerated_samples
+            ORDER BY engine, title, voice
+            """
         )
 
     rows = cursor.fetchall()
@@ -5434,6 +5374,8 @@ async def list_pregenerated_samples(engine: Optional[str] = None):
     for row in rows:
         file_path = Path(row[6])
         if file_path.exists():
+            relative_path = _pregenerated_relative_path(file_path)
+            sample_kind = _pregenerated_sample_kind(relative_path)
             samples.append({
                 "id": row[0],
                 "engine": row[1],
@@ -5441,7 +5383,11 @@ async def list_pregenerated_samples(engine: Optional[str] = None):
                 "title": row[3],
                 "description": row[4],
                 "text": row[5],
-                "audio_url": f"/pregenerated/{file_path.name}"
+                "relative_path": relative_path.as_posix(),
+                "file_name": file_path.name,
+                "sample_kind": sample_kind,
+                "is_long_form": sample_kind == "audiobook",
+                "audio_url": f"/pregenerated/{quote(relative_path.as_posix(), safe='/')}",
             })
 
     return {"samples": samples}

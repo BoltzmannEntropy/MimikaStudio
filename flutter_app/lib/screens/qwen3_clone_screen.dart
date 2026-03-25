@@ -948,7 +948,23 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     return 'Qwen3-TTS-12Hz-$_modelSize-$suffix$quantSuffix';
   }
 
-  List<Map<String, dynamic>> _samplesForCurrentMode() {
+  bool _isAudiobookSample(Map<String, dynamic> sample) {
+    return sample['is_long_form'] == true ||
+        sample['sample_kind'] == 'audiobook';
+  }
+
+  int _compareSamples(Map<String, dynamic> a, Map<String, dynamic> b) {
+    final aVoice = (a['voice'] as String? ?? '').toLowerCase();
+    final bVoice = (b['voice'] as String? ?? '').toLowerCase();
+    final voiceCompare = aVoice.compareTo(bVoice);
+    if (voiceCompare != 0) return voiceCompare;
+
+    final aTitle = (a['title'] as String? ?? '').toLowerCase();
+    final bTitle = (b['title'] as String? ?? '').toLowerCase();
+    return aTitle.compareTo(bTitle);
+  }
+
+  List<Map<String, dynamic>> _previewSamplesForCurrentMode() {
     const presetVoices = {'Ryan'};
     const cloneVoices = {'Yelena', 'Svetlana'};
     const presetTitles = {'Genesis 4 Preview (Ryan)'};
@@ -960,7 +976,11 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     final allowedVoices = _qwen3Mode == 'custom' ? presetVoices : cloneVoices;
     final allowedTitles = _qwen3Mode == 'custom' ? presetTitles : cloneTitles;
 
-    final filtered = _pregeneratedSamples.where((sample) {
+    final previews = _pregeneratedSamples.where((sample) {
+      return !_isAudiobookSample(sample);
+    });
+
+    final filtered = previews.where((sample) {
       final voice = (sample['voice'] as String? ?? '').trim();
       final title = (sample['title'] as String? ?? '').trim();
       return allowedVoices.contains(voice) && allowedTitles.contains(title);
@@ -968,25 +988,28 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
 
     if (filtered.isEmpty) {
       filtered.addAll(
-        _pregeneratedSamples.where((sample) {
+        previews.where((sample) {
           final voice = (sample['voice'] as String? ?? '').trim();
           return allowedVoices.contains(voice);
         }),
       );
     }
 
-    filtered.sort((a, b) {
-      final aVoice = (a['voice'] as String? ?? '').toLowerCase();
-      final bVoice = (b['voice'] as String? ?? '').toLowerCase();
-      final voiceCompare = aVoice.compareTo(bVoice);
-      if (voiceCompare != 0) return voiceCompare;
-
-      final aTitle = (a['title'] as String? ?? '').toLowerCase();
-      final bTitle = (b['title'] as String? ?? '').toLowerCase();
-      return aTitle.compareTo(bTitle);
-    });
+    filtered.sort(_compareSamples);
 
     return filtered;
+  }
+
+  List<Map<String, dynamic>> _audiobooksForCurrentMode() {
+    if (_qwen3Mode != 'clone') return <Map<String, dynamic>>[];
+
+    final audiobooks = _pregeneratedSamples.where((sample) {
+      if (!_isAudiobookSample(sample)) return false;
+      final title = (sample['title'] as String? ?? '').trim();
+      return title.startsWith('Sherlock Long-Form Audiobook');
+    }).toList();
+    audiobooks.sort(_compareSamples);
+    return audiobooks;
   }
 
   Widget _buildInfoChip(IconData icon, String text) {
@@ -1005,7 +1028,8 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    final visibleSamples = _samplesForCurrentMode();
+    final visibleSamples = _previewSamplesForCurrentMode();
+    final audiobookSamples = _audiobooksForCurrentMode();
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1027,6 +1051,10 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
                   engineName: 'Qwen3-TTS',
                   themeColor: Colors.teal,
                 ),
+                if (audiobookSamples.isNotEmpty) ...[
+                  _buildAudiobookSamplesSection(audiobookSamples),
+                  const SizedBox(height: 12),
+                ],
                 if (visibleSamples.isNotEmpty) ...[
                   _buildPregeneratedSamplesSection(visibleSamples),
                   const SizedBox(height: 12),
@@ -1150,6 +1178,143 @@ class _Qwen3CloneScreenState extends State<Qwen3CloneScreen> {
       );
     }
     return _buildSidebar();
+  }
+
+  Widget _buildAudiobookSamplesSection(List<Map<String, dynamic>> samples) {
+    return Card(
+      color: Colors.teal.shade50,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.library_music,
+                  color: Colors.teal.shade700,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Featured Qwen Long-Form Audiobooks',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 2,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    'Most Important',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.amber.shade900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Full-length Sherlock Holmes voice-clone demos generated on-device with Qwen3-TTS.',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 10),
+            ...samples.map((sample) {
+              final voice = sample['voice'] as String? ?? 'Sample';
+              final title = sample['title'] as String? ?? voice;
+              final description = sample['description'] as String? ?? '';
+              final text = sample['text'] as String? ?? '';
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: InkWell(
+                  onTap: () => _playPregeneratedSample(sample),
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.75),
+                      border: Border.all(color: Colors.teal.shade100),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.teal.shade100,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            voice,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.teal.shade900,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (description.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 2),
+                                  child: Text(
+                                    description,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
+                                ),
+                              if (text.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Text(
+                                    text,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: Colors.grey.shade800,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.play_circle_fill, size: 24),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildPregeneratedSamplesSection(List<Map<String, dynamic>> samples) {

@@ -991,6 +991,23 @@ class TestSamples:
         data = resp.json()
         assert "samples" in data
 
+    def test_qwen3_pregenerated_exposes_long_form_nested_path(self, client):
+        data = client.get("/api/pregenerated?engine=qwen3").json()
+        sample = next(
+            (
+                row
+                for row in data["samples"]
+                if row.get("title") == "Sherlock Long-Form Audiobook (Yelena)"
+            ),
+            None,
+        )
+        assert sample is not None
+        assert sample["sample_kind"] == "audiobook"
+        assert sample["is_long_form"] is True
+        assert sample["audio_url"].endswith(
+            "/pregenerated/audiobooks/long-sherlock-yelena.mp3"
+        )
+
     def test_voice_samples_returns_200(self, client):
         resp = client.get("/api/voice-samples")
         assert resp.status_code == 200

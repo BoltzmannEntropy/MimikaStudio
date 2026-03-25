@@ -208,6 +208,7 @@ rm -rf "$BUNDLED_BACKEND/venv"
 mkdir -p "$BUNDLED_BACKEND/venv"
 rsync -a \
     --delete \
+    --inplace \
     --no-perms \
     --no-owner \
     --no-group \
