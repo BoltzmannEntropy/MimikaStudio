@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/light-mode-logo.png" alt="MimikaStudio Logo" width="400"/>
   <br><br>
-  <code>v2026.03.11</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
+  <code>v2026.04.1</code>&nbsp;&nbsp;macOS (Apple Silicon) · MLX Native
   <br><br>
   <h1>Clone any voice <i>in seconds</i> + Agentic Voice Cloning Server</h1>
   <p>Local-first voice cloning, text-to-speech, Read Aloud document reader, audiobook creator, and an agentic voice cloning server with state-of-the-art job queue orchestration.<br>Optimized for Apple Silicon with native Metal acceleration via MLX.</p>
@@ -32,7 +32,7 @@ The codebase is cross-platform, but we currently provide macOS binaries only.
 
 ## Latest Release
 
-**v2026.03.11** fixes the macOS DMG packaging regression that caused the bundled backend to exit on first launch, and rebuilds the release app bundle with a valid final signature after embedded backend resources are added. The latest DMG is published on the GitHub releases page and linked from the website download section.
+**v2026.04.1** adds in-app PDF page preview for audiobook source documents, disables the old 7-day expiration and Polar/LemonSqueezy purchase flow in the Pro UI, and removes pricing/buying paths from the website in favor of direct GitHub release downloads.
 
 ## Stars
 
@@ -243,7 +243,7 @@ Kokoro short examples are bundled under `backend/data/samples/kokoro/`. Long-for
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of **March 22, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.
+As of **April 1, 2026**, the MimikaStudio DMG is **not yet signed/notarized by Apple**.
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag `MimikaStudio.app` to `/Applications`.

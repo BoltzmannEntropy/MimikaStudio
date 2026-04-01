@@ -1,37 +1,37 @@
-# MimikaStudio v2026.03.11 Release Notes
+# MimikaStudio v2026.04.1 Release Notes
 
-**Release Date:** March 24, 2026  
+**Release Date:** April 1, 2026  
 **Platform:** macOS (Apple Silicon)
 
 ---
 
-## What's New In v2026.03.11
+## What's New In v2026.04.1
 
-- Fixed the packaged macOS app bundle so the bundled backend starts correctly on first launch from the release DMG.
-- Rebuilt the embedded backend/python packaging flow so the final `.app` is re-signed and verified after resources are injected.
-- Kept the existing unsigned-DMG guidance in place for Gatekeeper, while removing the broken sealed-bundle state that caused backend exit-on-start.
+- Added embedded PDF page preview inside the Audiobooks document pane, with page navigation and zoom controls alongside extracted text preview.
+- Disabled the old 7-day expiration messaging and removed active Polar.sh and LemonSqueezy checkout or portal flows from the in-app Pro screen.
+- Removed website pricing and buying paths so downloads now point directly to GitHub releases without purchase messaging.
 
 ---
 
 ## User Impact
 
-- New DMG installs should no longer fail with `Backend process exited before becoming healthy` on first launch.
-- The bundled backend now survives the initial startup path instead of exiting with code `1` because of an invalid packaged app seal.
-- Users still need the documented first-open Gatekeeper/quarantine workaround until the app is signed and notarized.
+- Users can inspect PDF pages directly before generating audiobooks instead of relying only on extracted text.
+- Users are no longer told that access expires after 7 days, and purchase links are clearly disabled in this build.
+- Website visitors now see direct-download messaging instead of pricing cards or checkout prompts.
 
 ---
 
 ## Technical Notes
 
-- Updated `scripts/build_dmg.sh` to strip copied extended attributes from the finished app bundle.
-- Added a final app-bundle `codesign --deep` pass after embedding backend resources.
-- Added strict post-build signature verification so broken release bundles fail during packaging instead of after shipping.
+- Extended `flutter_app/lib/screens/audiobook_screen.dart` to support dual PDF or text preview modes using Syncfusion's PDF viewer controller.
+- Simplified `flutter_app/lib/screens/pro_screen.dart` so it only reports current license state and accepts manual activation of existing keys.
+- Updated the marketing site download links and release references to point at `v2026.04.1`.
 
 ---
 
-## Previous Release: v2026.03.10
+## Previous Release: v2026.03.11
 
-- Added desktop drag-and-drop import to the Audiobooks workflow, plus resizable/collapsible panels for Documents, Generated Audiobooks, and Upload Voice management.
+- Fixed the macOS DMG packaging regression that caused the bundled backend to exit on first launch.
 
 ---
 
@@ -39,7 +39,7 @@
 
 ### Unsigned DMG (Apple Gatekeeper)
 
-As of March 24, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
+As of April 1, 2026, the MimikaStudio DMG is not yet signed/notarized by Apple.  
 macOS may block first launch until you explicitly allow it in security settings.
 
 1. Open the DMG and drag MimikaStudio.app to Applications.

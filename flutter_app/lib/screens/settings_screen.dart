@@ -661,7 +661,7 @@ class _SettingsScreenState extends State<SettingsScreen>
               leading: const Icon(Icons.workspace_premium_rounded),
               title: const Text('Pro & License'),
               subtitle: const Text(
-                'Manage the 7-day trial, Polar.sh and LemonSqueezy upgrades, and activation in Settings > Pro.',
+                'Review license status, note that trial expiration is disabled, and manually activate an existing key in Settings > Pro.',
               ),
               trailing: FilledButton.tonal(
                 onPressed: () => _openSubTab(2),

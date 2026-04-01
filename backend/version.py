@@ -1,8 +1,8 @@
 """MimikaStudio version information."""
 
-VERSION = "2026.03.11"
-BUILD_NUMBER = 17
-VERSION_NAME = "Fix First-Launch Backend Startup in DMG Releases"
+VERSION = "2026.04.1"
+BUILD_NUMBER = 18
+VERSION_NAME = "Disable Trial Expiration and Add PDF Preview"
 
 def get_version_string() -> str:
     """Return formatted version string."""

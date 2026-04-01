@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 
 import '../services/api_service.dart';
 import '../utils/local_file_actions.dart';
@@ -19,6 +20,8 @@ class AudiobookScreen extends StatefulWidget {
   State<AudiobookScreen> createState() => _AudiobookScreenState();
 }
 
+enum _DocumentPreviewMode { pdf, text }
+
 class _AudiobookScreenState extends State<AudiobookScreen> {
   static const double _collapsedPaneWidth = 72;
   static const double _collapsedSectionHeight = 68;
@@ -26,6 +29,8 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   static const double _maxDocumentsPaneWidth = 420;
   static const double _minAudiobooksPaneHeight = 190;
   static const double _minMainPaneHeight = 220;
+  static const double _minPdfZoom = 1.0;
+  static const double _maxPdfZoom = 4.0;
   static const List<String> _supportedExtensions = [
     'pdf',
     'txt',
@@ -49,6 +54,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
 
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
+  final PdfViewerController _pdfPreviewController = PdfViewerController();
 
   List<Map<String, dynamic>> _documents = [];
   List<Map<String, dynamic>> _audiobooks = [];
@@ -56,6 +62,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   Map<String, dynamic>? _selectedDocument;
   Uint8List? _selectedBytes;
   String _previewText = '';
+  _DocumentPreviewMode _previewMode = _DocumentPreviewMode.text;
   bool _isLoadingDocuments = false;
   bool _isExtractingPreview = false;
   bool _isLoadingAudiobooks = false;
@@ -82,6 +89,8 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   bool _isDocumentDropActive = false;
   double _documentsPaneWidth = 280;
   double _audiobooksPaneHeight = 250;
+  int _previewCurrentPage = 1;
+  int _previewTotalPages = 0;
 
   @override
   void initState() {
@@ -99,6 +108,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     }
     _pendingAudiobookTimers.clear();
     _audioPlayer.dispose();
+    _pdfPreviewController.dispose();
     super.dispose();
   }
 
@@ -435,11 +445,21 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   }
 
   Future<void> _selectDocument(Map<String, dynamic> doc) async {
+    final name = doc['name'] as String? ?? 'document.pdf';
+    final prefersPdfPreview = _isPdfDocument(doc);
+    final selectedKey = _documentKey(doc);
+
     setState(() {
       _selectedDocument = doc;
-      _selectedBytes = null;
+      _selectedBytes = doc['bytes'] as Uint8List?;
       _previewText = '';
+      _previewMode = prefersPdfPreview
+          ? _DocumentPreviewMode.pdf
+          : _DocumentPreviewMode.text;
+      _previewCurrentPage = 1;
+      _previewTotalPages = 0;
       _isExtractingPreview = true;
+      _pdfPreviewController.zoomLevel = _minPdfZoom;
     });
 
     try {
@@ -458,18 +478,34 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
         throw Exception('Could not load document bytes');
       }
 
-      final preview = await _api.extractDocumentText(
-        bytes,
-        filename: doc['name'] as String? ?? 'document.pdf',
-      );
-      if (!mounted) return;
+      doc['bytes'] = bytes;
+      final currentSelection = _selectedDocument;
+      if (mounted &&
+          currentSelection != null &&
+          _documentKey(currentSelection) == selectedKey) {
+        setState(() {
+          _selectedBytes = bytes;
+        });
+      }
+
+      final preview = await _api.extractDocumentText(bytes, filename: name);
+      final completedSelection = _selectedDocument;
+      if (!mounted ||
+          completedSelection == null ||
+          _documentKey(completedSelection) != selectedKey) {
+        return;
+      }
       setState(() {
-        _selectedBytes = bytes;
         _previewText = preview;
         _isExtractingPreview = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      final failedSelection = _selectedDocument;
+      if (!mounted ||
+          failedSelection == null ||
+          _documentKey(failedSelection) != selectedKey) {
+        return;
+      }
       setState(() => _isExtractingPreview = false);
       ScaffoldMessenger.of(
         context,
@@ -755,6 +791,28 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     final name = doc?['name'] as String? ?? '';
     final extension = p.extension(name).replaceFirst('.', '').trim();
     return extension.isEmpty ? 'FILE' : extension.toUpperCase();
+  }
+
+  bool _isPdfDocument(Map<String, dynamic>? doc) {
+    final name = doc?['name'] as String? ?? '';
+    return p.extension(name).toLowerCase() == '.pdf';
+  }
+
+  double _clampPdfZoom(double zoomLevel) {
+    return zoomLevel.clamp(_minPdfZoom, _maxPdfZoom).toDouble();
+  }
+
+  void _changePdfZoom(double delta) {
+    final nextZoom = _clampPdfZoom(_pdfPreviewController.zoomLevel + delta);
+    setState(() {
+      _pdfPreviewController.zoomLevel = nextZoom;
+    });
+  }
+
+  void _resetPdfZoom() {
+    setState(() {
+      _pdfPreviewController.zoomLevel = _minPdfZoom;
+    });
   }
 
   IconData _documentTypeIcon(String type) {
@@ -1314,9 +1372,10 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   }
 
   Widget _buildPreviewPane() {
-    final hasPreview = _previewText.trim().isNotEmpty;
     final selected = _selectedDocument;
     final type = _documentTypeLabel(selected);
+    final hasPreview = _previewText.trim().isNotEmpty;
+    final isPdf = _isPdfDocument(selected);
     return Card(
       clipBehavior: Clip.antiAlias,
       child: Padding(
@@ -1377,24 +1436,198 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                 ],
               ),
               const SizedBox(height: 10),
+              if (isPdf) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SegmentedButton<_DocumentPreviewMode>(
+                    segments: const [
+                      ButtonSegment<_DocumentPreviewMode>(
+                        value: _DocumentPreviewMode.pdf,
+                        icon: Icon(Icons.picture_as_pdf_rounded),
+                        label: Text('PDF'),
+                      ),
+                      ButtonSegment<_DocumentPreviewMode>(
+                        value: _DocumentPreviewMode.text,
+                        icon: Icon(Icons.notes_rounded),
+                        label: Text('Text'),
+                      ),
+                    ],
+                    selected: {_previewMode},
+                    showSelectedIcon: false,
+                    onSelectionChanged: (selection) {
+                      setState(() => _previewMode = selection.first);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+              ],
             ],
-            if (_isExtractingPreview)
-              const Expanded(child: Center(child: CircularProgressIndicator()))
-            else if (!hasPreview)
-              const Expanded(
-                child: Center(
-                  child: Text('Select a document to preview extracted text'),
-                ),
-              )
-            else
-              Expanded(
-                child: SelectableText(
-                  _previewText,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
+            Expanded(
+              child: _buildPreviewContent(
+                selected: selected,
+                isPdf: isPdf,
+                hasPreview: hasPreview,
               ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildPreviewContent({
+    required Map<String, dynamic>? selected,
+    required bool isPdf,
+    required bool hasPreview,
+  }) {
+    if (selected == null) {
+      return const Center(child: Text('Select a document to preview'));
+    }
+
+    if (isPdf && _previewMode == _DocumentPreviewMode.pdf) {
+      return _buildPdfPreview();
+    }
+
+    if (_isExtractingPreview) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (!hasPreview) {
+      return Center(
+        child: Text(
+          isPdf
+              ? 'PDF loaded, but extracted text is unavailable'
+              : 'Select a document to preview extracted text',
+        ),
+      );
+    }
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: SingleChildScrollView(
+          child: SelectableText(
+            _previewText,
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPdfPreview() {
+    final bytes = _selectedBytes;
+    if (bytes == null || bytes.isEmpty) {
+      if (_isExtractingPreview) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      return const Center(child: Text('Failed to load PDF preview'));
+    }
+
+    final canGoBack = _previewCurrentPage > 1;
+    final canGoForward =
+        _previewTotalPages > 0 && _previewCurrentPage < _previewTotalPages;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).dividerColor),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surfaceContainerHighest,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(12),
+              ),
+            ),
+            child: Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.navigate_before_rounded),
+                  tooltip: 'Previous page',
+                  onPressed: canGoBack
+                      ? () => _pdfPreviewController.previousPage()
+                      : null,
+                ),
+                Text(
+                  _previewTotalPages > 0
+                      ? 'Page $_previewCurrentPage / $_previewTotalPages'
+                      : 'Loading pages...',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.navigate_next_rounded),
+                  tooltip: 'Next page',
+                  onPressed: canGoForward
+                      ? () => _pdfPreviewController.nextPage()
+                      : null,
+                ),
+                SizedBox(
+                  height: 22,
+                  child: VerticalDivider(color: Theme.of(context).dividerColor),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.zoom_out_rounded),
+                  tooltip: 'Zoom out',
+                  onPressed: () => _changePdfZoom(-0.25),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.fit_screen_rounded),
+                  tooltip: 'Reset zoom',
+                  onPressed: _resetPdfZoom,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.zoom_in_rounded),
+                  tooltip: 'Zoom in',
+                  onPressed: () => _changePdfZoom(0.25),
+                ),
+                const Spacer(),
+                if (_isExtractingPreview)
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Extracting text',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SfPdfViewer.memory(
+              bytes,
+              controller: _pdfPreviewController,
+              onDocumentLoaded: (details) {
+                if (!mounted) return;
+                setState(() {
+                  _previewCurrentPage = 1;
+                  _previewTotalPages = details.document.pages.count;
+                });
+              },
+              onPageChanged: (details) {
+                if (!mounted) return;
+                setState(() {
+                  _previewCurrentPage = details.newPageNumber;
+                });
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
