@@ -44,20 +44,13 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     'doc',
   ];
 
-  static const List<Map<String, String>> _kokoroVoices = [
-    {'id': 'bf_emma', 'name': 'Emma'},
-    {'id': 'bf_alice', 'name': 'Alice'},
-    {'id': 'bf_lily', 'name': 'Lily'},
-    {'id': 'bm_george', 'name': 'George'},
-    {'id': 'bm_lewis', 'name': 'Lewis'},
-  ];
-
   final ApiService _api = ApiService();
   final AudioPlayer _audioPlayer = AudioPlayer();
   final PdfViewerController _pdfPreviewController = PdfViewerController();
 
   List<Map<String, dynamic>> _documents = [];
   List<Map<String, dynamic>> _audiobooks = [];
+  List<Map<String, dynamic>> _kokoroVoices = [];
   List<Map<String, dynamic>> _qwenVoices = [];
   Map<String, dynamic>? _selectedDocument;
   Uint8List? _selectedBytes;
@@ -66,8 +59,10 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   bool _isLoadingDocuments = false;
   bool _isExtractingPreview = false;
   bool _isLoadingAudiobooks = false;
+  bool _isLoadingKokoroVoices = true;
+  String? _kokoroVoicesError;
   String _engine = 'kokoro';
-  String _kokoroVoice = 'bf_emma';
+  String? _kokoroVoice = 'bf_emma';
   String? _qwenVoice = 'Yelena';
   String _qwenModelSize = '0.6B';
   String _qwenQuantization = 'bf16';
@@ -97,6 +92,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
     super.initState();
     _loadDocuments();
     _loadAudiobooks();
+    _loadKokoroVoices();
     _loadQwenVoices();
   }
 
@@ -138,6 +134,44 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Failed to load documents: $e')));
+    }
+  }
+
+  Future<void> _loadKokoroVoices() async {
+    setState(() {
+      _isLoadingKokoroVoices = true;
+      _kokoroVoicesError = null;
+    });
+    try {
+      final response = await _api.getKokoroVoices();
+      final voices = List<Map<String, dynamic>>.from(
+        response['voices'] as List<dynamic>? ?? [],
+      );
+      if (!mounted) return;
+      setState(() {
+        _kokoroVoices = voices;
+        if (!voices.any((voice) => voice['code'] == _kokoroVoice)) {
+          final defaultVoice = response['default'] as String?;
+          _kokoroVoice = voices.any((voice) => voice['code'] == defaultVoice)
+              ? defaultVoice
+              : voices.isNotEmpty
+              ? voices.first['code'] as String
+              : null;
+        }
+        _isLoadingKokoroVoices = false;
+        if (voices.isEmpty) {
+          _kokoroVoicesError = 'No Kokoro voices available';
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to load Kokoro voices for audiobooks: $e');
+      if (!mounted) return;
+      setState(() {
+        _kokoroVoices = [];
+        _kokoroVoice = null;
+        _isLoadingKokoroVoices = false;
+        _kokoroVoicesError = 'Failed to load Kokoro voices';
+      });
     }
   }
 
@@ -514,6 +548,10 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
   }
 
   Future<void> _startGeneration() async {
+    if (_engine == 'kokoro' &&
+        (_isLoadingKokoroVoices || _kokoroVoice == null)) {
+      return;
+    }
     final selected = _selectedDocument;
     if (selected == null || _selectedBytes == null || _selectedBytes!.isEmpty) {
       ScaffoldMessenger.of(
@@ -535,7 +573,7 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
       selected['name'] as String? ?? 'Untitled',
     );
     final engine = _engine;
-    final voice = engine == 'kokoro' ? _kokoroVoice : (_qwenVoice ?? 'Yelena');
+    final voice = engine == 'kokoro' ? _kokoroVoice! : (_qwenVoice ?? 'Yelena');
     final speed = _speed;
     final outputFormat = _outputFormat;
     final subtitleFormat = _subtitleFormat;
@@ -1140,7 +1178,11 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
                 ),
                 const SizedBox(width: 12),
                 FilledButton.icon(
-                  onPressed: _startGeneration,
+                  onPressed:
+                      _engine == 'kokoro' &&
+                          (_isLoadingKokoroVoices || _kokoroVoice == null)
+                      ? null
+                      : _startGeneration,
                   icon: const Icon(Icons.library_music_rounded),
                   label: const Text('Generate Audiobook'),
                 ),
@@ -1166,29 +1208,41 @@ class _AudiobookScreenState extends State<AudiobookScreen> {
               },
             ),
             const SizedBox(height: 16),
-            if (_engine == 'kokoro')
+            if (_engine == 'kokoro') ...[
               DropdownButtonFormField<String>(
                 key: ValueKey('kokoro-$_kokoroVoice'),
-                initialValue: _kokoroVoice,
-                decoration: const InputDecoration(
+                initialValue: _kokoroVoices.isEmpty ? null : _kokoroVoice,
+                decoration: InputDecoration(
                   labelText: 'Kokoro voice',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  helperText: _isLoadingKokoroVoices
+                      ? 'Loading Kokoro voices...'
+                      : null,
+                  errorText: _kokoroVoicesError,
                 ),
                 items: _kokoroVoices
                     .map(
                       (voice) => DropdownMenuItem<String>(
-                        value: voice['id'],
-                        child: Text(voice['name']!),
+                        value: voice['code'] as String,
+                        child: Text(voice['name'] as String),
                       ),
                     )
                     .toList(),
-                onChanged: (value) {
-                  if (value != null) {
-                    setState(() => _kokoroVoice = value);
-                  }
-                },
-              )
-            else
+                onChanged: _isLoadingKokoroVoices || _kokoroVoices.isEmpty
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          setState(() => _kokoroVoice = value);
+                        }
+                      },
+              ),
+              if (_kokoroVoicesError != null)
+                TextButton.icon(
+                  onPressed: _loadKokoroVoices,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Retry'),
+                ),
+            ] else
               Column(
                 children: [
                   DropdownButtonFormField<String>(
